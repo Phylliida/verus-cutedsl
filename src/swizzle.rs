@@ -1,0 +1,79 @@
+use vstd::prelude::*;
+
+verus! {
+
+/// XOR-based swizzle parameterized by (B, M, S) following CuTe's Swizzle<B, M, S>:
+/// - B (BBits): number of bits in the swizzle mask
+/// - M (MBase): base offset for the mask window
+/// - S (SShift): shift amount (source bits at [M+S, M+S+B) XOR'd into [M, M+B))
+///
+/// Formula: swizzle(x) = x XOR ((x >> S) & (bit_mask(B) << M))
+///        = x XOR (((x >> (M + S)) & bit_mask(B)) << M)
+///
+/// Equivalently: extract B bits starting at position (M + S), XOR them into
+/// position [M, M+B). Since |S| >= B (non-overlapping constraint), the source
+/// and destination bit windows don't overlap, making this an involution.
+
+/// Compute 2^n for spec purposes.
+pub open spec fn pow2(n: nat) -> nat
+    decreases n,
+{
+    if n == 0 { 1 }
+    else { 2 * pow2((n - 1) as nat) }
+}
+
+/// Bit mask of B ones: (2^B - 1).
+pub open spec fn bit_mask(b: nat) -> nat {
+    (pow2(b) - 1) as nat
+}
+
+/// Bitwise XOR, defined recursively on bits.
+pub open spec fn bxor(a: nat, b: nat) -> nat
+    decreases a + b,
+{
+    if a == 0 && b == 0 { 0 }
+    else {
+        let a_bit = a % 2;
+        let b_bit = b % 2;
+        let rest = bxor(a / 2, b / 2);
+        if a_bit == b_bit { 2 * rest }
+        else { 1 + 2 * rest }
+    }
+}
+
+/// Right shift by n bits.
+pub open spec fn shr(x: nat, n: nat) -> nat {
+    x / pow2(n)
+}
+
+/// Left shift by n bits.
+pub open spec fn shl(x: nat, n: nat) -> nat {
+    x * pow2(n)
+}
+
+/// Bitwise AND with mask of M ones: x % 2^M.
+pub open spec fn band_mask(x: nat, m: nat) -> nat {
+    x % pow2(m)
+}
+
+/// CuTe swizzle: extract B bits at position (M + S), XOR into position M.
+///
+/// swizzle(x, B, M, S) = x XOR (((x >> (M + S)) % 2^B) << M)
+///
+/// This is equivalent to: x XOR ((x & (bit_mask(B) << (M+S))) >> S)
+pub open spec fn swizzle(x: nat, b: nat, m: nat, s: nat) -> nat {
+    let extracted = band_mask(shr(x, m + s), b);
+    let shifted = shl(extracted, m);
+    bxor(x, shifted)
+}
+
+/// Admissibility: S >= B (non-overlapping source and destination windows).
+/// Source window: [M+S, M+S+B)
+/// Destination window: [M, M+B)
+/// Non-overlap requires: M+B <= M+S, i.e., S >= B.
+pub open spec fn swizzle_admissible(b: nat, m: nat, s: nat) -> bool {
+    &&& b > 0
+    &&& s >= b  // non-overlapping windows
+}
+
+} // verus!

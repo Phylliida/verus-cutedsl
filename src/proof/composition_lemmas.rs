@@ -182,4 +182,47 @@ proof fn lemma_delinearize_zero_dot(shape: Seq<nat>, stride: Seq<int>)
     }
 }
 
+// ══════════════════════════════════════════════════════════════
+// Element-wise compose access
+// ══════════════════════════════════════════════════════════════
+
+/// compose(a, b).shape[i] == b.shape[i] and stride matches compose_single_mode.
+pub proof fn lemma_compose_element(a: LayoutSpec, b: LayoutSpec, i: int)
+    requires a.valid(), b.valid(), 0 <= i < b.shape.len(), a.shape.len() > 0,
+    ensures
+        compose(a, b).shape.len() == b.shape.len(),
+        compose(a, b).stride.len() == b.shape.len(),
+        compose(a, b).shape[i] == b.shape[i],
+        compose(a, b).stride[i] == compose_single_mode(a, b.shape[i], b.stride[i] as nat).stride.first(),
+    decreases b.shape.len(),
+{
+    crate::proof::divide_lemmas::lemma_compose_rank(a, b);
+    if b.shape.len() == 1 {
+        assert(b.shape.first() == b.shape[i]);
+        assert(b.stride.first() == b.stride[i]);
+    } else {
+        let first = compose_single_mode(a, b.shape.first(), b.stride.first() as nat);
+        let rest_b = LayoutSpec { shape: b.shape.skip(1), stride: b.stride.skip(1) };
+        let rest = compose(a, rest_b);
+        assert(first.shape.len() == 1);
+        assert(first.stride.len() == 1);
+        if i == 0 {
+            assert(first.shape.add(rest.shape)[0] == first.shape[0]);
+            assert(first.stride.add(rest.stride)[0] == first.stride[0]);
+            assert(first.shape[0] == b.shape.first());
+        } else {
+            assert(first.shape.add(rest.shape)[i] == rest.shape[i - 1]);
+            assert(first.stride.add(rest.stride)[i] == rest.stride[i - 1]);
+            assert(rest_b.valid()) by {
+                assert forall|j: int| 0 <= j < rest_b.shape.len() implies #[trigger] rest_b.shape[j] > 0 by {
+                    assert(b.shape[j + 1] > 0);
+                };
+            };
+            lemma_compose_element(a, rest_b, i - 1);
+            assert(rest_b.shape[i - 1] == b.shape[i]);
+            assert(rest_b.stride[i - 1] == b.stride[i]);
+        }
+    }
+}
+
 } // verus!

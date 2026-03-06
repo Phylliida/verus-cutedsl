@@ -2,4 +2,8 @@ pub mod shape_lemmas;
 pub mod offset_lemmas;
 pub mod coalesce_lemmas;
 pub mod composition_lemmas;
+pub mod complement_lemmas;
+pub mod divide_lemmas;
+pub mod product_lemmas;
+pub mod swizzle_lemmas;
 pub mod integer_helpers;

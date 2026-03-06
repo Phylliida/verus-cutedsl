@@ -137,7 +137,7 @@ pub proof fn lemma_offset_upper_bound(layout: LayoutSpec, idx: nat)
 // ══════════════════════════════════════════════════════════════
 
 /// cosize_nonneg equals dot_product(shape - 1, strides) + 1.
-proof fn lemma_cosize_equals_dot_plus_one(layout: LayoutSpec)
+pub proof fn lemma_cosize_equals_dot_plus_one(layout: LayoutSpec)
     requires
         layout.valid(),
         layout.non_negative_strides(),
