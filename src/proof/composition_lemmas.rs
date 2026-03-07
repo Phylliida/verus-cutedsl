@@ -498,21 +498,7 @@ pub proof fn lemma_compose_associative(a: LayoutSpec, b: LayoutSpec, c: LayoutSp
     let da = a.stride.first();
     let db = b.stride.first();
 
-    // Shape: both equal c.shape
-    lemma_compose_shape(a, b);
-    lemma_compose_shape(b, c);
-    lemma_compose_shape(ab, c);
-    lemma_compose_shape(a, bc);
-    assert(ab_c.shape =~= c.shape);
-    assert(a_bc.shape =~= c.shape);
-
-    // Stride: compose(a,b).stride[0] = b.stride[0] * a.stride[0]
-    lemma_compose_element(a, b, 0int);
-    lemma_compose_single_mode_stride_value(a, b.shape.first(), b.stride.first() as nat);
-    let d_ab = db * da;
-    assert(ab.stride.first() == d_ab);
-
-    // compose(b,c) validity for compose(a, bc) to work
+    // Prove ab and bc are valid first
     assert(ab.valid()) by {
         crate::proof::divide_lemmas::lemma_compose_rank(a, b);
         lemma_compose_shape(a, b);
@@ -533,10 +519,21 @@ pub proof fn lemma_compose_associative(a: LayoutSpec, b: LayoutSpec, c: LayoutSp
             lemma_compose_element(b, c, i);
         };
     };
-
-    // ab.shape.len() > 0 (since b.shape.len() > 0)
     assert(ab.shape.len() > 0);
-    // a.shape.len() > 0 (precondition)
+
+    // Shape: both equal c.shape
+    lemma_compose_shape(b, c);
+    assert(bc.shape =~= c.shape);
+    lemma_compose_shape(ab, c);
+    lemma_compose_shape(a, bc);
+    assert(ab_c.shape =~= c.shape);
+    assert(a_bc.shape =~= c.shape);
+
+    // Stride: compose(a,b).stride[0] = b.stride[0] * a.stride[0]
+    lemma_compose_element(a, b, 0int);
+    lemma_compose_single_mode_stride_value(a, b.shape.first(), b.stride.first() as nat);
+    let d_ab = db * da;
+    assert(ab.stride.first() == d_ab);
 
     // Now prove stride equality elementwise
     crate::proof::divide_lemmas::lemma_compose_rank(ab, c);

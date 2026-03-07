@@ -3,6 +3,7 @@ use crate::shape::*;
 use crate::layout::*;
 use crate::composition::*;
 use crate::proof::shape_lemmas::*;
+use crate::proof::product_lemmas::lemma_shape_size_append;
 
 verus! {
 
@@ -793,6 +794,182 @@ pub proof fn lemma_row_major_injective(shape: Seq<nat>)
             lemma_delinearize_roundtrip(j, shape);
             assert(false);
         }
+    }
+}
+
+/// shape_size is preserved under reversal.
+pub proof fn lemma_shape_size_reverse(shape: Seq<nat>)
+    ensures shape_size(seq_reverse(shape)) == shape_size(shape),
+    decreases shape.len(),
+{
+    if shape.len() > 0 {
+        let rev = seq_reverse(shape);
+        let n = shape.len();
+
+        // rev.first() == shape[n-1], rev.skip(1) == rev(shape.take(n-1))
+        assert(rev.first() == shape[n - 1]);
+
+        // rev.skip(1) =~= rev(shape.take(n-1))
+        let init = shape.take(n - 1);
+        let rev_init = seq_reverse(init);
+        assert(rev.skip(1) =~= rev_init) by {
+            assert(rev.skip(1).len() == rev_init.len());
+            assert forall|i: int| 0 <= i < rev_init.len()
+            implies #[trigger] rev.skip(1)[i] == rev_init[i]
+            by {
+                assert(rev.skip(1)[i] == rev[i + 1]);
+                assert(rev[i + 1] == shape[n - 1 - (i + 1)]);
+                assert(rev_init[i] == init[init.len() - 1 - i]);
+                assert(init[init.len() - 1 - i] == shape[n - 2 - i]);
+            }
+        };
+
+        // shape = init ++ [shape[n-1]]
+        // shape_size(shape) = shape_size(init) * shape[n-1]
+        // We need: shape_size(init ++ [last]) = shape_size(init) * last
+        // By induction on shape definition:
+        // shape_size(shape) = shape.first() * shape_size(shape.skip(1))
+        //                   = shape[0] * shape_size(shape.skip(1))
+        // But we want to relate to init. Let's use a different approach:
+        // shape_size(rev) = rev.first() * shape_size(rev.skip(1))
+        //                 = shape[n-1] * shape_size(rev_init)
+        // By IH: shape_size(rev_init) = shape_size(init)
+        // So shape_size(rev) = shape[n-1] * shape_size(init)
+
+        lemma_shape_size_reverse(init);
+        // shape_size(rev) = shape[n-1] * shape_size(init)
+        // shape_size(shape) = shape[0] * shape_size(shape.skip(1))
+
+        // Need: shape[n-1] * shape_size(init) == shape[0] * shape_size(shape.skip(1))
+        // shape.skip(1) has elements shape[1], ..., shape[n-1]
+        // init has elements shape[0], ..., shape[n-2]
+        // These are different sequences. We need commutativity of product.
+        // Actually let's just use a simpler induction structure.
+        // shape_size(shape) = shape.first() * shape_size(shape.skip(1))
+        // shape_size(rev) = rev.first() * shape_size(rev.skip(1))
+        //                 = shape[n-1] * shape_size(rev_init)
+        // IH gives shape_size(rev_init) == shape_size(init)
+        // We need shape[n-1] * shape_size(init) == shape[0] * shape_size(skip(1))
+        // This is NOT trivially true unless we use full product commutativity.
+
+        // Better approach: use lemma_shape_size_append.
+        // shape = init.push(shape[n-1]) = init ++ seq![shape[n-1]]
+        assert(shape =~= init.add(seq![shape[n - 1]]));
+        lemma_shape_size_append(init, seq![shape[n - 1]]);
+
+        // shape_size(seq![shape[n-1]]) unfolds to shape[n-1] * shape_size(empty) = shape[n-1]
+        let last_seq = seq![shape[n - 1] as nat];
+        assert(last_seq.len() == 1);
+        assert(last_seq.first() == shape[n - 1]);
+        assert(last_seq.skip(1) =~= Seq::<nat>::empty());
+        assert(shape_size(last_seq) == last_seq.first() * shape_size(last_seq.skip(1)));
+        assert(shape_size(last_seq.skip(1)) == 1nat);
+        assert(shape_size(last_seq) == shape[n - 1] * 1nat);
+        vstd::arithmetic::mul::lemma_mul_basics(shape[n - 1] as int);
+
+        // shape_size(shape) == shape_size(init) * shape[n-1]
+        assert(shape_size(shape) == shape_size(init) * shape[n - 1]);
+
+        // shape_size(rev) = rev.first() * shape_size(rev.skip(1))
+        //                 = shape[n-1] * shape_size(rev_init)
+        //                 = shape[n-1] * shape_size(init)  [by IH]
+        assert(shape_size(seq_reverse(shape)) == shape[n - 1] * shape_size(init));
+
+        vstd::arithmetic::mul::lemma_mul_is_commutative(
+            shape[n - 1] as int,
+            shape_size(init) as int,
+        );
+    }
+}
+
+/// For a row-major layout, offset acts as "linearize in reversed coordinates".
+/// Given k < size, the index linearize(rev(delinearize(k, rev(shape))), shape)
+/// maps to offset k.
+proof fn lemma_row_major_surjective_witness(shape: Seq<nat>, k: nat)
+    requires
+        shape_valid(shape),
+        k < shape_size(shape),
+    ensures ({
+        let rev_shape = seq_reverse(shape);
+        let rev_coords = delinearize(k, rev_shape);
+        let coords = seq_reverse(rev_coords);
+        let idx = linearize(coords, shape);
+        &&& idx < shape_size(shape)
+        &&& make_row_major(shape).offset(idx) == k as int
+    }),
+{
+    let rev_shape = seq_reverse(shape);
+    lemma_shape_valid_reverse(shape);
+    lemma_shape_size_reverse(shape);
+    // k < shape_size(rev_shape)
+
+    let rev_coords = delinearize(k, rev_shape);
+    lemma_delinearize_len(k, rev_shape);
+    lemma_delinearize_bounds(k, rev_shape);
+
+    let coords = seq_reverse(rev_coords);
+    // coords_in_bounds(coords, shape) from coords_in_bounds(rev_coords, rev_shape)
+    lemma_coords_in_bounds_reverse_back(rev_coords, shape);
+
+    let idx = linearize(coords, shape);
+    lemma_linearize_bound(coords, shape);
+
+    // offset(idx) = linearize(rev(delinearize(idx, shape)), rev(shape))
+    lemma_delinearize_len(idx, shape);
+    lemma_delinearize_bounds(idx, shape);
+    lemma_row_major_dot_is_linearize_rev(delinearize(idx, shape), shape);
+
+    // linearize_roundtrip: delinearize(linearize(coords, shape), shape) =~= coords
+    lemma_linearize_roundtrip(coords, shape);
+    // So delinearize(idx, shape) =~= coords = rev(rev_coords)
+
+    // offset(idx) = linearize(rev(rev(rev_coords)), rev(shape))
+    //             = linearize(rev_coords, rev(shape))  [by involution]
+    lemma_seq_reverse_involution(rev_coords);
+
+    // = k  [by delinearize_roundtrip on k and rev_shape]
+    lemma_delinearize_roundtrip(k, rev_shape);
+}
+
+/// Helper: if coords_in_bounds(coords, rev(shape)), then coords_in_bounds(rev(coords), shape).
+proof fn lemma_coords_in_bounds_reverse_back(coords: Seq<nat>, shape: Seq<nat>)
+    requires
+        coords.len() == shape.len(),
+        coords_in_bounds(coords, seq_reverse(shape)),
+    ensures
+        coords_in_bounds(seq_reverse(coords), shape),
+{
+    let rev_coords = seq_reverse(coords);
+    let n = shape.len();
+    assert forall|i: int| 0 <= i < n
+    implies #[trigger] rev_coords[i] < shape[i]
+    by {
+        // rev_coords[i] = coords[n-1-i]
+        // shape[i] corresponds to rev(shape)[n-1-i]
+        // coords[n-1-i] < rev(shape)[n-1-i] = shape[i]
+        let j = (n - 1 - i) as int;
+        assert(coords[j] < seq_reverse(shape)[j]);
+        assert(seq_reverse(shape)[j] == shape[n - 1 - j]);
+        assert((n - 1 - j) as int == i);
+    }
+}
+
+/// A row-major layout is bijective onto [0, size).
+pub proof fn lemma_row_major_bijective(shape: Seq<nat>)
+    requires shape_valid(shape),
+    ensures make_row_major(shape).is_bijective_upto(shape_size(shape)),
+{
+    let layout = make_row_major(shape);
+    lemma_row_major_injective(shape);
+
+    assert forall|k: int| 0 <= k < shape_size(shape) as int
+    implies #[trigger] layout.offset_hit(k) by {
+        lemma_row_major_surjective_witness(shape, k as nat);
+        let rev_shape = seq_reverse(shape);
+        let rev_coords = delinearize(k as nat, rev_shape);
+        let coords = seq_reverse(rev_coords);
+        let idx = linearize(coords, shape);
+        assert(layout.offset(idx) == k);
     }
 }
 

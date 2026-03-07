@@ -1,9 +1,9 @@
 # verus-cutedsl Roadmap
 
-## Current State (168 verified, 0 assume, 4 external_body)
+## Current State (205 verified, 0 assume, 4 external_body)
 
-**Spec**: shape, layout (injectivity, surjectivity, bijectivity, column-major, identity), compose, complement, divide, product, coalesce, swizzle, slice, dice
-**Proof**: round-trips, offset preservation (coalesce), element-wise compose, complement rank/size, divide rank/tiling, product rank/size/validity, swizzle involution, column-major injectivity/bijectivity, identity injectivity/bijectivity, compose correctness (rank-1 A), compose preserves injectivity, coalesce preserves injectivity, dot product scale, identity-offset implies bijective
+**Spec**: shape, layout (injectivity, surjectivity, bijectivity, column-major, row-major, identity, seq_reverse), compose, complement, divide, product, coalesce, swizzle, slice, dice
+**Proof**: round-trips, offset preservation (coalesce), element-wise compose, complement rank/size/injectivity/tractability, divide rank/tiling, product rank/size/validity/offset-decomposition, swizzle involution, column-major injectivity/bijectivity, row-major injectivity, identity injectivity/bijectivity, compose correctness (general A), compose associativity, compose preserves injectivity, coalesce preserves injectivity, dot product scale/reverse, identity-offset implies bijective, general tractable-injective theorem, delinearize/linearize over concatenation
 **Runtime**: all ops fully verified (compose, complement, product, coalesce, offset, cosize, is_tractable, is_sorted, has_non_negative_strides, slice, dice)
 
 ## Phase 1: Injectivity (No-Aliasing Property)
@@ -21,16 +21,17 @@ The key safety property: distinct indices map to distinct offsets.
 - `lemma_column_major_bijective(shape)` ✅ — bijective onto [0, size)
 - `lemma_identity_injective(m)` ✅ — (M):(1) is injective
 - `lemma_identity_bijective(m)` ✅ — bijective onto [0, m)
-- `lemma_row_major_injective(shape)` — stride = (..., M1*M2, M2, 1) is injective (deferred: complex proof)
-- Helpers: `make_column_major`, `make_identity`, `column_major_strides`, `scale_strides_spec` ✅
+- `lemma_row_major_injective(shape)` ✅ — stride = (..., M1*M2, M2, 1) is injective (via reversal + column-major roundtrip)
+- Helpers: `make_column_major`, `make_row_major`, `make_identity`, `column_major_strides`, `row_major_strides`, `seq_reverse`, `scale_strides_spec` ✅
 
 ### 1c. Injectivity Preservation (partial) ✅
 - `lemma_compose_preserves_injectivity_1d_a(a, b)` ✅ — rank-1 A injective + B injective => A∘B injective
 - `lemma_coalesce_preserves_injectivity(l)` ✅ — coalesce at position 0 preserves injectivity
 - `lemma_identity_offset_implies_injective(l)` ✅ — general: identity-offset => injective
 - `lemma_identity_offset_implies_bijective(l)` ✅ — general: identity-offset => bijective
-- `lemma_complement_injective(a, m)` — complement is always injective (deferred)
-- `lemma_divide_bijective(a, b)` — logical_divide is a bijective rearrangement (deferred)
+- `lemma_complement_injective(a, m)` ✅ — complement is always injective (via general tractable-injective theorem)
+- `lemma_positive_tractable_injective(layout)` ✅ — any tractable layout with positive strides is injective
+- `lemma_divide_bijective(a, b)` — logical_divide is a bijective rearrangement (deferred: needs complement surjectivity)
 
 ### 1d. Runtime Injectivity Check
 - `RuntimeLayout::is_injective() -> bool` — exec check (O(n²) pairwise or structural)
@@ -41,10 +42,11 @@ The key safety property: distinct indices map to distinct offsets.
 - `lemma_compose_correct_1d_a(a, b, x)` ✅ — `compose(a,b).offset(x) == a.offset(b.offset(x))` for rank-1 A, arbitrary B
 - `lemma_compose_shape(a, b)` ✅ — `compose(a,b).shape =~= b.shape`
 - Helpers: `lemma_offset_eq_layout`, `lemma_compose_stride_1d`, `lemma_compose_single_mode_stride_1d` ✅
-- `lemma_compose_correct(a, b, x)` — general multi-mode A (deferred: complex)
+- `lemma_compose_correct(a, b, x)` ✅ — general multi-mode A (when B's image fits in A's first mode)
+- Helpers: `lemma_offset_within_first_mode`, `lemma_compose_stride_general`, `lemma_compose_single_mode_stride_value` ✅
 
-### 2b. Composition Associativity
-- `lemma_compose_associative(a, b, c)` — `compose(compose(a,b),c).offset(x) == compose(a,compose(b,c)).offset(x)` (deferred)
+### 2b. Composition Associativity ✅
+- `lemma_compose_associative(a, b, c)` ✅ — `compose(compose(a,b),c).shape/stride =~= compose(a,compose(b,c)).shape/stride`
 
 ## Phase 3: Coalesce Correctness
 
@@ -67,9 +69,10 @@ The key safety property: distinct indices map to distinct offsets.
 - `lemma_divide_offset(a, b, x)` — `logical_divide(a,b).offset(x) == a.offset(x)` (bijective rearrangement)
   - Depends on complement bijectivity (Phase 1c)
 
-### 4b. Product Correctness
+### 4b. Product Correctness (partial) ✅
 - `lemma_product_valid(a, b)` ✅ — logical_product is valid
-- `lemma_product_offset(a, b, x)` — offset decomposition into A-part and B-part (deferred)
+- `lemma_product_offset(a, b, x)` ✅ — `product(a,b).offset(x) == a.offset(x % size_a) + cosize(a) * b.offset(x / size_a)`
+- Helpers: `lemma_delinearize_concat`, `lemma_linearize_concat`, `lemma_dot_product_append`, `lemma_coords_in_bounds_concat` ✅
 - `lemma_product_compatible(a, b)` — first modes compatible with A (deferred)
 
 ## Phase 5: Slice & Dice ✅

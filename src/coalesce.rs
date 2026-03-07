@@ -30,12 +30,50 @@ pub open spec fn coalesce_pair(layout: LayoutSpec, i: nat) -> LayoutSpec
     LayoutSpec { shape: new_shape, stride: new_stride }
 }
 
+/// Coalesce all coalesceable adjacent pairs, scanning left to right.
+/// When a pair is coalesced, re-check the same position (the merged mode might
+/// coalesce with its new neighbor). When not coalesceable, advance to the next position.
+pub open spec fn coalesce_pass(layout: LayoutSpec, start: nat) -> LayoutSpec
+    decreases layout.shape.len() as int - start as int,
+{
+    if start as int >= layout.shape.len() as int - 1 {
+        layout
+    } else if modes_coalesceable(&layout, start as int) {
+        coalesce_pass(coalesce_pair(layout, start), start)
+    } else {
+        coalesce_pass(layout, start + 1)
+    }
+}
+
+/// Full coalesce: scan from position 0 and merge all adjacent coalesceable pairs.
+pub open spec fn coalesce(layout: LayoutSpec) -> LayoutSpec {
+    coalesce_pass(layout, 0)
+}
+
 /// Remove all size-1 modes from a layout (they contribute nothing to the offset).
 pub open spec fn remove_unit_modes(layout: LayoutSpec) -> LayoutSpec {
     let indices = filter_non_unit(layout.shape, 0);
     LayoutSpec {
         shape: gather(layout.shape, indices),
         stride: gather(layout.stride, indices),
+    }
+}
+
+/// Remove all size-1 modes iteratively, scanning from position `pos`.
+/// Each removal drops one mode, preserving the layout's offset function.
+pub open spec fn remove_units_iter(layout: LayoutSpec, pos: nat) -> LayoutSpec
+    decreases layout.shape.len() as int - pos as int,
+{
+    if pos as int >= layout.shape.len() as int {
+        layout
+    } else if layout.shape[pos as int] == 1 {
+        let removed = LayoutSpec {
+            shape: layout.shape.take(pos as int).add(layout.shape.skip(pos as int + 1)),
+            stride: layout.stride.take(pos as int).add(layout.stride.skip(pos as int + 1)),
+        };
+        remove_units_iter(removed, pos)
+    } else {
+        remove_units_iter(layout, pos + 1)
     }
 }
 

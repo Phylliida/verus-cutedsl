@@ -188,6 +188,247 @@ pub proof fn lemma_complement_size_1d(a: &LayoutSpec, m: nat)
 }
 
 // ══════════════════════════════════════════════════════════════
+// General complement size
+// ══════════════════════════════════════════════════════════════
+
+/// Telescoping invariant: P(j+1) * Q(j) == a.stride[j] for 0 <= j < k.
+/// Here P(j) = shape_size(complement_shape.take(j)) and Q(j) = shape_size(a.shape.take(j)).
+proof fn lemma_complement_size_step(a: &LayoutSpec, m: nat, j: nat)
+    requires
+        complement_admissible(a, m),
+        j < a.shape.len(),
+    ensures
+        shape_size(complement_shape(a, m).take((j + 1) as int))
+            * shape_size(a.shape.take(j as int))
+            == a.stride[j as int] as nat,
+    decreases j,
+{
+    let cs = complement_shape(a, m);
+    let k = a.shape.len();
+    lemma_complement_shape_valid(a, m);
+    lemma_complement_rank(a, m);
+
+    // All strides positive (sorted, stride[0] > 0)
+    assert(a.stride[j as int] >= a.stride[0]);
+    assert(a.stride[j as int] > 0);
+
+    if j == 0 {
+        // P(1) = shape_size(cs.take(1)) = cs[0]
+        // Q(0) = shape_size(a.shape.take(0)) = 1
+
+        // shape_size(take(0)) = shape_size(empty) = 1
+        assert(a.shape.take(0) =~= Seq::<nat>::empty());
+        assert(shape_size(a.shape.take(0)) == 1nat);
+
+        // shape_size(take(1)) = cs[0] (single element)
+        assert(cs.take(1).len() == 1);
+        assert(cs.take(1).first() == cs[0]);
+        assert(cs.take(1).skip(1) =~= Seq::<nat>::empty());
+        assert(shape_size(cs.take(1)) == cs[0] * 1nat);
+        vstd::arithmetic::mul::lemma_mul_basics(cs[0] as int);
+
+        // cs[0] = a.stride[0] as nat
+        assert(cs[0] == a.stride[0] as nat);
+    } else {
+        // IH: P(j) * Q(j-1) = a.stride[j-1]
+        lemma_complement_size_step(a, m, (j - 1) as nat);
+
+        let pj = shape_size(cs.take(j as int));
+        let qjm1 = shape_size(a.shape.take((j - 1) as int));
+        assert(pj * qjm1 == a.stride[(j - 1) as int] as nat);
+
+        // P(j+1) = P(j) * cs[j]  (via shape_size_take_step)
+        crate::runtime::shape_helpers::lemma_shape_size_take_step(cs, j);
+        let pj1 = shape_size(cs.take((j + 1) as int));
+        assert(pj1 == pj * cs[j as int]);
+
+        // Q(j) = Q(j-1) * a.shape[j-1]  (via shape_size_take_step)
+        assert(a.valid());
+        crate::runtime::shape_helpers::lemma_shape_size_take_step(a.shape, (j - 1) as nat);
+        let qj = shape_size(a.shape.take(j as int));
+        assert(qj == qjm1 * a.shape[(j - 1) as int]);
+
+        // P(j+1) * Q(j) = pj * cs[j] * qjm1 * a.shape[j-1]
+        //                = (pj * qjm1) * cs[j] * a.shape[j-1]
+        //                = a.stride[j-1] * cs[j] * a.shape[j-1]
+        let dj_1 = a.stride[(j - 1) as int] as nat;
+        let mj_1 = a.shape[(j - 1) as int];
+        let csj = cs[j as int];
+
+        // cs[j] = a.stride[j] / stride_product(a, j-1)
+        // stride_product(a, j-1) = a.shape[j-1] * a.stride[j-1]
+        let sp = stride_product(a, (j - 1) as int);
+        assert(sp == (mj_1 as int) * a.stride[(j - 1) as int]);
+        assert(sp > 0) by {
+            lemma_stride_product_positive(a, (j - 1) as int);
+        };
+
+        // From tractability: stride[j] % sp == 0
+        assert(a.tractable_at((j - 1) as int));
+        assert(a.stride[j as int] % sp == 0);
+
+        // cs[j] = a.stride[j] / sp
+        assert(csj == (a.stride[j as int] / sp) as nat);
+
+        // (a.stride[j] / sp) * sp == a.stride[j]
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a.stride[j as int], sp);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(sp, a.stride[j as int] / sp);
+        assert((a.stride[j as int] / sp) * sp == a.stride[j as int]);
+
+        // Now compute P(j+1) * Q(j):
+        // = pj * csj * qjm1 * mj_1
+        // = (pj * qjm1) * (csj * mj_1)
+        // = dj_1 * (csj * mj_1)
+        // = dj_1 * mj_1 * csj    [rearranging]
+        // = sp * csj              [since sp = mj_1 * dj_1]
+        // = sp * (stride[j] / sp) [since csj = stride[j] / sp]
+        // = stride[j]
+
+        // We need to connect the nat multiplications.
+        // pj1 * qj = (pj * csj) * (qjm1 * mj_1)
+        // Since all are nats, we can use associativity/commutativity.
+        vstd::arithmetic::mul::lemma_mul_is_associative(pj as int, csj as int, qjm1 as int);
+        // pj * csj * qjm1 = pj * (csj * qjm1)
+        vstd::arithmetic::mul::lemma_mul_is_commutative(csj as int, qjm1 as int);
+        // csj * qjm1 = qjm1 * csj
+        vstd::arithmetic::mul::lemma_mul_is_associative(pj as int, qjm1 as int, csj as int);
+        // pj * qjm1 * csj = pj * (qjm1 * csj) = (pj * qjm1) * csj = dj_1 * csj
+
+        // So pj1 * qj = (pj * csj) * (qjm1 * mj_1)
+        // We want to show = dj_1 * csj * mj_1 = sp * csj = stride[j]
+
+        // pj1 * qj = pj * csj * qjm1 * mj_1
+        // Let's factor as: (pj * qjm1) * (csj * mj_1)
+        // = dj_1 * (csj * mj_1)
+
+        // csj * mj_1 as nat = (stride[j] / sp) * mj_1
+        // dj_1 * csj * mj_1 = dj_1 * mj_1 * csj = sp_as_nat * csj
+        // = (stride[j] / sp) * sp = stride[j]
+
+        assert(pj1 * qj == pj * csj * (qjm1 * mj_1)) by {
+            vstd::arithmetic::mul::lemma_mul_is_associative(
+                (pj * csj) as int, qjm1 as int, mj_1 as int,
+            );
+        };
+        assert(pj * csj * (qjm1 * mj_1) == (pj * qjm1) * (csj * mj_1)) by {
+            // pj * csj * (qjm1 * mj_1)
+            // = (pj * csj) * (qjm1 * mj_1)
+            // Want: = (pj * qjm1) * (csj * mj_1)
+            // Both = pj * qjm1 * csj * mj_1 by associativity/commutativity
+            vstd::arithmetic::mul::lemma_mul_is_associative(pj as int, csj as int, (qjm1 * mj_1) as int);
+            // pj * csj * (qjm1 * mj_1) = pj * (csj * (qjm1 * mj_1))
+            vstd::arithmetic::mul::lemma_mul_is_associative(csj as int, qjm1 as int, mj_1 as int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(csj as int, qjm1 as int);
+            vstd::arithmetic::mul::lemma_mul_is_associative(qjm1 as int, csj as int, mj_1 as int);
+            // csj * qjm1 * mj_1 = qjm1 * csj * mj_1 = qjm1 * (csj * mj_1)
+            // So pj * (csj * qjm1 * mj_1) = pj * (qjm1 * (csj * mj_1))
+            // = (pj * qjm1) * (csj * mj_1)
+            vstd::arithmetic::mul::lemma_mul_is_associative(pj as int, qjm1 as int, (csj * mj_1) as int);
+        };
+        // (pj * qjm1) * (csj * mj_1) = dj_1 * (csj * mj_1)
+        assert((pj * qjm1) * (csj * mj_1) == dj_1 * (csj * mj_1));
+
+        // csj * mj_1 = (stride[j] / sp) * mj_1
+        // dj_1 * (stride[j] / sp) * mj_1 = dj_1 * mj_1 * (stride[j] / sp)
+        //                                 = sp * (stride[j] / sp)   [since sp = mj_1 * dj_1]
+        vstd::arithmetic::mul::lemma_mul_is_commutative(csj as int, mj_1 as int);
+        assert(dj_1 * (mj_1 * csj) == dj_1 * mj_1 * csj) by {
+            vstd::arithmetic::mul::lemma_mul_is_associative(dj_1 as int, mj_1 as int, csj as int);
+        };
+        // dj_1 * mj_1 = sp (as nat)
+        vstd::arithmetic::mul::lemma_mul_is_commutative(mj_1 as int, dj_1 as int);
+        assert((dj_1 * mj_1) as int == sp);
+        // sp * csj = sp * (stride[j] / sp) = stride[j]
+        assert((dj_1 * mj_1) * csj == a.stride[j as int] as nat) by {
+            assert(csj as int == a.stride[j as int] / sp);
+            assert(((dj_1 * mj_1) * csj) as int == sp * (a.stride[j as int] / sp));
+            assert(sp * (a.stride[j as int] / sp) == a.stride[j as int]);
+        };
+    }
+}
+
+/// The complement size satisfies: size(complement) * size(B) == M.
+pub proof fn lemma_complement_size(a: &LayoutSpec, m: nat)
+    requires complement_admissible(a, m),
+    ensures
+        shape_size(complement_shape(a, m)) * shape_size(a.shape) == m,
+{
+    let cs = complement_shape(a, m);
+    let k = a.shape.len();
+    lemma_complement_shape_valid(a, m);
+    lemma_complement_rank(a, m);
+
+    // At j = k-1: P(k) * Q(k-1) = a.stride[k-1]
+    lemma_complement_size_step(a, m, (k - 1) as nat);
+
+    let pk = shape_size(cs.take(k as int));
+    let qkm1 = shape_size(a.shape.take((k - 1) as int));
+    let dk_1 = a.stride[(k - 1) as int] as nat;
+    assert(pk * qkm1 == dk_1);
+
+    // P(k+1) = P(k) * cs[k]
+    crate::runtime::shape_helpers::lemma_shape_size_take_step(cs, k as nat);
+    let pk1 = shape_size(cs.take((k + 1) as int));
+    assert(pk1 == pk * cs[k as int]);
+
+    // Q(k) = Q(k-1) * a.shape[k-1]
+    crate::runtime::shape_helpers::lemma_shape_size_take_step(a.shape, (k - 1) as nat);
+    let qk = shape_size(a.shape.take(k as int));
+    assert(qk == qkm1 * a.shape[(k - 1) as int]);
+
+    // cs.take(k+1) =~= cs (full sequence)
+    assert(cs.take((k + 1) as int) =~= cs);
+    // a.shape.take(k) =~= a.shape (full sequence)
+    assert(a.shape.take(k as int) =~= a.shape);
+
+    // cs[k] = m / stride_product(a, k-1)
+    let sp_last = stride_product(a, (k - 1) as int);
+    assert(sp_last == (a.shape[(k - 1) as int] as int) * a.stride[(k - 1) as int]);
+    assert(sp_last > 0) by {
+        lemma_stride_product_positive(a, (k - 1) as int);
+    };
+    assert((m as int) % sp_last == 0);
+    assert(cs[k as int] == ((m as int) / sp_last) as nat);
+
+    // P(k+1) * Q(k) = pk * cs[k] * qkm1 * a.shape[k-1]
+    //               = (pk * qkm1) * (cs[k] * a.shape[k-1])
+    //               = dk_1 * (cs[k] * a.shape[k-1])
+    let mk_1 = a.shape[(k - 1) as int];
+    let csk = cs[k as int];
+
+    // Same factoring as in step:
+    assert(pk1 * qk == pk * csk * (qkm1 * mk_1)) by {
+        vstd::arithmetic::mul::lemma_mul_is_associative(
+            (pk * csk) as int, qkm1 as int, mk_1 as int,
+        );
+    };
+    assert(pk * csk * (qkm1 * mk_1) == (pk * qkm1) * (csk * mk_1)) by {
+        vstd::arithmetic::mul::lemma_mul_is_associative(pk as int, csk as int, (qkm1 * mk_1) as int);
+        vstd::arithmetic::mul::lemma_mul_is_associative(csk as int, qkm1 as int, mk_1 as int);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(csk as int, qkm1 as int);
+        vstd::arithmetic::mul::lemma_mul_is_associative(qkm1 as int, csk as int, mk_1 as int);
+        vstd::arithmetic::mul::lemma_mul_is_associative(pk as int, qkm1 as int, (csk * mk_1) as int);
+    };
+    assert((pk * qkm1) * (csk * mk_1) == dk_1 * (csk * mk_1));
+
+    // dk_1 * mk_1 = sp_last
+    vstd::arithmetic::mul::lemma_mul_is_commutative(mk_1 as int, dk_1 as int);
+    assert((dk_1 * mk_1) as int == sp_last);
+
+    // dk_1 * (csk * mk_1) = dk_1 * mk_1 * csk = sp_last * csk
+    vstd::arithmetic::mul::lemma_mul_is_commutative(csk as int, mk_1 as int);
+    assert(dk_1 * (mk_1 * csk) == dk_1 * mk_1 * csk) by {
+        vstd::arithmetic::mul::lemma_mul_is_associative(dk_1 as int, mk_1 as int, csk as int);
+    };
+
+    // sp_last * csk = sp_last * (m / sp_last) = m
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, sp_last);
+    vstd::arithmetic::mul::lemma_mul_is_commutative(sp_last, (m as int) / sp_last);
+    assert(((m as int) / sp_last) * sp_last == m as int);
+    assert(((dk_1 * mk_1) * csk) as int == m as int);
+}
+
+// ══════════════════════════════════════════════════════════════
 // Complement strides are ordered
 // ══════════════════════════════════════════════════════════════
 
@@ -376,6 +617,133 @@ pub proof fn lemma_complement_injective(a: &LayoutSpec, m: nat)
     assert(c.shape.len() > 0);
 
     crate::proof::injectivity_lemmas::lemma_positive_tractable_injective(c);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Zipped bijective (1D case)
+// ══════════════════════════════════════════════════════════════
+
+/// For a 1D layout B with complement_admissible(B, M), the zipped layout
+/// (B.shape ++ complement.shape, B.stride ++ complement.stride)
+/// is bijective onto [0, M).
+pub proof fn lemma_zipped_bijective_1d(b: &LayoutSpec, m: nat)
+    requires
+        complement_admissible(b, m),
+        b.shape.len() == 1,
+    ensures ({
+        let c = complement(b, m);
+        let zipped = LayoutSpec {
+            shape: b.shape.add(c.shape),
+            stride: b.stride.add(c.stride),
+        };
+        zipped.is_bijective_upto(m)
+    }),
+{
+    let c = complement(b, m);
+    let zipped = LayoutSpec {
+        shape: b.shape.add(c.shape),
+        stride: b.stride.add(c.stride),
+    };
+    lemma_complement_rank(b, m);
+    lemma_complement_shape_valid(b, m);
+
+    let m0 = b.shape[0];
+    let d0 = b.stride[0];
+    let sp = stride_product(b, 0); // M_0 * d_0
+    let q = (m as int / sp) as nat;
+
+    // Complement has shape (d0, q) and stride (1, sp)
+    assert(c.shape.len() == 2);
+    assert(c.shape[0] == d0 as nat);
+    assert(c.shape[1] == q);
+    assert(c.stride[0] == 1int);
+    assert(c.stride[1] == sp);
+
+    // Zipped: shape = (M_0, d_0, q), stride = (d_0, 1, M_0*d_0)
+    assert(zipped.shape =~= seq![m0, d0 as nat, q]);
+    assert(zipped.stride =~= seq![d0, 1int, sp]);
+    assert(zipped.shape.len() == 3);
+
+    // Sorted (swap modes 0,1): shape = (d_0, M_0, q), stride = (1, d_0, M_0*d_0)
+    let sorted_shape = seq_swap(zipped.shape, 0);
+    let sorted_stride = seq_swap(zipped.stride, 0);
+    assert(sorted_shape =~= seq![d0 as nat, m0, q]);
+    assert(sorted_stride =~= seq![1int, d0, sp]);
+
+    let sorted = LayoutSpec { shape: sorted_shape, stride: sorted_stride };
+
+    // Show sorted_stride =~= column_major_strides(sorted_shape)
+    // column_major_strides((d0, M0, q)):
+    //   = [1] ++ scale(column_major_strides((M0, q)), d0)
+    //   column_major_strides((M0, q)) = [1] ++ scale(column_major_strides((q,)), M0)
+    //     column_major_strides((q,)) = [1] ++ scale(column_major_strides(()), q) = [1] ++ scale([], q) = [1]
+    //   column_major_strides((M0, q)) = [1] ++ scale([1], M0) = [1, M0]
+    //   scale([1, M0], d0) = [d0, M0*d0]
+    // column_major_strides((d0, M0, q)) = [1, d0, M0*d0]
+
+    let shape_q = seq![q];
+    let shape_m0q = seq![m0, q];
+
+    // Unfold column_major_strides for single element (q,)
+    assert(column_major_strides(shape_q) =~= seq![1int].add(
+        scale_strides_spec(column_major_strides(shape_q.skip(1)), shape_q.first() as int)
+    ));
+    assert(shape_q.skip(1) =~= seq![]);
+    assert(column_major_strides(seq![]) =~= seq![]);
+    assert(scale_strides_spec(seq![], q as int) =~= seq![]);
+    assert(column_major_strides(shape_q) =~= seq![1int]);
+
+    // Unfold for (M0, q)
+    assert(column_major_strides(shape_m0q) =~= seq![1int].add(
+        scale_strides_spec(column_major_strides(shape_m0q.skip(1)), shape_m0q.first() as int)
+    ));
+    assert(shape_m0q.skip(1) =~= shape_q);
+    assert(scale_strides_spec(seq![1int], m0 as int) =~= seq![m0 as int]);
+    assert(column_major_strides(shape_m0q) =~= seq![1int, m0 as int]);
+
+    // Unfold for (d0, M0, q)
+    assert(column_major_strides(sorted_shape) =~= seq![1int].add(
+        scale_strides_spec(column_major_strides(sorted_shape.skip(1)), sorted_shape.first() as int)
+    ));
+    assert(sorted_shape.skip(1) =~= shape_m0q);
+    vstd::arithmetic::mul::lemma_mul_basics(d0);
+    assert(1int * d0 == d0);
+    assert(scale_strides_spec(seq![1int, m0 as int], d0) =~= seq![d0, (m0 as int) * d0]);
+
+    // sp = M_0 * d_0 = d_0 * M_0 (commutative)
+    vstd::arithmetic::mul::lemma_mul_is_commutative(m0 as int, d0);
+    assert(sp == (m0 as int) * d0);
+    assert(column_major_strides(sorted_shape) =~= seq![1int, d0, sp]);
+    assert(sorted_stride =~= column_major_strides(sorted_shape));
+
+    // sorted == make_column_major(sorted_shape)
+    // sorted_shape is valid
+    lemma_shape_valid_swap(zipped.shape, 0);
+    assert(shape_valid(sorted_shape));
+
+    // sorted_shape product == M
+    // d0 * M0 * q = sp * q = M
+    lemma_complement_size(b, m);
+    crate::proof::product_lemmas::lemma_shape_size_append(b.shape, c.shape);
+    lemma_shape_size_swap(zipped.shape, 0);
+
+    // By column_major_bijective: sorted is bijective onto [0, size(sorted_shape))
+    crate::proof::injectivity_lemmas::lemma_column_major_bijective(sorted_shape);
+
+    // sorted has same size as zipped
+    assert(shape_size(sorted_shape) == shape_size(zipped.shape));
+
+    // Transfer bijectivity via swap (swap(sorted, 0) == zipped)
+    // sorted is injective → zipped is injective (swap preserves)
+    assert(sorted.shape =~= seq_swap(zipped.shape, 0));
+    assert(sorted.stride =~= seq_swap(zipped.stride, 0));
+    lemma_swap_preserves_injective(&sorted, 0);
+    // swap(sorted, 0) has shape = swap(sorted_shape, 0) = zipped.shape
+    assert(seq_swap(sorted.shape, 0) =~= zipped.shape);
+    assert(seq_swap(sorted.stride, 0) =~= zipped.stride);
+
+    // sorted is surjective → zipped is surjective (swap preserves)
+    lemma_swap_preserves_surjective(&sorted, 0, shape_size(sorted_shape));
 }
 
 } // verus!

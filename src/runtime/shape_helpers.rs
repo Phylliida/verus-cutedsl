@@ -46,7 +46,7 @@ pub fn shape_size_exec(shape: &Vec<u64>) -> (result: u64)
 }
 
 /// Helper: shape_size of take(i+1) = shape_size(take(i)) * s[i].
-proof fn lemma_shape_size_take_step(s: Seq<nat>, i: nat)
+pub proof fn lemma_shape_size_take_step(s: Seq<nat>, i: nat)
     requires
         shape_valid(s),
         i < s.len(),
@@ -226,7 +226,7 @@ pub fn delinearize_exec(idx: u64, shape: &Vec<u64>) -> (result: Vec<u64>)
 }
 
 /// take of a valid shape is valid.
-proof fn lemma_take_shape_valid(s: Seq<nat>, k: nat)
+pub proof fn lemma_take_shape_valid(s: Seq<nat>, k: nat)
     requires shape_valid(s), k <= s.len(),
     ensures shape_valid(s.take(k as int)),
 {

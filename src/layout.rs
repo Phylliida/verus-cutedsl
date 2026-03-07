@@ -156,4 +156,15 @@ pub open spec fn make_row_major(shape: Seq<nat>) -> LayoutSpec {
     LayoutSpec { shape, stride: row_major_strides(shape) }
 }
 
+/// Swap adjacent elements at positions i and i+1 in a sequence.
+pub open spec fn seq_swap<A>(s: Seq<A>, i: int) -> Seq<A>
+    recommends 0 <= i, i + 1 < s.len(),
+{
+    Seq::new(s.len(), |j: int|
+        if j == i { s[i + 1] }
+        else if j == i + 1 { s[i] }
+        else { s[j] }
+    )
+}
+
 } // verus!

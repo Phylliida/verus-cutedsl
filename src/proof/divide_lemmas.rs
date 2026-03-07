@@ -112,4 +112,66 @@ pub proof fn lemma_divide_tile_count_1d(a: &LayoutSpec, b: &LayoutSpec)
     lemma_complement_size_1d(b, m);
 }
 
+// ══════════════════════════════════════════════════════════════
+// Divide size preservation
+// ══════════════════════════════════════════════════════════════
+
+/// logical_divide(A, B) has the same size as A.
+pub proof fn lemma_divide_size(a: &LayoutSpec, b: &LayoutSpec)
+    requires divide_admissible(a, b),
+    ensures
+        shape_size(logical_divide(a, b).shape) == shape_size(a.shape),
+{
+    let m = shape_size(a.shape);
+    let c = complement(b, m);
+    let a_val = LayoutSpec { shape: a.shape, stride: a.stride };
+    let zipped = LayoutSpec {
+        shape: b.shape.add(c.shape),
+        stride: b.stride.add(c.stride),
+    };
+
+    // zipped is valid
+    lemma_complement_rank(b, m);
+    lemma_complement_shape_valid(b, m);
+    assert(shape_valid(zipped.shape)) by {
+        assert forall|i: int| 0 <= i < zipped.shape.len()
+        implies #[trigger] zipped.shape[i] > 0 by {
+            if i < b.shape.len() as int {
+                assert(zipped.shape[i] == b.shape[i]);
+            } else {
+                assert(zipped.shape[i] == c.shape[(i - b.shape.len()) as int]);
+            }
+        };
+    };
+    assert(zipped.valid());
+
+    // compose(a, zipped).shape =~= zipped.shape
+    crate::proof::composition_lemmas::lemma_compose_shape(a_val, zipped);
+
+    // size(zipped.shape) = size(b.shape ++ c.shape) = size(b.shape) * size(c.shape)
+    crate::proof::product_lemmas::lemma_shape_size_append(b.shape, c.shape);
+
+    // size(c.shape) * size(b.shape) = m
+    lemma_complement_size(b, m);
+
+    // So size(zipped.shape) = size(b.shape) * size(c.shape) = m = size(a.shape)
+    vstd::arithmetic::mul::lemma_mul_is_commutative(
+        shape_size(b.shape) as int,
+        shape_size(c.shape) as int,
+    );
+}
+
+/// Generalized tile count: complement size * tile size == total size.
+pub proof fn lemma_divide_tile_count(a: &LayoutSpec, b: &LayoutSpec)
+    requires divide_admissible(a, b),
+    ensures ({
+        let m = shape_size(a.shape);
+        let c = complement(b, m);
+        shape_size(c.shape) * shape_size(b.shape) == m
+    }),
+{
+    let m = shape_size(a.shape);
+    lemma_complement_size(b, m);
+}
+
 } // verus!

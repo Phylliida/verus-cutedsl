@@ -206,4 +206,38 @@ pub proof fn lemma_product_offset(a: &LayoutSpec, b: &LayoutSpec, x: nat)
         == dot_product_nat_int(d_a.add(d_b), a.stride.add(scaled_b)));
 }
 
+/// The first tile of a logical product behaves like A:
+/// for x < size(A), product(A,B).offset(x) == A.offset(x).
+pub proof fn lemma_product_compatible(a: &LayoutSpec, b: &LayoutSpec, x: nat)
+    requires
+        product_admissible(a, b),
+        x < a.size(),
+    ensures
+        logical_product(a, b).offset(x) == a.offset(x),
+{
+    // product(a,b).offset(x) == a.offset(x % size_a) + cosize(a) * b.offset(x / size_a)
+    lemma_shape_size_positive(a.shape);
+    lemma_shape_size_positive(b.shape);
+    let size_a = shape_size(a.shape);
+    assert(x < size_a);
+    // x % size_a == x and x / size_a == 0 when x < size_a
+    crate::proof::integer_helpers::lemma_mod_small(x, size_a);
+    // x == size_a * (x / size_a) + x % size_a == size_a * (x / size_a) + x
+    // => size_a * (x / size_a) == 0 => x / size_a == 0
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int, size_a as int);
+    assert(x as int == size_a as int * (x as int / size_a as int) + x as int);
+    assert(size_a as int * (x as int / size_a as int) == 0int);
+    assert(x / size_a == 0nat);
+
+    lemma_product_offset(a, b, x);
+    // product(a,b).offset(x) == a.offset(x) + cosize(a) * b.offset(0)
+
+    // b.offset(0) == 0
+    crate::proof::offset_lemmas::lemma_offset_zero(
+        LayoutSpec { shape: b.shape, stride: b.stride },
+    );
+    // cosize(a) * 0 == 0
+    vstd::arithmetic::mul::lemma_mul_basics(a.cosize_nonneg() as int);
+}
+
 } // verus!
