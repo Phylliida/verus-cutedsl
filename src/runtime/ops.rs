@@ -660,4 +660,151 @@ pub fn coalesce_pair_exec(layout: &RuntimeLayout, pos: usize) -> (result: Runtim
     }
 }
 
+/// Slice a layout by fixing a coordinate in one mode.
+/// Returns the residual layout (rank - 1) and the constant offset.
+pub fn slice_exec(layout: &RuntimeLayout, mode: usize, coord: u64) -> (result: (RuntimeLayout, i64))
+    requires
+        layout.wf_spec(),
+        (mode as nat) < layout@.rank(),
+        (coord as nat) < layout@.shape[mode as int],
+        // The constant offset fits in i64
+        (coord as int) * layout@.stride[mode as int] >= i64::MIN as int,
+        (coord as int) * layout@.stride[mode as int] <= i64::MAX as int,
+        // Result size fits
+        shape_size(crate::slice::slice_layout(&layout@, mode as nat, coord as nat).shape) <= u64::MAX as nat,
+    ensures ({
+        let (rl, off) = result;
+        &&& rl.wf_spec()
+        &&& rl@ == crate::slice::slice_layout(&layout@, mode as nat, coord as nat)
+        &&& off as int == crate::slice::slice_offset(&layout@, mode as nat, coord as nat)
+    }),
+{
+    let n = layout.shape.len();
+
+    proof {
+        assert(layout@.shape == shape_to_nat_seq(layout.shape@));
+        assert(layout@.stride == strides_to_int_seq(layout.stride@));
+    }
+
+    // Compute constant offset: coord * stride[mode]
+    let const_offset: i64 = ((coord as i128) * (layout.stride[mode] as i128)) as i64;
+
+    // Build result shape and stride by copying all modes except `mode`
+    let mut result_shape: Vec<u64> = Vec::new();
+    let mut result_stride: Vec<i64> = Vec::new();
+
+    let mut i: usize = 0;
+    while i < n
+        invariant
+            0 <= i <= n,
+            n == layout.shape.len(),
+            layout.wf_spec(),
+            layout@.shape == shape_to_nat_seq(layout.shape@),
+            layout@.stride == strides_to_int_seq(layout.stride@),
+            (mode as nat) < layout@.rank(),
+            // Length tracking: we skip index `mode`, so count is i - (if mode < i then 1 else 0)
+            result_shape@.len() == (if mode < i { (i - 1) as nat } else { i as nat }),
+            result_stride@.len() == result_shape@.len(),
+            // Content: matches remove(mode)
+            forall|j: int| 0 <= j < result_shape@.len() as int ==>
+                #[trigger] result_shape@[j] == layout.shape@[if j < mode as int { j } else { j + 1 }],
+            forall|j: int| 0 <= j < result_stride@.len() as int ==>
+                #[trigger] result_stride@[j] == layout.stride@[if j < mode as int { j } else { j + 1 }],
+        decreases n - i,
+    {
+        if i != mode {
+            result_shape.push(layout.shape[i]);
+            result_stride.push(layout.stride[i]);
+        }
+        i = i + 1;
+    }
+
+    proof {
+        let spec_result = crate::slice::slice_layout(&layout@, mode as nat, coord as nat);
+        let m = mode as int;
+
+        // Shape extensional equality
+        assert(shape_to_nat_seq(result_shape@) =~= spec_result.shape) by {
+            assert(result_shape@.len() == spec_result.shape.len());
+            assert forall|j: int| 0 <= j < result_shape@.len() as int implies
+                shape_to_nat_seq(result_shape@)[j] == spec_result.shape[j]
+            by {
+                let orig = if j < m { j } else { j + 1 };
+                assert(result_shape@[j] == layout.shape@[orig]);
+                assert(layout.shape@[orig] as nat == layout@.shape[orig]);
+                assert(spec_result.shape[j] == layout@.shape.remove(m)[j]);
+                assert(layout@.shape.remove(m)[j] == layout@.shape[orig]);
+            };
+        };
+
+        // Stride extensional equality
+        assert(strides_to_int_seq(result_stride@) =~= spec_result.stride) by {
+            assert(result_stride@.len() == spec_result.stride.len());
+            assert forall|j: int| 0 <= j < result_stride@.len() as int implies
+                strides_to_int_seq(result_stride@)[j] == spec_result.stride[j]
+            by {
+                let orig = if j < m { j } else { j + 1 };
+                assert(result_stride@[j] == layout.stride@[orig]);
+                assert(layout.stride@[orig] as int == layout@.stride[orig]);
+                assert(spec_result.stride[j] == layout@.stride.remove(m)[j]);
+                assert(layout@.stride.remove(m)[j] == layout@.stride[orig]);
+            };
+        };
+
+        // Valid
+        crate::proof::slice_lemmas::lemma_slice_valid(&layout@, mode as nat, coord as nat);
+    }
+
+    let rl = RuntimeLayout {
+        shape: result_shape,
+        stride: result_stride,
+        model: Ghost(crate::slice::slice_layout(&*layout.model.borrow(), mode as nat, coord as nat)),
+    };
+    (rl, const_offset)
+}
+
+/// Dice a layout: keep only one mode, producing a rank-1 layout.
+pub fn dice_exec(layout: &RuntimeLayout, mode: usize) -> (result: RuntimeLayout)
+    requires
+        layout.wf_spec(),
+        (mode as nat) < layout@.rank(),
+        shape_size(crate::slice::dice_layout(&layout@, mode as nat).shape) <= u64::MAX as nat,
+    ensures
+        result.wf_spec(),
+        result@ == crate::slice::dice_layout(&layout@, mode as nat),
+{
+    proof {
+        assert(layout@.shape == shape_to_nat_seq(layout.shape@));
+        assert(layout@.stride == strides_to_int_seq(layout.stride@));
+    }
+
+    let mut shape_vec: Vec<u64> = Vec::new();
+    shape_vec.push(layout.shape[mode]);
+    let mut stride_vec: Vec<i64> = Vec::new();
+    stride_vec.push(layout.stride[mode]);
+
+    proof {
+        let spec_result = crate::slice::dice_layout(&layout@, mode as nat);
+
+        assert(shape_to_nat_seq(shape_vec@) =~= spec_result.shape) by {
+            assert(shape_vec@[0] as nat == layout.shape@[mode as int] as nat);
+            assert(layout.shape@[mode as int] as nat == layout@.shape[mode as int]);
+        };
+
+        assert(strides_to_int_seq(stride_vec@) =~= spec_result.stride) by {
+            assert(stride_vec@[0] as int == layout.stride@[mode as int] as int);
+            assert(layout.stride@[mode as int] as int == layout@.stride[mode as int]);
+        };
+
+        // Valid: shape[0] = layout.shape[mode] > 0
+        crate::proof::slice_lemmas::lemma_dice_valid(&layout@, mode as nat);
+    }
+
+    RuntimeLayout {
+        shape: shape_vec,
+        stride: stride_vec,
+        model: Ghost(crate::slice::dice_layout(&*layout.model.borrow(), mode as nat)),
+    }
+}
+
 } // verus!

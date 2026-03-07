@@ -225,4 +225,149 @@ pub proof fn lemma_compose_element(a: LayoutSpec, b: LayoutSpec, i: int)
     }
 }
 
+// ══════════════════════════════════════════════════════════════
+// Compose shape and stride as sequences
+// ══════════════════════════════════════════════════════════════
+
+/// compose(a, b).shape is extensionally equal to b.shape.
+pub proof fn lemma_compose_shape(a: LayoutSpec, b: LayoutSpec)
+    requires a.valid(), b.valid(), a.shape.len() > 0,
+    ensures compose(a, b).shape =~= b.shape,
+{
+    crate::proof::divide_lemmas::lemma_compose_rank(a, b);
+    assert forall|i: int| 0 <= i < b.shape.len()
+    implies #[trigger] compose(a, b).shape[i] == b.shape[i] by {
+        lemma_compose_element(a, b, i);
+    }
+}
+
+/// For rank-1 A, compose_single_mode always gives stride b_stride * a.stride[0].
+proof fn lemma_compose_single_mode_stride_1d(
+    a: LayoutSpec, b_shape: nat, b_stride: nat,
+)
+    requires
+        a.valid(),
+        a.shape.len() == 1,
+        b_shape > 0,
+    ensures
+        compose_single_mode(a, b_shape, b_stride).stride.first()
+            == (b_stride as int) * a.stride.first(),
+{
+    if b_stride == 1 && b_shape <= a.shape.first() {
+        // Special case: stride = a.stride[0] = 1 * a.stride[0]
+        vstd::arithmetic::mul::lemma_mul_basics(a.stride.first());
+    } else {
+        // General case: stride = b_stride * a.stride[0]
+    }
+}
+
+/// For rank-1 A, compose(A, B).stride =~= scale_strides_spec(B.stride, A.stride[0]).
+proof fn lemma_compose_stride_1d(a: LayoutSpec, b: LayoutSpec)
+    requires
+        a.valid(), b.valid(),
+        a.shape.len() == 1,
+        b.non_negative_strides(),
+    ensures
+        compose(a, b).stride =~= crate::layout::scale_strides_spec(b.stride, a.stride.first()),
+{
+    crate::proof::divide_lemmas::lemma_compose_rank(a, b);
+    let scaled = crate::layout::scale_strides_spec(b.stride, a.stride.first());
+    assert forall|i: int| 0 <= i < b.shape.len()
+    implies #[trigger] compose(a, b).stride[i] == scaled[i] by {
+        lemma_compose_element(a, b, i);
+        assert(b.stride[i] >= 0);
+        lemma_compose_single_mode_stride_1d(a, b.shape[i], b.stride[i] as nat);
+        // compose gives ((b.stride[i] as nat) as int) * d
+        // Since b.stride[i] >= 0: (b.stride[i] as nat) as int == b.stride[i]
+        assert(scaled[i] == b.stride[i] * a.stride.first());
+        vstd::arithmetic::mul::lemma_mul_is_commutative(b.stride[i], a.stride.first());
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Compose correctness: rank-1 A with arbitrary B
+// ══════════════════════════════════════════════════════════════
+
+/// Helper: for a layout with shape s and stride t, the offset equals the dot product
+/// of the delinearized coordinates with the strides.
+/// If we substitute shape/stride with =~= equivalents, offset is preserved.
+proof fn lemma_offset_eq_layout(s1: Seq<nat>, t1: Seq<int>, s2: Seq<nat>, t2: Seq<int>, x: nat)
+    requires
+        s1 =~= s2,
+        t1 =~= t2,
+    ensures ({
+        let l1 = LayoutSpec { shape: s1, stride: t1 };
+        let l2 = LayoutSpec { shape: s2, stride: t2 };
+        l1.offset(x) == l2.offset(x)
+    }),
+{
+    // s1 == s2 and t1 == t2 by extensional equality
+    // So LayoutSpec{s1, t1} has the same shape and stride fields
+    // and offset uses only those fields, so offsets are equal.
+}
+
+/// For rank-1 A = (M):(d) and arbitrary B, compose(A, B).offset(x) == A.offset(B.offset(x)),
+/// provided B's image fits within A's domain.
+pub proof fn lemma_compose_correct_1d_a(a: LayoutSpec, b: LayoutSpec, x: nat)
+    requires
+        a.valid(), b.valid(),
+        a.shape.len() == 1,
+        b.non_negative_strides(),
+        x < b.size(),
+        // B's image fits within A's domain
+        b.offset(x) >= 0,
+        b.offset(x) < a.shape.first() as int,
+    ensures
+        compose(a, b).offset(x) == a.offset(b.offset(x) as nat),
+{
+    let d = a.stride.first();
+    let bx = b.offset(x);
+    let c = compose(a, b);
+
+    // compose(a,b).shape =~= b.shape
+    lemma_compose_shape(a, b);
+
+    // compose(a,b).stride =~= scale(b.stride, d)
+    lemma_compose_stride_1d(a, b);
+    let scaled = crate::layout::scale_strides_spec(b.stride, d);
+
+    // Build an equivalent layout with b.shape and scaled strides
+    let equiv = LayoutSpec { shape: b.shape, stride: scaled };
+
+    // compose(a,b).offset(x) == equiv.offset(x)
+    lemma_offset_eq_layout(c.shape, c.stride, b.shape, scaled, x);
+
+    // equiv.offset(x) = dot(delinearize(x, b.shape), scaled)
+    let coords = delinearize(x, b.shape);
+    lemma_delinearize_len(x, b.shape);
+
+    // dot(coords, scaled) == d * dot(coords, b.stride) by scale lemma
+    crate::proof::injectivity_lemmas::lemma_dot_product_scale(coords, b.stride, d);
+
+    // Explicit chain:
+    assert(equiv.offset(x) == dot_product_nat_int(coords, scaled));
+    assert(dot_product_nat_int(coords, scaled) == d * dot_product_nat_int(coords, b.stride));
+    assert(b.offset(x) == dot_product_nat_int(coords, b.stride));
+    assert(c.offset(x) == equiv.offset(x));
+    assert(c.offset(x) == d * bx);
+
+    // a.offset(bx) = bx * d (since bx < M, rank-1 A)
+    // lemma_1d_offset gives us the result for LayoutSpec{seq![M], seq![d]}
+    // We need to bridge this to `a`
+    lemma_1d_offset(a.shape.first(), d, bx as nat);
+    // Bridge: a.shape =~= seq![a.shape.first()], a.stride =~= seq![d]
+    assert(a.shape =~= seq![a.shape.first()]);
+    assert(a.stride =~= seq![d]);
+    lemma_offset_eq_layout(
+        a.shape, a.stride,
+        seq![a.shape.first()], seq![d],
+        bx as nat,
+    );
+    assert(a.offset(bx as nat) == bx * d);
+
+    // d * bx == bx * d
+    vstd::arithmetic::mul::lemma_mul_is_commutative(d, bx);
+    assert(c.offset(x) == a.offset(bx as nat));
+}
+
 } // verus!

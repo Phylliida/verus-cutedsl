@@ -7,3 +7,5 @@ pub mod divide_lemmas;
 pub mod product_lemmas;
 pub mod swizzle_lemmas;
 pub mod integer_helpers;
+pub mod injectivity_lemmas;
+pub mod slice_lemmas;

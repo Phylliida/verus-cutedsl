@@ -65,14 +65,79 @@ impl LayoutSpec {
             #[trigger] self.stride[i] <= #[trigger] self.stride[j]
     }
 
+    /// Tractability at a single mode: (M_i * d_i) > 0 and divides d_{i+1}.
+    pub open spec fn tractable_at(&self, i: int) -> bool {
+        let product = (self.shape[i] as int) * self.stride[i];
+        product > 0 && self.stride[i + 1] % product == 0
+    }
+
     /// Tractability: for adjacent modes, (M_i * d_i) divides d_{i+1}.
     /// Required for complement admissibility.
     pub open spec fn is_tractable(&self) -> bool {
-        forall|i: int| 0 <= i < self.stride.len() as int - 1 ==> {
-            let product = (self.shape[i] as int) * self.stride[i];
-            product > 0 && #[trigger] self.stride[i + 1] % product == 0
-        }
+        forall|i: int| 0 <= i < self.stride.len() as int - 1 ==>
+            #[trigger] self.tractable_at(i)
     }
+
+    // ══════════════════════════════════════════════════════════════
+    // Injectivity and surjectivity
+    // ══════════════════════════════════════════════════════════════
+
+    /// A layout is injective (no aliasing) when distinct indices map to distinct offsets.
+    pub open spec fn is_injective(&self) -> bool {
+        forall|i: nat, j: nat|
+            i < self.size() && j < self.size() && i != j ==>
+                #[trigger] self.offset(i) != #[trigger] self.offset(j)
+    }
+
+    /// Whether offset k is in the image of this layout.
+    pub open spec fn offset_hit(&self, k: int) -> bool {
+        exists|i: nat| i < self.size() && #[trigger] self.offset(i) == k
+    }
+
+    /// A layout is surjective onto [0, m): every offset in range is hit.
+    pub open spec fn is_surjective_upto(&self, m: nat) -> bool {
+        forall|k: int| 0 <= k < m as int ==> #[trigger] self.offset_hit(k)
+    }
+
+    /// A layout is bijective onto [0, m): injective + surjective.
+    pub open spec fn is_bijective_upto(&self, m: nat) -> bool {
+        self.is_injective() && self.is_surjective_upto(m)
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Standard layout constructors
+// ══════════════════════════════════════════════════════════════
+
+/// Column-major strides: (1, M_0, M_0*M_1, ..., M_0*...*M_{k-2}).
+pub open spec fn column_major_strides(shape: Seq<nat>) -> Seq<int>
+    decreases shape.len(),
+{
+    if shape.len() == 0 {
+        seq![]
+    } else {
+        seq![1int].add(
+            scale_strides_spec(
+                column_major_strides(shape.skip(1)),
+                shape.first() as int,
+            )
+        )
+    }
+}
+
+/// Scale all strides by a factor.
+pub open spec fn scale_strides_spec(strides: Seq<int>, factor: int) -> Seq<int> {
+    Seq::new(strides.len(), |i: int| strides[i] * factor)
+}
+
+/// Construct a column-major layout from a shape.
+pub open spec fn make_column_major(shape: Seq<nat>) -> LayoutSpec {
+    LayoutSpec { shape, stride: column_major_strides(shape) }
+}
+
+/// Construct an identity layout (M):(1).
+pub open spec fn make_identity(m: nat) -> LayoutSpec {
+    LayoutSpec { shape: seq![m], stride: seq![1int] }
 }
 
 } // verus!

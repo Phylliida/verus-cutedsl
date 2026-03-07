@@ -91,4 +91,29 @@ pub proof fn lemma_shape_size_append(a: Seq<nat>, b: Seq<nat>)
     }
 }
 
+// ══════════════════════════════════════════════════════════════
+// Logical product validity
+// ══════════════════════════════════════════════════════════════
+
+/// The logical product layout is valid.
+pub proof fn lemma_product_valid(a: &LayoutSpec, b: &LayoutSpec)
+    requires product_admissible(a, b),
+    ensures logical_product(a, b).valid(),
+{
+    let p = logical_product(a, b);
+    lemma_product_rank(a, b);
+    assert(p.shape.len() == p.stride.len());
+
+    assert forall|i: int| 0 <= i < p.shape.len() implies #[trigger] p.shape[i] > 0 by {
+        if i < a.shape.len() as int {
+            lemma_product_tile_shape(a, b, i);
+            assert(p.shape[i] == a.shape[i]);
+        } else {
+            let bi = (i - a.shape.len()) as int;
+            lemma_product_rest_stride(a, b, bi);
+            assert(p.shape[i] == b.shape[bi]);
+        }
+    };
+}
+
 } // verus!

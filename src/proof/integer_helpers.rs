@@ -143,4 +143,52 @@ pub proof fn lemma_mul_le_right(a: int, c: int, b: int)
     vstd::arithmetic::mul::lemma_mul_inequality(a, c, b);
 }
 
+/// If d > 0 and x % d == 0, then (c * x) % d == 0 for any c >= 0.
+pub proof fn lemma_multiple_scaled(x: int, c: nat, d: int)
+    requires d > 0, x % d == 0, x >= 0,
+    ensures (c as int * x) % d == 0,
+{
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x, d);
+    // x == d * (x/d) + 0
+    let q = x / d;
+    assert(x == d * q);
+    // c * x == c * d * q
+    vstd::arithmetic::mul::lemma_mul_is_associative(c as int, d, q);
+    // c * (d * q) == (c * d) * q, but we want c * x % d == 0
+    // c * x == c * (d * q) = (c * q) * d
+    vstd::arithmetic::mul::lemma_mul_is_associative(c as int, d, q);
+    vstd::arithmetic::mul::lemma_mul_is_commutative(d, q);
+    // x == q * d, so c * x == c * q * d
+    vstd::arithmetic::mul::lemma_mul_is_associative(c as int, q, d);
+    // c * x == (c * q) * d
+    assert(c as int * x == (c as int * q) * d);
+    // (c * q) * d % d == 0
+    vstd::arithmetic::div_mod::lemma_mod_multiples_basic(c as int * q, d);
+}
+
+/// Sum of two multiples of d is a multiple of d.
+pub proof fn lemma_sum_multiples(a: int, b: int, d: int)
+    requires d > 0, a % d == 0, b % d == 0,
+    ensures (a + b) % d == 0,
+{
+    vstd::arithmetic::div_mod::lemma_add_mod_noop(a, b, d);
+    // (a + b) % d == ((a % d) + (b % d)) % d == 0
+}
+
+/// A value in [0, d) that equals a multiple of d must be 0.
+pub proof fn lemma_small_multiple_is_zero(x: int, d: int)
+    requires d > 0, 0 <= x < d, x % d == 0,
+    ensures x == 0,
+{
+    vstd::arithmetic::div_mod::lemma_small_mod(x as nat, d as nat);
+}
+
+/// If d > 0 and x % d == 0 and y % d == 0, then (x - y) % d == 0.
+pub proof fn lemma_diff_multiples(x: int, y: int, d: int)
+    requires d > 0, x % d == 0, y % d == 0,
+    ensures (x - y) % d == 0,
+{
+    vstd::arithmetic::div_mod::lemma_sub_mod_noop(x, y, d);
+}
+
 } // verus!

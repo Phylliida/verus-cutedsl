@@ -94,6 +94,7 @@ impl RuntimeLayout {
     pub fn offset(&self, idx: u64) -> (result: i64)
         requires
             self.wf_spec(),
+            self@.non_negative_strides(),
             (idx as nat) < self@.size(),
             self@.offset(idx as nat) >= i64::MIN as int,
             self@.offset(idx as nat) <= i64::MAX as int,
@@ -128,31 +129,15 @@ impl RuntimeLayout {
             }
             assert(strides_to_int_seq(self.stride@) =~= self@.stride);
 
-            // Coords fit in i64 (they're < shape[j] which is u64, and shape values are small)
-            // coords_in_bounds: coords[j] < shape[j], and shape values fit in u64
-            // We need coords[j] <= i64::MAX as u64
-            assert forall|j: int| 0 <= j < coords@.len() implies coords@[j] <= i64::MAX as u64 by {
-                assert(coords@[j] as nat == spec_coords[j]);
-                assert(spec_coords[j] < self@.shape[j]);
-                // shape[j] is nat but originally from u64, so < u64::MAX
-                // and i64::MAX < u64::MAX, but coords < shape which could be > i64::MAX
-                // Actually we can't guarantee this in general. Let's assume it for now.
-                assume(coords@[j] <= i64::MAX as u64);
-            }
-
-            // Bridge individual products
-            assert forall|j: int| 0 <= j < coords@.len() implies
-                (coords@[j] as int) * (self.stride@[j] as int) >= i64::MIN as int &&
-                #[trigger] ((coords@[j] as int) * (self.stride@[j] as int)) <= i64::MAX as int
+            // Bridge non-negative strides to concrete Vec
+            assert forall|j: int| 0 <= j < self.stride@.len() implies
+                #[trigger] self.stride@[j] >= 0
             by {
-                // partial(j+1) - partial(j) = coords[j]*strides[j]
-                // Both partial sums are in i64 range, so the difference is too
-                // (within 2*i64::MAX which is fine for the product)
-                assume((coords@[j] as int) * (self.stride@[j] as int) >= i64::MIN as int);
-                assume((coords@[j] as int) * (self.stride@[j] as int) <= i64::MAX as int);
+                assert(self@.stride[j] >= 0);
+                assert(self@.stride[j] == strides_to_int_seq(self.stride@)[j]);
             }
 
-            // Bridge partial sums
+            // Bridge partial sums from spec to concrete coords/strides
             assert forall|k: nat| k <= coords@.len() implies
                 dot_product_nat_int(
                     shape_to_nat_seq(coords@).take(k as int),
@@ -262,10 +247,8 @@ impl RuntimeLayout {
                 n == self.shape.len(),
                 n > 1,
                 0 <= i <= n - 1,
-                forall|j: int| 0 <= j < i as int ==> {
-                    let product = (self@.shape[j] as int) * self@.stride[j];
-                    product > 0 && #[trigger] self@.stride[j + 1] % product == 0
-                },
+                forall|j: int| 0 <= j < i as int ==>
+                    #[trigger] self@.tractable_at(j),
             decreases n - 1 - i,
         {
             proof {
@@ -277,7 +260,6 @@ impl RuntimeLayout {
             let shape_val = self.shape[i] as i128;
             let stride_val = self.stride[i] as i128;
 
-            // i128 can hold u64 * i64 without overflow
             proof {
                 assert(i128::MIN as int <= (shape_val as int) * (stride_val as int)
                     <= i128::MAX as int) by (nonlinear_arith)
@@ -288,104 +270,111 @@ impl RuntimeLayout {
             }
 
             let product = shape_val * stride_val;
+            let ghost sp = (self@.shape[i as int] as int) * self@.stride[i as int];
 
             proof {
-                let sp = (self@.shape[i as int] as int) * self@.stride[i as int];
                 assert(product as int == sp);
             }
 
             if product <= 0 {
                 proof {
-                    let sp = (self@.shape[i as int] as int) * self@.stride[i as int];
-                    assert(sp <= 0);
+                    assert(!self@.tractable_at(i as int));
                 }
                 return false;
             }
 
+            // Use abs(stride_next) so both operands of % are non-negative
+            // (Z3's EucMod bounds axiom only fires for non-negative dividend)
             let stride_next = self.stride[i + 1] as i128;
-
-            proof {
-                let sp = (self@.shape[i as int] as int) * self@.stride[i as int];
-                assert(product as int == sp);
-                assert(stride_next as int == self.stride@[(i + 1) as int] as int);
-                assert(stride_next as int == self@.stride[(i + 1) as int]);
-            }
-
-            // Use non-negative value for Z3 EucMod axiom compatibility
             let abs_next: i128 = if stride_next >= 0 { stride_next } else { -stride_next };
             let rem = abs_next % product;
 
             if rem != 0 {
                 proof {
                     let s = self@.stride[(i + 1) as int];
-                    let sp = (self@.shape[i as int] as int) * self@.stride[i as int];
                     assert(sp > 0);
-                    assert(product as int == sp);
-                    assert(abs_next as int >= 0);
-                    // From Z3 (abs_next >= 0, product > 0): rem as int == (abs_next as int) % sp
-                    // rem != 0 so (abs_next as int) % sp != 0
+                    assert((abs_next as int) % sp != 0);
+                    assert(abs_next as int == if stride_next >= 0 { s } else { -s });
 
-                    // Contrapositive: s % sp == 0 would imply abs_next % sp == 0
-                    if s % sp == 0 {
-                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(s, sp);
-                        let q_s = s / sp;
-                        assert(s == sp * q_s + s % sp);
-                        assert(s == sp * q_s);
-                        if stride_next >= 0 {
-                            assert(abs_next as int == s);
-                            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(q_s, sp);
-                        } else {
-                            assert(abs_next as int == -s);
-                            assert(-s == -(sp * q_s));
-                            assert(-(sp * q_s) == (-q_s) * sp) by (nonlinear_arith)
-                                requires sp == sp, q_s == q_s;
-                            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(-q_s, sp);
-                        }
-                        assert((abs_next as int) % sp == 0);
-                        // But rem != 0 means (abs_next as int) % sp != 0 — contradiction
+                    if self@.tractable_at(i as int) {
+                        assert(s % sp == 0);
+                        Self::lemma_abs_mod_zero(s, sp, abs_next as int, stride_next >= 0);
                         assert(false);
                     }
-                    assert(s % sp != 0);
+                    assert(!self@.tractable_at(i as int));
                 }
                 return false;
             }
 
             proof {
                 let s = self@.stride[(i + 1) as int];
-                let sp = (self@.shape[i as int] as int) * self@.stride[i as int];
                 assert(sp > 0);
-                assert(product as int == sp);
-                assert(abs_next as int >= 0);
-                // rem == 0 so (abs_next as int) % sp == 0
+                assert((abs_next as int) % sp == 0);
+                assert(abs_next as int == if stride_next >= 0 { s } else { -s });
 
-                // Prove s % sp == 0 from abs_next % sp == 0
-                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(abs_next as int, sp);
-                let k = (abs_next as int) / sp;
-                assert(abs_next as int == sp * k + (abs_next as int) % sp);
-                assert(abs_next as int == sp * k);
-
-                if stride_next >= 0 {
-                    assert(s == abs_next as int == sp * k);
-                    vstd::arithmetic::div_mod::lemma_mod_multiples_basic(k, sp);
-                } else {
-                    assert(s == -(abs_next as int));
-                    assert(-(abs_next as int) == -(sp * k));
-                    assert(-(sp * k) == (-k) * sp) by (nonlinear_arith)
-                        requires sp == sp, k == k;
-                    assert(s == (-k) * sp);
-                    vstd::arithmetic::div_mod::lemma_mod_multiples_basic(-k, sp);
-                }
+                Self::lemma_abs_mod_zero_rev(s, sp, abs_next as int, stride_next >= 0);
                 assert(s % sp == 0);
+                assert(self@.tractable_at(i as int));
 
-                // Trigger the forall for j == i
-                let product_i = (self@.shape[i as int] as int) * self@.stride[i as int];
-                assert(product_i > 0);
-                assert(self@.stride[(i as int) + 1] % product_i == 0);
+                assert forall|j: int| 0 <= j < (i + 1) as int implies
+                    #[trigger] self@.tractable_at(j)
+                by {
+                    if j == i as int {
+                    }
+                }
             }
 
             i = i + 1;
         }
         true
+    }
+
+    /// Helper: if a % d == 0 and abs_a == |a|, then abs_a % d == 0
+    proof fn lemma_abs_mod_zero(a: int, d: int, abs_a: int, is_nonneg: bool)
+        requires
+            d > 0,
+            a % d == 0,
+            abs_a == if is_nonneg { a } else { -a },
+        ensures
+            abs_a % d == 0,
+    {
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a, d);
+        let q = a / d;
+        assert(a == d * q + a % d);
+        assert(a == d * q);
+        if is_nonneg {
+            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(q, d);
+        } else {
+            assert(abs_a == -a == -(d * q));
+            assert(-(d * q) == (-q) * d) by (nonlinear_arith)
+                requires d == d, q == q;
+            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(-q, d);
+        }
+    }
+
+    /// Helper: if abs_a % d == 0 and abs_a == |a|, then a % d == 0
+    proof fn lemma_abs_mod_zero_rev(a: int, d: int, abs_a: int, is_nonneg: bool)
+        requires
+            d > 0,
+            abs_a % d == 0,
+            abs_a == if is_nonneg { a } else { -a },
+        ensures
+            a % d == 0,
+    {
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(abs_a, d);
+        let k = abs_a / d;
+        assert(abs_a == d * k + abs_a % d);
+        assert(abs_a == d * k);
+        if is_nonneg {
+            assert(a == abs_a);
+            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(k, d);
+        } else {
+            assert(a == -abs_a == -(d * k));
+            assert(-(d * k) == (-k) * d) by (nonlinear_arith)
+                requires d == d, k == k;
+            assert(a == (-k) * d);
+            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(-k, d);
+        }
     }
 
     /// Compute cosize (minimum codomain size) for non-negative strides.

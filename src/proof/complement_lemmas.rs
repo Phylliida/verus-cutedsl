@@ -72,6 +72,7 @@ pub proof fn lemma_complement_shape_valid(a: &LayoutSpec, m: nat)
             // i.e., a.stride[i] % stride_product(a, i-1) == 0
             let ti = i - 1;
             assert(0 <= ti < a.stride.len() as int - 1);
+            assert(a.tractable_at(ti));
             let product_ti = (a.shape[ti] as int) * a.stride[ti];
             assert(a.stride[ti + 1] % product_ti == 0);
             assert(sp == product_ti);

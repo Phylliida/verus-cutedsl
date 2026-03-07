@@ -301,15 +301,13 @@ proof fn lemma_delinearize_index_formula(idx: nat, s: Seq<nat>, k: nat)
 }
 
 /// Compute dot product of coords (u64) with strides (i64) at runtime.
+/// Requires non-negative strides and partial sums in i64 range.
 pub fn dot_product_exec(coords: &Vec<u64>, strides: &Vec<i64>) -> (result: i64)
     requires
         coords@.len() == strides@.len(),
-        dot_product_nat_int(shape_to_nat_seq(coords@), strides_to_int_seq(strides@)) >= i64::MIN as int,
-        dot_product_nat_int(shape_to_nat_seq(coords@), strides_to_int_seq(strides@)) <= i64::MAX as int,
-        // Each individual product and each partial sum fits in i64
-        forall|j: int| 0 <= j < coords@.len() ==>
-            (coords@[j] as int) * (strides@[j] as int) >= i64::MIN as int &&
-            #[trigger] ((coords@[j] as int) * (strides@[j] as int)) <= i64::MAX as int,
+        // Non-negative strides
+        forall|j: int| 0 <= j < strides@.len() ==> #[trigger] strides@[j] >= 0,
+        // Each partial sum fits in i64
         forall|k: nat| k <= coords@.len() ==>
             dot_product_nat_int(
                 shape_to_nat_seq(coords@).take(k as int),
@@ -319,8 +317,6 @@ pub fn dot_product_exec(coords: &Vec<u64>, strides: &Vec<i64>) -> (result: i64)
                 shape_to_nat_seq(coords@).take(k as int),
                 strides_to_int_seq(strides@).take(k as int)
             ) <= i64::MAX as int,
-        // coords fit in i64 (needed for cast)
-        forall|j: int| 0 <= j < coords@.len() ==> coords@[j] <= i64::MAX as u64,
     ensures
         result as int == dot_product_nat_int(shape_to_nat_seq(coords@), strides_to_int_seq(strides@)),
 {
@@ -338,20 +334,58 @@ pub fn dot_product_exec(coords: &Vec<u64>, strides: &Vec<i64>) -> (result: i64)
             result as int == dot_product_nat_int(spec_coords.take(i as int), spec_strides.take(i as int)),
             result as int >= i64::MIN as int,
             result as int <= i64::MAX as int,
-            forall|j: int| 0 <= j < coords@.len() ==>
-                (coords@[j] as int) * (strides@[j] as int) >= i64::MIN as int &&
-                #[trigger] ((coords@[j] as int) * (strides@[j] as int)) <= i64::MAX as int,
+            forall|j: int| 0 <= j < strides@.len() ==> #[trigger] strides@[j] >= 0,
             forall|k: nat| k <= coords@.len() ==>
                 dot_product_nat_int(spec_coords.take(k as int), spec_strides.take(k as int)) >= i64::MIN as int &&
                 dot_product_nat_int(spec_coords.take(k as int), spec_strides.take(k as int)) <= i64::MAX as int,
-            forall|j: int| 0 <= j < coords@.len() ==> coords@[j] <= i64::MAX as u64,
         decreases coords.len() - i,
     {
         proof {
             lemma_dot_product_take_step(spec_coords, spec_strides, i as nat);
+            // partial(i+1) = partial(i) + coords[i]*strides[i]
+            // Both partial(i) and partial(i+1) are in [0, i64::MAX] (non-negative strides)
+            // So product = partial(i+1) - partial(i) is in [0, i64::MAX]
         }
 
-        let product = (coords[i] as i64) * strides[i];
+        let product: i64 = if strides[i] == 0 {
+            proof {
+                vstd::arithmetic::mul::lemma_mul_basics(coords@[i as int] as int);
+                assert((coords@[i as int] as int) * (strides@[i as int] as int) == 0);
+            }
+            0
+        } else {
+            proof {
+                // strides[i] >= 1, so coords[i] * strides[i] <= i64::MAX
+                // implies coords[i] <= i64::MAX (since strides[i] >= 1)
+                let c = coords@[i as int] as int;
+                let s = strides@[i as int] as int;
+                assert(s >= 1);
+                // product = partial(i+1) - partial(i), in [0, i64::MAX]
+                let partial_i = dot_product_nat_int(spec_coords.take(i as int), spec_strides.take(i as int));
+                let partial_i1 = dot_product_nat_int(spec_coords.take((i + 1) as int), spec_strides.take((i + 1) as int));
+                assert(partial_i1 == partial_i + c * s);
+                assert(partial_i >= 0) by {
+                    lemma_dot_product_partial_nonneg(spec_coords, spec_strides, i as nat);
+                }
+                assert(partial_i1 <= i64::MAX as int);
+                assert(c * s >= 0) by {
+                    vstd::arithmetic::mul::lemma_mul_nonnegative(c, s);
+                }
+                assert(c * s <= i64::MAX as int);
+
+                // coords[i] <= product / strides[i] <= i64::MAX / 1 = i64::MAX
+                assert(c <= i64::MAX as int) by {
+                    assert(c * s <= i64::MAX as int);
+                    assert(s >= 1);
+                    assert(c <= c * s) by {
+                        vstd::arithmetic::mul::lemma_mul_inequality(1, s, c);
+                        vstd::arithmetic::mul::lemma_mul_is_commutative(c, 1);
+                        vstd::arithmetic::mul::lemma_mul_is_commutative(c, s);
+                    }
+                }
+            }
+            (coords[i] as i64) * strides[i]
+        };
         result = result + product;
         i = i + 1;
     }
@@ -362,6 +396,27 @@ pub fn dot_product_exec(coords: &Vec<u64>, strides: &Vec<i64>) -> (result: i64)
     }
 
     result
+}
+
+/// Partial dot product with non-negative strides is non-negative.
+proof fn lemma_dot_product_partial_nonneg(coords: Seq<nat>, strides: Seq<int>, k: nat)
+    requires
+        coords.len() == strides.len(),
+        k <= coords.len(),
+        forall|j: int| 0 <= j < strides.len() ==> #[trigger] strides[j] >= 0,
+    ensures
+        dot_product_nat_int(coords.take(k as int), strides.take(k as int)) >= 0,
+    decreases k,
+{
+    if k == 0 {
+        assert(coords.take(0int) =~= Seq::<nat>::empty());
+        assert(strides.take(0int) =~= Seq::<int>::empty());
+    } else {
+        lemma_dot_product_take_step(coords, strides, (k - 1) as nat);
+        lemma_dot_product_partial_nonneg(coords, strides, (k - 1) as nat);
+        assert(strides[(k - 1) as int] >= 0);
+        vstd::arithmetic::mul::lemma_mul_nonnegative(coords[(k - 1) as int] as int, strides[(k - 1) as int]);
+    }
 }
 
 /// dot_product(take(i+1), take(i+1)) == dot_product(take(i), take(i)) + coords[i]*strides[i]

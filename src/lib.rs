@@ -23,6 +23,9 @@ pub mod product;
 pub mod swizzle;
 
 #[cfg(verus_keep_ghost)]
+pub mod slice;
+
+#[cfg(verus_keep_ghost)]
 pub mod proof;
 
 #[cfg(verus_keep_ghost)]
