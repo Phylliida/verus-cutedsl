@@ -3,6 +3,7 @@ use crate::shape::*;
 use crate::layout::*;
 use crate::product::*;
 use crate::proof::shape_lemmas::*;
+use crate::proof::injectivity_lemmas::lemma_dot_product_scale;
 
 verus! {
 
@@ -114,6 +115,95 @@ pub proof fn lemma_product_valid(a: &LayoutSpec, b: &LayoutSpec)
             assert(p.shape[i] == b.shape[bi]);
         }
     };
+}
+
+// ══════════════════════════════════════════════════════════════
+// Product offset decomposition
+// ══════════════════════════════════════════════════════════════
+
+/// scale_strides (product.rs) == scale_strides_spec (layout.rs) — same definition, bridge for Z3.
+proof fn lemma_scale_strides_eq(strides: Seq<int>, factor: int)
+    ensures scale_strides(strides, factor) =~= scale_strides_spec(strides, factor),
+{
+    assert forall|i: int| 0 <= i < strides.len()
+    implies scale_strides(strides, factor)[i] == scale_strides_spec(strides, factor)[i] by {
+    };
+}
+
+/// Product offset decomposition:
+/// product(a,b).offset(x) == a.offset(x % size_a) + cosize(a) * b.offset(x / size_a)
+pub proof fn lemma_product_offset(a: &LayoutSpec, b: &LayoutSpec, x: nat)
+    requires
+        product_admissible(a, b),
+        x < a.size() * b.size(),
+    ensures
+        logical_product(a, b).offset(x)
+            == a.offset(x % a.size()) + (a.cosize_nonneg() as int) * b.offset(x / a.size()),
+{
+    let p = logical_product(a, b);
+    let s_a = a.shape;
+    let s_b = b.shape;
+    let size_a = shape_size(s_a);
+    let size_b = shape_size(s_b);
+    let cs = a.cosize_nonneg() as int;
+
+    // Product shape = s_a ++ s_b, size = size_a * size_b
+    lemma_product_size(a, b);
+    assert(shape_size(p.shape) == size_a * size_b);
+
+    // x < size_a * size_b = shape_size(s_a ++ s_b)
+    lemma_shape_size_append(s_a, s_b);
+    assert(x < shape_size(s_a.add(s_b)));
+
+    // Step 1: delinearize(x, s_a ++ s_b) =~= delinearize(x % size_a, s_a) ++ delinearize(x / size_a, s_b)
+    lemma_delinearize_concat(x, s_a, s_b);
+    let d_a = delinearize(x % size_a, s_a);
+    let d_b = delinearize(x / size_a, s_b);
+    assert(delinearize(x, s_a.add(s_b)) =~= d_a.add(d_b));
+
+    // The product's coords are delinearize(x, p.shape) = delinearize(x, s_a ++ s_b)
+    assert(p.shape =~= s_a.add(s_b));
+
+    // Step 2: split dot product over concatenation
+    // p.stride = a.stride ++ scale_strides(b.stride, cs)
+    let scaled_b = scale_strides(b.stride, cs);
+    assert(p.stride =~= a.stride.add(scaled_b));
+
+    // dot(d_a ++ d_b, a.stride ++ scaled_b) = dot(d_a, a.stride) + dot(d_b, scaled_b)
+    lemma_delinearize_len(x % size_a, s_a);
+    lemma_delinearize_len(x / size_a, s_b);
+    assert(d_a.len() == s_a.len());
+    assert(d_b.len() == s_b.len());
+    assert(d_a.len() == a.stride.len());
+    assert(d_b.len() == scaled_b.len());
+
+    lemma_dot_product_append(d_a, d_b, a.stride, scaled_b);
+    assert(dot_product_nat_int(d_a.add(d_b), a.stride.add(scaled_b))
+        == dot_product_nat_int(d_a, a.stride) + dot_product_nat_int(d_b, scaled_b));
+
+    // Step 3: factor out cs from scaled strides
+    // dot(d_b, scale_strides(b.stride, cs)) = cs * dot(d_b, b.stride)
+    lemma_scale_strides_eq(b.stride, cs);
+    assert(scaled_b =~= scale_strides_spec(b.stride, cs));
+    lemma_dot_product_scale(d_b, b.stride, cs);
+    assert(dot_product_nat_int(d_b, scaled_b)
+        == cs * dot_product_nat_int(d_b, b.stride));
+
+    // Step 4: connect to offset definitions
+    // a.offset(x % size_a) = dot(delinearize(x % size_a, s_a), a.stride) = dot(d_a, a.stride)
+    // b.offset(x / size_a) = dot(delinearize(x / size_a, s_b), b.stride) = dot(d_b, b.stride)
+
+    // p.offset(x) = dot(delinearize(x, p.shape), p.stride)
+    //             = dot(d_a ++ d_b, a.stride ++ scaled_b)
+    //             = dot(d_a, a.stride) + cs * dot(d_b, b.stride)
+    //             = a.offset(x % size_a) + cs * b.offset(x / size_a)
+
+    // Bridge: delinearize(x, p.shape) =~= d_a ++ d_b, so the dot products match
+    assert(p.offset(x) == dot_product_nat_int(delinearize(x, p.shape), p.stride));
+    assert(delinearize(x, p.shape) =~= d_a.add(d_b));
+    // Need to show dot_product respects extensional equality
+    assert(dot_product_nat_int(delinearize(x, p.shape), p.stride)
+        == dot_product_nat_int(d_a.add(d_b), a.stride.add(scaled_b)));
 }
 
 } // verus!

@@ -25,7 +25,7 @@ pub proof fn lemma_complement_rank(a: &LayoutSpec, m: nat)
 // Helper: if a divides b and a > 0 and b > 0, then b/a > 0
 // ══════════════════════════════════════════════════════════════
 
-proof fn lemma_div_positive_when_divides(a: int, b: int)
+pub proof fn lemma_div_positive_when_divides(a: int, b: int)
     requires a > 0, b > 0, b % a == 0,
     ensures b / a > 0,
 {
@@ -203,6 +203,179 @@ pub proof fn lemma_complement_stride_rest(a: &LayoutSpec, m: nat, i: int)
     requires complement_admissible(a, m), 0 <= i < a.shape.len() as int,
     ensures complement(a, m).stride[i + 1] == stride_product(a, i),
 {
+}
+
+// ══════════════════════════════════════════════════════════════
+// Complement validity (full)
+// ══════════════════════════════════════════════════════════════
+
+/// The complement layout is valid (shape/stride lengths match, all shapes > 0).
+pub proof fn lemma_complement_valid(a: &LayoutSpec, m: nat)
+    requires complement_admissible(a, m),
+    ensures complement(a, m).valid(),
+{
+    lemma_complement_rank(a, m);
+    lemma_complement_shape_valid(a, m);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Complement has all-positive strides
+// ══════════════════════════════════════════════════════════════
+
+/// Helper: stride_product(a, i) > 0 for a valid sorted layout with stride[0] > 0.
+proof fn lemma_stride_product_positive(a: &LayoutSpec, i: int)
+    requires
+        a.valid(),
+        a.is_sorted(),
+        a.stride[0] > 0,
+        a.shape.len() > 0,
+        0 <= i < a.shape.len() as int,
+    ensures stride_product(a, i) > 0,
+{
+    // stride_product(a, i) = shape[i] * stride[i]
+    // shape[i] > 0 (valid), stride[i] >= stride[0] > 0 (sorted, stride[0] > 0)
+    assert(a.stride[i] >= a.stride[0]);
+    assert(a.stride[i] > 0);
+    lemma_mul_pos(a.shape[i], a.stride[i] as nat);
+}
+
+/// All complement strides are positive.
+pub proof fn lemma_complement_positive_strides(a: &LayoutSpec, m: nat)
+    requires complement_admissible(a, m),
+    ensures
+        forall|i: int| 0 <= i < complement(a, m).stride.len()
+            ==> #[trigger] complement(a, m).stride[i] > 0,
+{
+    let c = complement(a, m);
+    lemma_complement_rank(a, m);
+
+    assert forall|i: int| 0 <= i < c.stride.len()
+    implies #[trigger] c.stride[i] > 0 by {
+        if i == 0 {
+            lemma_complement_stride_first(a, m);
+        } else {
+            lemma_complement_stride_rest(a, m, i - 1);
+            // c.stride[i] = stride_product(a, i-1) > 0
+            lemma_stride_product_positive(a, i - 1);
+        }
+    };
+}
+
+// ══════════════════════════════════════════════════════════════
+// Complement is tractable
+// ══════════════════════════════════════════════════════════════
+
+/// The complement layout is tractable.
+///
+/// For complement mode i (0 <= i < k):
+///   complement.shape[i] * complement.stride[i] divides complement.stride[i+1]
+///
+/// At i=0: shape_c[0]*stride_c[0] = d_0*1 = d_0, stride_c[1] = M_0*d_0, so d_0 | M_0*d_0 ✓
+/// At i>=1,i<k: shape_c[i]*stride_c[i] = (d_i/sp(i-1))*sp(i-1) = d_i,
+///              stride_c[i+1] = sp(i) = M_i*d_i, so d_i | M_i*d_i ✓
+pub proof fn lemma_complement_tractable(a: &LayoutSpec, m: nat)
+    requires complement_admissible(a, m),
+    ensures complement(a, m).is_tractable(),
+{
+    let c = complement(a, m);
+    let k = a.shape.len();
+    lemma_complement_rank(a, m);
+    lemma_complement_shape_valid(a, m);
+    lemma_complement_positive_strides(a, m);
+
+    assert forall|i: int| 0 <= i < c.stride.len() - 1
+    implies #[trigger] c.tractable_at(i) by {
+        let cs_i = c.shape[i];
+        let cd_i = c.stride[i];
+        let cd_next = c.stride[i + 1];
+        let product_i = (cs_i as int) * cd_i;
+
+        // product_i > 0
+        assert(cs_i > 0) by {
+            lemma_complement_shape_valid(a, m);
+        };
+        assert(cd_i > 0);
+        lemma_mul_pos(cs_i, cd_i as nat);
+
+        // Show cd_next % product_i == 0
+        if i == 0 {
+            // cs[0] = d_0, cd[0] = 1, product_0 = d_0
+            lemma_complement_stride_first(a, m);
+            assert(cd_i == 1);
+            assert(product_i == cs_i as int);
+            // cs[0] = a.stride[0]
+            assert(cs_i == a.stride[0] as nat);
+            assert(product_i == a.stride[0]);
+            // cd[1] = stride_product(a, 0) = M_0 * d_0
+            lemma_complement_stride_rest(a, m, 0);
+            assert(cd_next == stride_product(a, 0));
+            assert(cd_next == (a.shape[0] as int) * a.stride[0]);
+            // M_0 * d_0 % d_0 == 0
+            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(a.shape[0] as int, a.stride[0]);
+        } else {
+            // i >= 1, i < k (since c has k+1 modes, tractability checks i < k)
+            // cs[i] = d_i / sp(i-1)
+            // cd[i] = sp(i-1)
+            // product_i = (d_i / sp(i-1)) * sp(i-1) = d_i
+            lemma_complement_stride_rest(a, m, i - 1);
+            assert(cd_i == stride_product(a, i - 1));
+            let sp_im1 = stride_product(a, i - 1);
+
+            // cs[i] = d_i / sp(i-1)
+            // product_i = cs[i] * sp(i-1)
+            // We need: product_i == a.stride[i]
+            // This follows from cs[i] = (d_i / sp(i-1)) and d_i % sp(i-1) == 0
+            // From tractability of a at (i-1): d_i % sp(i-1) == 0
+            assert(a.tractable_at(i - 1));
+            assert(a.stride[i] % sp_im1 == 0);
+            lemma_stride_product_positive(a, i - 1);
+            // d_i / sp(i-1) * sp(i-1) == d_i
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a.stride[i], sp_im1);
+            assert(a.stride[i] == sp_im1 * (a.stride[i] / sp_im1));
+            vstd::arithmetic::mul::lemma_mul_is_commutative(sp_im1, a.stride[i] / sp_im1);
+            assert(product_i == a.stride[i]);
+
+            // cd[i+1] = sp(i) = M_i * d_i
+            if i < k as int - 1 {
+                lemma_complement_stride_rest(a, m, i);
+                assert(cd_next == stride_product(a, i));
+                // stride_product(a, i) = shape[i] * stride[i] = M_i * d_i
+                // So cd_next % product_i == (M_i * d_i) % d_i == 0
+                vstd::arithmetic::div_mod::lemma_mod_multiples_basic(
+                    a.shape[i] as int, a.stride[i],
+                );
+            } else {
+                // i == k-1 (last tractability check)
+                // cd[k] = sp(k-1) = stride_product(a, k-1)
+                lemma_complement_stride_rest(a, m, i);
+                assert(cd_next == stride_product(a, i));
+                vstd::arithmetic::div_mod::lemma_mod_multiples_basic(
+                    a.shape[i] as int, a.stride[i],
+                );
+            }
+        }
+    };
+}
+
+// ══════════════════════════════════════════════════════════════
+// Complement injectivity
+// ══════════════════════════════════════════════════════════════
+
+/// The complement layout is always injective.
+pub proof fn lemma_complement_injective(a: &LayoutSpec, m: nat)
+    requires complement_admissible(a, m),
+    ensures complement(a, m).is_injective(),
+{
+    let c = complement(a, m);
+    lemma_complement_valid(a, m);
+    lemma_complement_tractable(a, m);
+    lemma_complement_positive_strides(a, m);
+    lemma_complement_rank(a, m);
+
+    // complement has rank >= 1 (k+1 where k >= 1)
+    assert(c.shape.len() > 0);
+
+    crate::proof::injectivity_lemmas::lemma_positive_tractable_injective(c);
 }
 
 } // verus!

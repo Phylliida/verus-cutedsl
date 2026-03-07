@@ -370,4 +370,202 @@ pub proof fn lemma_compose_correct_1d_a(a: LayoutSpec, b: LayoutSpec, x: nat)
     assert(c.offset(x) == a.offset(bx as nat));
 }
 
+// ══════════════════════════════════════════════════════════════
+// compose_single_mode stride value
+// ══════════════════════════════════════════════════════════════
+
+/// compose_single_mode(a, s, r).stride[0] == r * a.stride[0], for any rank A.
+proof fn lemma_compose_single_mode_stride_value(a: LayoutSpec, s: nat, r: nat)
+    requires a.valid(), a.shape.len() > 0,
+    ensures
+        compose_single_mode(a, s, r).stride.first() == (r as int) * a.stride.first(),
+{
+    if r == 1 && s <= a.shape.first() {
+        // Branch 1: stride = a.stride[0]
+        // r * a.stride[0] = 1 * a.stride[0] = a.stride[0]
+        vstd::arithmetic::mul::lemma_mul_basics(a.stride.first());
+    } else {
+        // Branch 2: stride = r * a.stride[0]
+    }
+}
+
+/// For arbitrary-rank A, compose(A, B).stride =~= scale(B.stride, A.stride[0]).
+proof fn lemma_compose_stride_general(a: LayoutSpec, b: LayoutSpec)
+    requires a.valid(), b.valid(), a.shape.len() > 0, b.non_negative_strides(),
+    ensures compose(a, b).stride =~= scale_strides_spec(b.stride, a.stride.first()),
+{
+    crate::proof::divide_lemmas::lemma_compose_rank(a, b);
+    let d = a.stride.first();
+    let c = compose(a, b);
+    let scaled = scale_strides_spec(b.stride, d);
+
+    assert forall|i: int| 0 <= i < c.stride.len()
+    implies c.stride[i] == scaled[i] by {
+        lemma_compose_element(a, b, i);
+        lemma_compose_single_mode_stride_value(a, b.shape[i], b.stride[i] as nat);
+        assert(scaled[i] == b.stride[i] * d);
+    };
+}
+
+// ══════════════════════════════════════════════════════════════
+// General compose correctness (arbitrary-rank A)
+// ══════════════════════════════════════════════════════════════
+
+/// compose(A, B).offset(x) == A.offset(B.offset(x)) for arbitrary-rank A,
+/// provided B's image fits within A's first mode.
+///
+/// This generalizes lemma_compose_correct_1d_a to multi-mode A.
+/// The key insight: when bx < A.shape[0], A.offset(bx) = bx * A.stride[0]
+/// regardless of A's rank (all higher coordinates are zero).
+pub proof fn lemma_compose_correct(a: LayoutSpec, b: LayoutSpec, x: nat)
+    requires
+        a.valid(), b.valid(),
+        a.shape.len() > 0,
+        b.non_negative_strides(),
+        x < b.size(),
+        // B's image fits within A's first mode
+        b.offset(x) >= 0,
+        b.offset(x) < a.shape.first() as int,
+    ensures
+        compose(a, b).offset(x) == a.offset(b.offset(x) as nat),
+{
+    let d = a.stride.first();
+    let bx = b.offset(x);
+    let c = compose(a, b);
+
+    // compose(a,b).shape =~= b.shape
+    lemma_compose_shape(a, b);
+
+    // compose(a,b).stride =~= scale(b.stride, d)
+    lemma_compose_stride_general(a, b);
+    let scaled = scale_strides_spec(b.stride, d);
+
+    // Build an equivalent layout with b.shape and scaled strides
+    let equiv = LayoutSpec { shape: b.shape, stride: scaled };
+
+    // compose(a,b).offset(x) == equiv.offset(x)
+    lemma_offset_eq_layout(c.shape, c.stride, b.shape, scaled, x);
+
+    // equiv.offset(x) = dot(delinearize(x, b.shape), scaled)
+    let coords = delinearize(x, b.shape);
+    lemma_delinearize_len(x, b.shape);
+
+    // dot(coords, scaled) == d * dot(coords, b.stride) by scale lemma
+    crate::proof::injectivity_lemmas::lemma_dot_product_scale(coords, b.stride, d);
+
+    // Explicit chain:
+    assert(equiv.offset(x) == dot_product_nat_int(coords, scaled));
+    assert(dot_product_nat_int(coords, scaled) == d * dot_product_nat_int(coords, b.stride));
+    assert(b.offset(x) == dot_product_nat_int(coords, b.stride));
+    assert(c.offset(x) == equiv.offset(x));
+    assert(c.offset(x) == d * bx);
+
+    // a.offset(bx) = bx * d for ANY rank A, since bx < a.shape[0]
+    lemma_offset_within_first_mode(&a, bx as nat);
+    assert(a.offset(bx as nat) == bx * d);
+
+    // d * bx == bx * d
+    vstd::arithmetic::mul::lemma_mul_is_commutative(d, bx);
+    assert(c.offset(x) == a.offset(bx as nat));
+}
+
+// ══════════════════════════════════════════════════════════════
+// Composition associativity
+// ══════════════════════════════════════════════════════════════
+
+/// compose(compose(a,b), c) produces the same layout as compose(a, compose(b,c)).
+///
+/// Both have shape = c.shape. The strides agree because:
+/// - compose(compose(a,b), c).stride[j] = c.stride[j] * (b.stride[0] * a.stride[0])
+/// - compose(a, compose(b,c)).stride[j] = (c.stride[j] * b.stride[0]) * a.stride[0]
+/// These are equal by associativity of multiplication.
+pub proof fn lemma_compose_associative(a: LayoutSpec, b: LayoutSpec, c: LayoutSpec)
+    requires
+        a.valid(), b.valid(), c.valid(),
+        a.shape.len() > 0,
+        b.shape.len() > 0,
+        b.non_negative_strides(),
+        c.non_negative_strides(),
+    ensures
+        compose(compose(a, b), c).shape =~= compose(a, compose(b, c)).shape,
+        compose(compose(a, b), c).stride =~= compose(a, compose(b, c)).stride,
+{
+    let ab = compose(a, b);
+    let bc = compose(b, c);
+    let ab_c = compose(ab, c);
+    let a_bc = compose(a, bc);
+
+    let da = a.stride.first();
+    let db = b.stride.first();
+
+    // Shape: both equal c.shape
+    lemma_compose_shape(a, b);
+    lemma_compose_shape(b, c);
+    lemma_compose_shape(ab, c);
+    lemma_compose_shape(a, bc);
+    assert(ab_c.shape =~= c.shape);
+    assert(a_bc.shape =~= c.shape);
+
+    // Stride: compose(a,b).stride[0] = b.stride[0] * a.stride[0]
+    lemma_compose_element(a, b, 0int);
+    lemma_compose_single_mode_stride_value(a, b.shape.first(), b.stride.first() as nat);
+    let d_ab = db * da;
+    assert(ab.stride.first() == d_ab);
+
+    // compose(b,c) validity for compose(a, bc) to work
+    assert(ab.valid()) by {
+        crate::proof::divide_lemmas::lemma_compose_rank(a, b);
+        lemma_compose_shape(a, b);
+        assert(ab.shape.len() == b.shape.len());
+        assert(ab.stride.len() == b.shape.len());
+        assert forall|i: int| 0 <= i < ab.shape.len()
+        implies #[trigger] ab.shape[i] > 0 by {
+            lemma_compose_element(a, b, i);
+        };
+    };
+    assert(bc.valid()) by {
+        crate::proof::divide_lemmas::lemma_compose_rank(b, c);
+        lemma_compose_shape(b, c);
+        assert(bc.shape.len() == c.shape.len());
+        assert(bc.stride.len() == c.shape.len());
+        assert forall|i: int| 0 <= i < bc.shape.len()
+        implies #[trigger] bc.shape[i] > 0 by {
+            lemma_compose_element(b, c, i);
+        };
+    };
+
+    // ab.shape.len() > 0 (since b.shape.len() > 0)
+    assert(ab.shape.len() > 0);
+    // a.shape.len() > 0 (precondition)
+
+    // Now prove stride equality elementwise
+    crate::proof::divide_lemmas::lemma_compose_rank(ab, c);
+    crate::proof::divide_lemmas::lemma_compose_rank(a, bc);
+
+    assert forall|j: int| 0 <= j < ab_c.stride.len()
+    implies ab_c.stride[j] == a_bc.stride[j] by {
+        // ab_c.stride[j] = compose_single_mode(ab, c.shape[j], c.stride[j]).stride[0]
+        //                 = c.stride[j] * ab.stride[0] = c.stride[j] * (db * da)
+        lemma_compose_element(ab, c, j);
+        lemma_compose_single_mode_stride_value(ab, c.shape[j], c.stride[j] as nat);
+        assert(ab_c.stride[j] == (c.stride[j] as int) * d_ab);
+
+        // a_bc.stride[j] = compose_single_mode(a, bc.shape[j], bc.stride[j]).stride[0]
+        //                 = bc.stride[j] * da
+        lemma_compose_element(a, bc, j);
+        lemma_compose_single_mode_stride_value(a, bc.shape[j], bc.stride[j] as nat);
+
+        // bc.stride[j] = compose_single_mode(b, c.shape[j], c.stride[j]).stride[0]
+        //              = c.stride[j] * db
+        lemma_compose_element(b, c, j);
+        lemma_compose_single_mode_stride_value(b, c.shape[j], c.stride[j] as nat);
+        assert(bc.stride[j] == (c.stride[j] as int) * db);
+
+        assert(a_bc.stride[j] == ((c.stride[j] as int) * db) * da);
+
+        // c.stride[j] * (db * da) == (c.stride[j] * db) * da by associativity
+        vstd::arithmetic::mul::lemma_mul_is_associative(c.stride[j] as int, db, da);
+    };
+}
+
 } // verus!

@@ -172,7 +172,9 @@ pub proof fn lemma_sum_multiples(a: int, b: int, d: int)
     ensures (a + b) % d == 0,
 {
     vstd::arithmetic::div_mod::lemma_add_mod_noop(a, b, d);
-    // (a + b) % d == ((a % d) + (b % d)) % d == 0
+    // (a + b) % d == ((a % d) + (b % d)) % d == (0 + 0) % d == 0 % d == 0
+    assert((a % d) + (b % d) == 0int);
+    vstd::arithmetic::div_mod::lemma_small_mod(0nat, d as nat);
 }
 
 /// A value in [0, d) that equals a multiple of d must be 0.
@@ -189,6 +191,43 @@ pub proof fn lemma_diff_multiples(x: int, y: int, d: int)
     ensures (x - y) % d == 0,
 {
     vstd::arithmetic::div_mod::lemma_sub_mod_noop(x, y, d);
+    // (x - y) % d == ((x % d) - (y % d)) % d == (0 - 0) % d == 0
+    assert((x % d) - (y % d) == 0int);
+    vstd::arithmetic::div_mod::lemma_small_mod(0nat, d as nat);
+}
+
+/// Divisibility transitivity: if a % b == 0 and b % c == 0 (and b,c > 0, a >= 0), then a % c == 0.
+pub proof fn lemma_divisibility_transitive(a: int, b: int, c: int)
+    requires c > 0, b > 0, a >= 0, a % b == 0, b % c == 0,
+    ensures a % c == 0,
+{
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a, b);
+    // a == b * (a/b)
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(b, c);
+    // b == c * (b/c)
+    let qa = a / b;
+    let qb = b / c;
+    assert(a == b * qa);
+    assert(b == c * qb);
+    // a == (c * qb) * qa == c * (qb * qa)
+    vstd::arithmetic::mul::lemma_mul_is_associative(c, qb, qa);
+    assert(a == c * (qb * qa));
+    vstd::arithmetic::div_mod::lemma_mod_multiples_basic(qb * qa, c);
+}
+
+/// If a % d == 0 and d > 0, then (n * a) % d == 0 for any nat n.
+pub proof fn lemma_multiple_of_multiple(a: int, n: nat, d: int)
+    requires d > 0, a >= 0, a % d == 0,
+    ensures (n as int * a) % d == 0,
+{
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a, d);
+    let q = a / d;
+    assert(a == d * q);
+    vstd::arithmetic::mul::lemma_mul_is_associative(n as int, d, q);
+    vstd::arithmetic::mul::lemma_mul_is_commutative(n as int, d);
+    vstd::arithmetic::mul::lemma_mul_is_associative(d, n as int, q);
+    assert(n as int * a == d * (n as int * q));
+    vstd::arithmetic::div_mod::lemma_mod_multiples_basic(n as int * q, d);
 }
 
 } // verus!

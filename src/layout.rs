@@ -140,4 +140,20 @@ pub open spec fn make_identity(m: nat) -> LayoutSpec {
     LayoutSpec { shape: seq![m], stride: seq![1int] }
 }
 
+/// Reverse a sequence.
+pub open spec fn seq_reverse<A>(s: Seq<A>) -> Seq<A> {
+    Seq::new(s.len(), |i: int| s[s.len() - 1 - i])
+}
+
+/// Row-major strides: (..., M_{k-2}*M_{k-1}, M_{k-1}, 1).
+/// Defined as the reverse of column-major strides of the reversed shape.
+pub open spec fn row_major_strides(shape: Seq<nat>) -> Seq<int> {
+    seq_reverse(column_major_strides(seq_reverse(shape)))
+}
+
+/// Construct a row-major layout from a shape.
+pub open spec fn make_row_major(shape: Seq<nat>) -> LayoutSpec {
+    LayoutSpec { shape, stride: row_major_strides(shape) }
+}
+
 } // verus!
