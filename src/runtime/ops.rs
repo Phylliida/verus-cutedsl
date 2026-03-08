@@ -471,6 +471,159 @@ pub fn logical_product_exec(a: &RuntimeLayout, b: &RuntimeLayout, cosize_a: u64)
     }
 }
 
+/// Raked product at runtime: interleave A across B's tiles.
+/// A's strides are scaled by cosize(B), B's strides are unscaled.
+pub fn raked_product_exec(a: &RuntimeLayout, b: &RuntimeLayout, cosize_b: u64) -> (result: RuntimeLayout)
+    requires
+        a.wf_spec(),
+        b.wf_spec(),
+        b@.non_negative_strides(),
+        b@.shape.len() > 0,
+        cosize_b as nat == b@.cosize_nonneg(),
+        forall|i: int| 0 <= i < a@.stride.len() ==>
+            #[trigger] a@.stride[i] * (cosize_b as int) >= i64::MIN as int &&
+            a@.stride[i] * (cosize_b as int) <= i64::MAX as int,
+        shape_size(raked_product(&a@, &b@).shape) <= u64::MAX as nat,
+    ensures
+        result.wf_spec(),
+        result@ == raked_product(&a@, &b@),
+{
+    let mut result_shape: Vec<u64> = Vec::new();
+    let mut result_stride: Vec<i64> = Vec::new();
+
+    proof {
+        assert(a@.shape == shape_to_nat_seq(a.shape@));
+        assert(a@.stride == strides_to_int_seq(a.stride@));
+        assert(b@.shape == shape_to_nat_seq(b.shape@));
+        assert(b@.stride == strides_to_int_seq(b.stride@));
+    }
+
+    // Copy A's modes with scaled strides
+    let mut i: usize = 0;
+    while i < a.shape.len()
+        invariant
+            0 <= i <= a.shape.len(),
+            a.wf_spec(), b.wf_spec(),
+            result_shape@.len() == i,
+            result_stride@.len() == i,
+            a@.shape == shape_to_nat_seq(a.shape@),
+            a@.stride == strides_to_int_seq(a.stride@),
+            cosize_b as nat == b@.cosize_nonneg(),
+            forall|k: int| 0 <= k < a@.stride.len() ==>
+                #[trigger] a@.stride[k] * (cosize_b as int) >= i64::MIN as int &&
+                a@.stride[k] * (cosize_b as int) <= i64::MAX as int,
+            forall|j: int| 0 <= j < i as int ==>
+                #[trigger] result_shape@[j] as nat == a@.shape[j],
+            forall|j: int| 0 <= j < i as int ==>
+                #[trigger] result_stride@[j] as int ==
+                    a@.stride[j] * (cosize_b as int),
+        decreases a.shape.len() - i,
+    {
+        result_shape.push(a.shape[i]);
+        proof {
+            assert(a@.stride[i as int] * (cosize_b as int) >= i64::MIN as int);
+            assert(a@.stride[i as int] * (cosize_b as int) <= i64::MAX as int);
+        }
+        let scaled_stride: i64 = ((a.stride[i] as i128) * (cosize_b as i128)) as i64;
+        result_stride.push(scaled_stride);
+        proof {
+            assert(scaled_stride as int == a@.stride[i as int] * (cosize_b as int));
+        }
+        i = i + 1;
+    }
+
+    // Append B's modes (unscaled)
+    let mut j: usize = 0;
+    while j < b.shape.len()
+        invariant
+            0 <= j <= b.shape.len(),
+            a.wf_spec(), b.wf_spec(),
+            result_shape@.len() == a.shape@.len() + j,
+            result_stride@.len() == a.stride@.len() + j,
+            a@.shape == shape_to_nat_seq(a.shape@),
+            a@.stride == strides_to_int_seq(a.stride@),
+            b@.shape == shape_to_nat_seq(b.shape@),
+            b@.stride == strides_to_int_seq(b.stride@),
+            cosize_b as nat == b@.cosize_nonneg(),
+            forall|k: int| 0 <= k < a@.stride.len() ==>
+                #[trigger] a@.stride[k] * (cosize_b as int) >= i64::MIN as int &&
+                a@.stride[k] * (cosize_b as int) <= i64::MAX as int,
+            forall|k: int| 0 <= k < a.shape@.len() as int ==>
+                #[trigger] result_shape@[k] as nat == a@.shape[k],
+            forall|k: int| 0 <= k < a.stride@.len() as int ==>
+                #[trigger] result_stride@[k] as int ==
+                    a@.stride[k] * (cosize_b as int),
+            forall|k: int| 0 <= k < j as int ==>
+                #[trigger] result_shape@[(a.shape@.len() + k) as int] as nat == b@.shape[k],
+            forall|k: int| 0 <= k < j as int ==>
+                #[trigger] result_stride@[(a.stride@.len() + k) as int] as int == b@.stride[k],
+        decreases b.shape.len() - j,
+    {
+        result_shape.push(b.shape[j]);
+        result_stride.push(b.stride[j]);
+        proof {
+            let jj = j as int;
+            let idx = (a.shape@.len() + jj) as int;
+            assert(result_shape@[idx] == b.shape@[jj]);
+            assert(result_shape@[idx] as nat == b@.shape[jj]);
+            assert(result_stride@[idx] as int == b@.stride[jj]);
+        }
+        j = j + 1;
+    }
+
+    proof {
+        let spec_result = raked_product(&a@, &b@);
+        let cs = b@.cosize_nonneg();
+
+        // Shape extensional equality
+        assert(shape_to_nat_seq(result_shape@) =~= spec_result.shape) by {
+            assert(result_shape@.len() == spec_result.shape.len());
+            assert forall|k: int| 0 <= k < result_shape@.len() as int implies
+                shape_to_nat_seq(result_shape@)[k] == spec_result.shape[k]
+            by {
+                if k < a@.shape.len() as int {
+                    assert(result_shape@[k] as nat == a@.shape[k]);
+                } else {
+                    let bk = (k - a@.shape.len()) as int;
+                    assert(a.shape@.len() == a@.shape.len());
+                    assert((a.shape@.len() + bk) as int == k);
+                    assert(result_shape@[(a.shape@.len() + bk) as int] as nat == b@.shape[bk]);
+                }
+            };
+        };
+
+        // Stride extensional equality
+        assert(strides_to_int_seq(result_stride@) =~= spec_result.stride) by {
+            assert(result_stride@.len() == spec_result.stride.len());
+            assert forall|k: int| 0 <= k < result_stride@.len() as int implies
+                strides_to_int_seq(result_stride@)[k] == spec_result.stride[k]
+            by {
+                if k < a@.stride.len() as int {
+                    assert(result_stride@[k] as int == a@.stride[k] * (cosize_b as int));
+                    assert(spec_result.stride[k] == scale_strides(a@.stride, cs as int)[k]);
+                    assert(scale_strides(a@.stride, cs as int)[k] == a@.stride[k] * (cs as int));
+                } else {
+                    let bk = (k - a@.stride.len()) as int;
+                    assert(a.stride@.len() == a@.stride.len());
+                    assert((a.stride@.len() + bk) as int == k);
+                    assert(result_stride@[(a.stride@.len() + bk) as int] as int == b@.stride[bk]);
+                }
+            };
+        };
+
+        // Valid
+        assert(spec_result.valid()) by {
+            crate::proof::product_lemmas::lemma_raked_product_valid(&a@, &b@);
+        };
+    }
+
+    RuntimeLayout {
+        shape: result_shape,
+        stride: result_stride,
+        model: Ghost(raked_product(&*a.model.borrow(), &*b.model.borrow())),
+    }
+}
+
 /// Coalesce a pair of adjacent modes at position i.
 pub fn coalesce_pair_exec(layout: &RuntimeLayout, pos: usize) -> (result: RuntimeLayout)
     requires
@@ -658,6 +811,89 @@ pub fn coalesce_pair_exec(layout: &RuntimeLayout, pos: usize) -> (result: Runtim
         stride: result_stride,
         model: Ghost(coalesce_pair(*layout.model.borrow(), pos as nat)),
     }
+}
+
+/// Check if two adjacent modes are coalesceable at runtime.
+fn modes_coalesceable_exec(layout: &RuntimeLayout, pos: usize) -> (result: bool)
+    requires
+        layout.wf_spec(),
+        layout.shape@.len() >= 2,
+        pos < layout.shape@.len() - 1,
+    ensures
+        result == modes_coalesceable(&layout@, pos as int),
+{
+    let n = layout.shape.len();
+    assert(n >= 2);
+    let m: u64 = layout.shape[pos];
+    let s: i64 = layout.stride[pos];
+    let s_next: i64 = layout.stride[pos + 1];
+
+    proof {
+        // i128 range is sufficient for u64 * i64
+        assert(i128::MIN as int <= (m as int) * (s as int) <= i128::MAX as int)
+            by (nonlinear_arith)
+            requires
+                0 <= m as int <= u64::MAX as int,
+                i64::MIN as int <= s as int <= i64::MAX as int,
+        ;
+    }
+
+    // Compute (shape[pos] as int) * stride[pos] using i128 to avoid overflow
+    let product: i128 = (m as i128) * (s as i128);
+
+    proof {
+        assert(product as int == (m as int) * (s as int));
+        assert(layout@.shape[pos as int] == m as nat);
+        assert(layout@.stride[pos as int] == s as int);
+        assert(layout@.stride[(pos + 1) as int] == s_next as int);
+    }
+
+    product == s_next as i128
+}
+
+/// Full coalesce at runtime: merge all adjacent coalesceable pairs.
+pub fn coalesce_exec(layout: RuntimeLayout) -> (result: RuntimeLayout)
+    requires
+        layout.wf_spec(),
+    ensures
+        result.wf_spec(),
+        result@ == coalesce(layout@),
+{
+    let ghost original = layout@;
+    let mut current = layout;
+    let mut pos: usize = 0;
+
+    proof {
+        assert(coalesce_pass(current@, 0) == coalesce(original));
+    }
+
+    while current.shape.len() >= 2 && pos < current.shape.len() - 1
+        invariant
+            current.wf_spec(),
+            pos <= current.shape@.len(),
+            coalesce_pass(current@, pos as nat) == coalesce(original),
+        decreases current.shape@.len() - pos,
+    {
+        if modes_coalesceable_exec(&current, pos) {
+            proof {
+                // shape_size > 0 for valid shapes
+                crate::proof::shape_lemmas::lemma_shape_size_positive(current@.shape);
+
+                // Overflow bound: shape[pos] * shape[pos+1] <= shape_size <= u64::MAX
+                crate::proof::inverse_lemmas::lemma_two_modes_product_bound(
+                    current@.shape, pos as int, (pos + 1) as int);
+
+                // coalesce_pair preserves size => shape_size(coalesced.shape) <= u64::MAX
+                crate::proof::coalesce_lemmas::lemma_coalesce_pair_size_general(
+                    current@, pos as nat);
+            }
+            current = coalesce_pair_exec(&current, pos);
+        } else {
+            pos = pos + 1;
+        }
+    }
+
+    current
 }
 
 /// Slice a layout by fixing a coordinate in one mode.

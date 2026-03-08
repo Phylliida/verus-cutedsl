@@ -4,6 +4,7 @@ pub mod shape_helpers;
 pub mod layout;
 pub mod ops;
 pub mod swizzle;
+pub mod inverse;
 
 verus! {
 

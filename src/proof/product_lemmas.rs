@@ -222,13 +222,17 @@ pub proof fn lemma_product_compatible(a: &LayoutSpec, b: &LayoutSpec, x: nat)
     assert(x < size_a);
     // x % size_a == x and x / size_a == 0 when x < size_a
     crate::proof::integer_helpers::lemma_mod_small(x, size_a);
-    // x == size_a * (x / size_a) + x % size_a == size_a * (x / size_a) + x
-    // => size_a * (x / size_a) == 0 => x / size_a == 0
-    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int, size_a as int);
-    assert(x as int == size_a as int * (x as int / size_a as int) + x as int);
-    assert(size_a as int * (x as int / size_a as int) == 0int);
-    assert(x / size_a == 0nat);
+    crate::proof::integer_helpers::lemma_div_small(x, size_a);
 
+    // x < size_a * size_b (needed for lemma_product_offset)
+    let size_b = shape_size(b.shape);
+    assert(size_b >= 1) by {
+        lemma_shape_size_positive(b.shape);
+    };
+    vstd::arithmetic::mul::lemma_mul_basics(size_a as int);
+    assert(size_a * 1 == size_a);
+    vstd::arithmetic::mul::lemma_mul_inequality(1, size_b as int, size_a as int);
+    assert(x < size_a * size_b);
     lemma_product_offset(a, b, x);
     // product(a,b).offset(x) == a.offset(x) + cosize(a) * b.offset(0)
 
@@ -238,6 +242,99 @@ pub proof fn lemma_product_compatible(a: &LayoutSpec, b: &LayoutSpec, x: nat)
     );
     // cosize(a) * 0 == 0
     vstd::arithmetic::mul::lemma_mul_basics(a.cosize_nonneg() as int);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Raked product: structural properties
+// ══════════════════════════════════════════════════════════════
+
+/// Raked product rank = rank(A) + rank(B).
+pub proof fn lemma_raked_product_rank(a: &LayoutSpec, b: &LayoutSpec)
+    requires raked_product_admissible(a, b),
+    ensures
+        raked_product(a, b).shape.len() == a.shape.len() + b.shape.len(),
+        raked_product(a, b).stride.len() == a.shape.len() + b.shape.len(),
+{
+}
+
+/// Raked product size = size(A) * size(B).
+pub proof fn lemma_raked_product_size(a: &LayoutSpec, b: &LayoutSpec)
+    requires raked_product_admissible(a, b),
+    ensures
+        shape_size(raked_product(a, b).shape)
+            == shape_size(a.shape) * shape_size(b.shape),
+{
+    lemma_shape_size_append(a.shape, b.shape);
+}
+
+/// The raked product layout is valid.
+pub proof fn lemma_raked_product_valid(a: &LayoutSpec, b: &LayoutSpec)
+    requires raked_product_admissible(a, b),
+    ensures raked_product(a, b).valid(),
+{
+    let r = raked_product(a, b);
+    lemma_raked_product_rank(a, b);
+    assert(r.shape.len() == r.stride.len());
+
+    assert forall|i: int| 0 <= i < r.shape.len() implies #[trigger] r.shape[i] > 0 by {
+        if i < a.shape.len() as int {
+            assert(r.shape[i] == a.shape[i]);
+        } else {
+            let bi = (i - a.shape.len()) as int;
+            assert(r.shape[i] == b.shape[bi]);
+        }
+    };
+}
+
+/// Raked product is logical_product with swapped operands (up to mode reordering).
+/// raked_product(A, B).shape == A.shape ++ B.shape
+/// logical_product(B, A).shape == B.shape ++ A.shape
+/// They have the same size and hit the same offsets (in different order).
+pub proof fn lemma_raked_product_size_eq_product(a: &LayoutSpec, b: &LayoutSpec)
+    requires
+        raked_product_admissible(a, b),
+        product_admissible(b, a),
+    ensures
+        shape_size(raked_product(a, b).shape) == shape_size(logical_product(b, a).shape),
+{
+    lemma_raked_product_size(a, b);
+    lemma_product_size(b, a);
+    vstd::arithmetic::mul::lemma_mul_is_commutative(
+        shape_size(a.shape) as int,
+        shape_size(b.shape) as int,
+    );
+}
+
+// ══════════════════════════════════════════════════════════════
+// Blocked product: alias for logical_product
+// ══════════════════════════════════════════════════════════════
+
+/// Blocked product rank = rank(A) + rank(B).
+pub proof fn lemma_blocked_product_rank(a: &LayoutSpec, b: &LayoutSpec)
+    requires product_admissible(a, b),
+    ensures
+        blocked_product(a, b).shape.len() == a.shape.len() + b.shape.len(),
+        blocked_product(a, b).stride.len() == a.shape.len() + b.shape.len(),
+{
+    lemma_product_rank(a, b);
+}
+
+/// Blocked product size = size(A) * size(B).
+pub proof fn lemma_blocked_product_size(a: &LayoutSpec, b: &LayoutSpec)
+    requires product_admissible(a, b),
+    ensures
+        shape_size(blocked_product(a, b).shape)
+            == shape_size(a.shape) * shape_size(b.shape),
+{
+    lemma_product_size(a, b);
+}
+
+/// Blocked product is valid.
+pub proof fn lemma_blocked_product_valid(a: &LayoutSpec, b: &LayoutSpec)
+    requires product_admissible(a, b),
+    ensures blocked_product(a, b).valid(),
+{
+    lemma_product_valid(a, b);
 }
 
 } // verus!

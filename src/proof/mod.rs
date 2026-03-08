@@ -9,3 +9,4 @@ pub mod swizzle_lemmas;
 pub mod integer_helpers;
 pub mod injectivity_lemmas;
 pub mod slice_lemmas;
+pub mod inverse_lemmas;

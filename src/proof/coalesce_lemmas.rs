@@ -649,8 +649,15 @@ pub proof fn lemma_remove_unit_mode_offset(layout: LayoutSpec, idx: nat, i: nat)
         d.take(ii).add(d.skip(ii + 1)),
     );
 
-    // removed.offset(idx) = dot(coords_head, d_head) + dot(coords_tail_rest, d_tail_rest)
-    // original.offset(idx) = dot(coords_head, d_head) + 0 + dot(coords_tail_rest, d_tail_rest)
+    // dot(coords_tail, d_tail) = 0*d[i] + dot(rest) = dot(rest)
+    assert(coords_tail.len() > 0);
+    assert(d_tail.len() > 0);
+    assert((0nat as int) * d_tail.first() == 0int);
+    assert(dot_product_nat_int(coords_tail, d_tail)
+        == dot_product_nat_int(coords_tail_rest, d_tail_rest));
+
+    // Both sides equal dot(coords_head, d_head) + dot(coords_tail_rest, d_tail_rest)
+    assert(removed.offset(idx) == layout.offset(idx));
 }
 
 // ══════════════════════════════════════════════════════════════
