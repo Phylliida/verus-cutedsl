@@ -596,6 +596,9 @@ pub fn left_inverse_exec(layout: &RuntimeLayout) -> (result: RuntimeLayout)
     requires
         layout.wf_spec(),
         is_fully_coalesced(&layout@),
+        layout@.shape.len() > 0,
+        // All strides positive (left inverse is only meaningful for injective layouts)
+        forall|i: int| 0 <= i < layout@.stride.len() ==> layout@.stride[i] > 0,
         // Overflow: prefix products fit in i64 (result strides are prefix products cast to i64)
         forall|i: nat| i <= layout@.shape.len() ==>
             shape_size(layout@.shape.take(i as int)) <= i64::MAX as nat,
@@ -1109,51 +1112,47 @@ pub fn left_inverse_exec(layout: &RuntimeLayout) -> (result: RuntimeLayout)
             };
         };
 
-        // Assume 3 eliminated: pre_coalesce validity
-        crate::proof::inverse_lemmas::lemma_left_inverse_pre_coalesce_valid(&layout@);
-        // This gives: raw.shape.len == raw.stride.len + 1 ==> pre_coalesce.valid()
-        // We need to prove raw.shape.len == raw.stride.len + 1.
-        // From the loop: result_shape.len == result_stride.len (not done) or + 1 (done)
-        // When done via last-mode: pushed gap+m to shape, pp to stride → shape = stride + 1
-        // When done via no-positive: shape = stride (nothing pushed)
-        // But in no-positive case: raw_spec might be empty...
-        // If raw_spec.shape is empty: pre_coalesce = {[], [0]}, not valid (len mismatch)
-        // But then left_inverse = coalesce({[], [0]}), and shape_size([]) = 1.
-        // So left_inverse.shape size = 1 (trivially <= u64::MAX)... but we need valid().
-        // Actually, if raw_spec.shape.len() == 0 AND raw_spec.stride.len() == 0,
-        // then result_shape = [], result_stride = [], final_stride = [0].
-        // pre_coalesce = {[], [0]} which is NOT valid (shape.len != stride.len).
-        // The coalesce of this invalid layout... the spec coalesce starts with
-        // coalesce_pass which checks modes_coalesceable, but shape.len == 0 < stride.len = 1.
-        // This is actually fine: coalesce_pass on shape.len == 0 just passes through.
-        // And remove_unit_modes on an empty shape passes through.
-        // So left_inverse = {[], [0]} — invalid layout!
-        // But the precondition says shape_size(left_inverse.shape) <= u64::MAX...
-        // shape_size([]) = 1 so that's fine. But left_inverse(&layout@).valid() is needed
-        // by coalesce_exec's postcondition (wf_spec requires valid model).
-        //
-        // For now, handle the normal case and use assume for the degenerate empty case.
-        if raw_spec.shape.len() == raw_spec.stride.len() + 1 {
-            assert(pre_coalesce.valid());
+        // pre_coalesce validity: all strides positive → build gives shape.len == stride.len + 1
+        // First, establish that the coalesced layout (== layout, since fully coalesced)
+        // has all positive strides and satisfies build preconditions
+        assert(c.valid());
+        assert forall|j: int| 0 <= j < c.stride.len() implies c.stride[j] > 0
+        by {
+            assert(c == layout@);
+            assert(layout@.stride[j] > 0);
+        };
+
+        crate::proof::inverse_lemmas::lemma_left_inverse_build_positive_strides(
+            c.shape, c.stride, spec_preprod, 1);
+
+        if c.shape.len() > 0 {
+            assert(raw_spec.shape.len() == raw_spec.stride.len() + 1);
         } else {
-            // Degenerate case: layout has no positive strides or empty
-            assume(pre_coalesce.valid());
+            // Empty layout: raw_spec is empty, pre_coalesce = {[], [0]}
+            // But layout has shape.len == stride.len == 0, meaning empty layout.
+            // shape_valid requires shape entries > 0, which is vacuously true for empty.
+            // But layout.valid() requires shape.len == stride.len, which is 0 == 0. OK.
+            // All strides > 0 is vacuously true. raw_spec is empty.
+            assert(raw_spec.shape.len() == 0 && raw_spec.stride.len() == 0);
         }
 
-        // Assume 4 eliminated: size bound
-        // left_inverse = coalesce(pre_coalesce). coalesce preserves size.
-        // shape_size(left_inverse.shape) <= u64::MAX [precondition]
+        // shape.len > 0 (from precondition) → build gives shape.len == stride.len + 1
+        assert(c.shape.len() > 0) by { assert(c == layout@); };
+        assert(raw_spec.shape.len() == raw_spec.stride.len() + 1);
+
+        // pre_coalesce validity follows from the length relationship
+        crate::proof::inverse_lemmas::lemma_left_inverse_pre_coalesce_valid(&layout@);
+        assert(pre_coalesce.valid());
+
+        // Size bound: coalesce preserves size
         if pre_coalesce.valid() {
             crate::proof::shape_lemmas::lemma_shape_size_positive(pre_coalesce.shape);
             crate::proof::coalesce_lemmas::lemma_coalesce(pre_coalesce, 0);
-            // coalesce(pre_coalesce).size() == pre_coalesce.size()
             assert(pre_coalesce.size() == shape_size(pre_coalesce.shape));
             assert(coalesce(pre_coalesce).size() == pre_coalesce.size());
             assert(left_inverse(&layout@) == coalesce(pre_coalesce));
             assert(shape_size(left_inverse(&layout@).shape) <= u64::MAX as nat);
             assert(pre_coalesce.size() <= u64::MAX as nat);
-        } else {
-            assume(pre_coalesce.size() <= u64::MAX as nat);
         }
     }
 

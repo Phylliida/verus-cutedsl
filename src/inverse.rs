@@ -50,6 +50,44 @@ pub open spec fn remove_at_int(s: Seq<int>, i: int) -> Seq<int> {
     s.take(i).add(s.skip(i + 1))
 }
 
+/// Build coordinates that "undo" right_inverse_build's offset.
+///
+/// For each step of the build (finding stride == cursor), the coordinate at that
+/// position is j % shape[idx], and the remaining coordinates come from the recursive
+/// call with j / shape[idx].
+pub open spec fn right_inverse_coords(
+    shape: Seq<nat>, stride: Seq<int>, cursor: nat, j: nat,
+) -> Seq<nat>
+    recommends
+        shape.len() == stride.len(),
+        shape_valid(shape),
+        cursor > 0,
+    decreases shape.len(),
+{
+    if shape.len() == 0 {
+        seq![]
+    } else {
+        let idx = find_value(stride, cursor as int);
+        if idx < 0 || idx >= shape.len() as int {
+            Seq::new(shape.len(), |_i: int| 0nat)
+        } else {
+            let m = shape[idx];
+            let j0 = j % m;
+            let j1 = j / m;
+            let rest = right_inverse_coords(
+                remove_at_nat(shape, idx),
+                remove_at_int(stride, idx),
+                m * cursor, j1,
+            );
+            Seq::new(shape.len(), |k: int|
+                if k == idx { j0 }
+                else if k < idx { rest[k] }
+                else { rest[(k - 1) as int] }
+            )
+        }
+    }
+}
+
 /// Find the index of the element with smallest positive value, or -1 if none.
 pub open spec fn find_min_positive(s: Seq<int>) -> int
     decreases s.len(),
