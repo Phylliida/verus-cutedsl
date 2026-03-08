@@ -9,6 +9,17 @@ use crate::runtime::{shape_to_nat_seq, strides_to_int_seq};
 verus! {
 
 // ══════════════════════════════════════════════════════════════
+// Helper spec for tractable property (standalone, not on LayoutSpec)
+// ══════════════════════════════════════════════════════════════
+
+/// Tractable condition at index k: shape[k]*stride[k] > 0 and stride[k+1] divisible by it.
+/// Used as a function-call trigger for reliable Z3 quantifier forwarding.
+pub open spec fn tractable_pair(shape: Seq<nat>, stride: Seq<int>, k: int) -> bool {
+    let product = (shape[k] as int) * stride[k];
+    product > 0 && stride[k + 1] % product == 0
+}
+
+// ══════════════════════════════════════════════════════════════
 // Prefix product lemmas
 // ══════════════════════════════════════════════════════════════
 
@@ -2168,6 +2179,20 @@ pub proof fn lemma_right_inverse_correct(layout: &LayoutSpec, j: nat)
 // Helper lemmas for left_inverse_correct
 // ══════════════════════════════════════════════════════════════
 
+/// Dot product of coords.take(1) and strides.take(1) equals coords[0] * strides[0].
+proof fn lemma_dot_take_one(coords: Seq<nat>, strides: Seq<int>)
+    requires coords.len() >= 1, strides.len() >= 1,
+    ensures dot_product_nat_int(coords.take(1), strides.take(1))
+        == (coords[0] as int) * strides[0],
+{
+    reveal_with_fuel(dot_product_nat_int, 2);
+    let ct = coords.take(1);
+    let st = strides.take(1);
+    assert(ct.first() == coords[0]);
+    assert(st.first() == strides[0]);
+    assert(ct.skip(1).len() == 0);
+}
+
 /// Partial offset bound for sorted tractable layouts:
 /// sum_{j=0}^{J} c_j * d_j < d_{J+1}.
 ///
@@ -2185,11 +2210,9 @@ proof fn lemma_partial_offset_bound(
         forall|k: int| 0 <= k < stride.len() ==> stride[k] > 0,
         forall|k: int| 0 <= k < stride.len() as int - 1 ==>
             stride[k] <= #[trigger] stride[k + 1],
-        // Tractable
-        forall|k: int| 0 <= k < shape.len() as int - 1 ==> ({
-            let prod = (shape[k] as int) * stride[k];
-            prod > 0 && #[trigger] stride[k + 1] % prod == 0
-        }),
+        // Tractable (function-call trigger for reliable Z3 forwarding)
+        forall|k: int| 0 <= k < shape.len() as int - 1 ==>
+            #[trigger] tractable_pair(shape, stride, k),
         // Coords in bounds
         coords_in_bounds(coords, shape),
         // j+1 < shape.len() (there is a next stride)
@@ -2200,72 +2223,414 @@ proof fn lemma_partial_offset_bound(
     decreases j,
 {
     if j == 0 {
-        // dot([c_0], [d_0]) = c_0 * d_0 < m_0 * d_0 <= d_1
-        assert(coords.take(1) =~= seq![coords[0]]);
-        assert(stride.take(1) =~= seq![stride[0]]);
-        assert(dot_product_nat_int(seq![coords[0]], seq![stride[0]])
-            == (coords[0] as int) * stride[0]);
+        // dot(take(1)) = c_0 * d_0 < m_0 * d_0 <= d_1
+        lemma_dot_take_one(coords, stride);
         assert(coords[0] < shape[0]);
-        // c_0 < m_0, so c_0 * d_0 < m_0 * d_0
         vstd::arithmetic::mul::lemma_mul_strict_inequality(
             coords[0] as int, shape[0] as int, stride[0]);
-        // m_0 * d_0 <= d_1 (from tractability: d_1 % (m_0 * d_0) == 0 and d_1 > 0)
-        let prod = (shape[0] as int) * stride[0];
-        assert(stride[1] % prod == 0);
+        // Bridge nat/int arithmetic: (j+1) as int == j as int + 1
+        let kj: int = j as int;
+        assert(kj + 1 == (j + 1) as int);
+        // Fire tractable trigger at k = kj
+        assert(tractable_pair(shape, stride, kj));
+        let s_next = stride[kj + 1];
+        let prod = (shape[kj] as int) * stride[kj];
+        // From tractable quantifier (now unfolded):
+        assert(s_next % prod == 0);
         assert(prod > 0);
-        vstd::arithmetic::div_mod::lemma_mod_bound(stride[1], prod);
-        // d_1 = q * prod for some q >= 1, so d_1 >= prod
-        assert(stride[1] >= prod);
+        assert(s_next > 0);
+        // s_next is a positive multiple of prod, so s_next >= prod
+        assert(s_next >= prod) by {
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(s_next, prod);
+            let q = s_next / prod;
+            assert(s_next == prod * q);
+            assert(q >= 1) by {
+                if q == 0 { assert(prod * 0 == 0); }
+            };
+            vstd::arithmetic::mul::lemma_mul_inequality(1, q, prod);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(q, prod);
+        };
+        // Connect to postcondition terms
+        assert(stride[(j + 1) as int] == s_next);
+        assert(coords.take((j + 1) as int) =~= coords.take(1)) by {
+            assert((j + 1) as int == 1int);
+        };
+        assert(stride.take((j + 1) as int) =~= stride.take(1)) by {
+            assert((j + 1) as int == 1int);
+        };
+        crate::proof::shape_lemmas::lemma_dot_product_ext(
+            coords.take((j + 1) as int), coords.take(1),
+            stride.take((j + 1) as int), stride.take(1));
     } else {
-        // Inductive step: sum_{l=0}^{j} c_l * d_l
-        // = sum_{l=0}^{j-1} c_l * d_l + c_j * d_j
         // By induction: sum_{l=0}^{j-1} c_l * d_l < d_j
-        lemma_partial_offset_bound(shape, stride, coords, (j - 1) as nat);
+        assert(j > 0nat);
+        assert(j < shape.len());
+        // Recursive call: j_prev + 1 < shape.len() since j + 1 < shape.len() and j_prev + 1 == j
+        let j_prev = (j - 1) as nat;
+        assert(j_prev + 1 < shape.len()) by {
+            assert(j_prev + 1 == j);
+        };
+        lemma_partial_offset_bound(shape, stride, coords, j_prev);
         let prev_sum = dot_product_nat_int(
             coords.take(j as int), stride.take(j as int));
         assert(prev_sum < stride[j as int]);
 
-        // coords.take(j+1) = coords.take(j).add(seq![coords[j]])
-        assert(coords.take((j + 1) as int) =~= coords.take(j as int).add(seq![coords[j as int]]));
-        assert(stride.take((j + 1) as int) =~= stride.take(j as int).add(seq![stride[j as int]]));
+        // Decompose take(j+1) = take(j) ++ skip(j).take(1)
+        let cs_tail = coords.skip(j as int).take(1);
+        let ss_tail = stride.skip(j as int).take(1);
+        assert(cs_tail[0] == coords[j as int]) by {
+            assert(coords.skip(j as int)[0] == coords[j as int]);
+        };
+        assert(ss_tail[0] == stride[j as int]) by {
+            assert(stride.skip(j as int)[0] == stride[j as int]);
+        };
+        assert(coords.take((j + 1) as int) =~= coords.take(j as int).add(cs_tail)) by {
+            assert forall|l: int| 0 <= l < (j + 1) as int
+                implies coords.take((j + 1) as int)[l]
+                    == coords.take(j as int).add(cs_tail)[l]
+            by {
+                if l < j as int { }
+                else { assert(cs_tail[0] == coords[j as int]); }
+            };
+        };
+        assert(stride.take((j + 1) as int) =~= stride.take(j as int).add(ss_tail)) by {
+            assert forall|l: int| 0 <= l < (j + 1) as int
+                implies stride.take((j + 1) as int)[l]
+                    == stride.take(j as int).add(ss_tail)[l]
+            by {
+                if l < j as int { }
+                else { assert(ss_tail[0] == stride[j as int]); }
+            };
+        };
         crate::proof::shape_lemmas::lemma_dot_product_append(
-            coords.take(j as int), seq![coords[j as int]],
-            stride.take(j as int), seq![stride[j as int]]);
-        let curr_sum = dot_product_nat_int(
-            coords.take((j + 1) as int), stride.take((j + 1) as int));
-        // curr_sum = prev_sum + c_j * d_j
-        assert(dot_product_nat_int(seq![coords[j as int]], seq![stride[j as int]])
-            == (coords[j as int] as int) * stride[j as int]);
+            coords.take(j as int), cs_tail,
+            stride.take(j as int), ss_tail);
+        lemma_dot_take_one(coords.skip(j as int), stride.skip(j as int));
+        crate::proof::shape_lemmas::lemma_dot_product_ext(
+            coords.take((j + 1) as int), coords.take(j as int).add(cs_tail),
+            stride.take((j + 1) as int), stride.take(j as int).add(ss_tail));
+        // curr_sum == prev_sum + coords[j]*stride[j]
 
-        // prev_sum < d_j and c_j * d_j < m_j * d_j
+        // c_j < m_j, so c_j * d_j <= (m_j - 1) * d_j
         assert(coords[j as int] < shape[j as int]);
-        vstd::arithmetic::mul::lemma_mul_strict_inequality(
-            coords[j as int] as int, shape[j as int] as int, stride[j as int]);
-        // curr_sum = prev_sum + c_j * d_j < d_j + m_j * d_j = (1 + m_j) * d_j
-        // But we need curr_sum < d_{j+1}
-        // prev_sum + c_j * d_j < d_j + m_j * d_j = (m_j + 1) * d_j... no.
-        // Actually: prev_sum + c_j * d_j < d_j + (m_j - 1) * d_j = m_j * d_j <= d_{j+1}
-        // Wait: c_j * d_j <= (m_j - 1) * d_j since c_j < m_j, and prev_sum < d_j
-        // So curr_sum < d_j + (m_j - 1) * d_j... hmm, that's m_j * d_j, not (m_j-1)*d_j + d_j.
-        // OK: prev_sum < d_j means prev_sum <= d_j - 1 (integers)
-        //     c_j * d_j <= (m_j - 1) * d_j
-        //     curr_sum <= d_j - 1 + (m_j - 1) * d_j = m_j * d_j - 1 < m_j * d_j <= d_{j+1}
-        assert(prev_sum <= stride[j as int] - 1);
-        assert((coords[j as int] as int) * stride[j as int]
-            <= ((shape[j as int] as int) - 1) * stride[j as int]);
         vstd::arithmetic::mul::lemma_mul_inequality(
-            (coords[j as int] as int), (shape[j as int] as int) - 1, stride[j as int]);
-        let prod_j = (shape[j as int] as int) * stride[j as int];
-        assert(stride[(j + 1) as int] % prod_j == 0);
+            coords[j as int] as int, (shape[j as int] as int) - 1, stride[j as int]);
+        // prev_sum <= d_j-1, cj_dj <= (m_j-1)*d_j, sum <= m_j*d_j - 1 < d_{j+1}
+        let kj: int = j as int;
+        assert(kj + 1 == (j + 1) as int);
+        assert(tractable_pair(shape, stride, kj));
+        let prod_j = (shape[kj] as int) * stride[kj];
+        let s_next = stride[kj + 1];
+        assert(s_next % prod_j == 0);
         assert(prod_j > 0);
-        assert(stride[(j + 1) as int] >= prod_j);
+        assert(s_next > 0);
+        assert(s_next >= prod_j) by {
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(s_next, prod_j);
+            let q = s_next / prod_j;
+            assert(s_next == prod_j * q);
+            assert(q >= 1) by {
+                if q == 0 { assert(prod_j * 0 == 0); }
+            };
+            vstd::arithmetic::mul::lemma_mul_inequality(1, q, prod_j);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(q, prod_j);
+        };
+
+        // dot == prev_sum + coords[j]*stride[j], and this < prod_j <= s_next
+        // stride[j] + (shape[j]-1)*stride[j] = shape[j]*stride[j] = prod_j
+        vstd::arithmetic::mul::lemma_mul_is_distributive_sub(
+            stride[kj], shape[kj] as int, 1);
+        assert((shape[kj] as int - 1) * stride[kj] == prod_j - stride[kj]);
+        // prev_sum < stride[j] and coords[j]*stride[j] <= (shape[j]-1)*stride[j]
+        // so prev_sum + coords[j]*stride[j] < stride[j] + (shape[j]-1)*stride[j] = prod_j
+        let dot_val = dot_product_nat_int(
+            coords.take((j + 1) as int), stride.take((j + 1) as int));
+
+        // Connect to postcondition terms
+        assert(stride[(j + 1) as int] == s_next);
     }
 }
 
-/// For sorted tractable layout, x / d_j gives the "upper" coordinate sum.
-/// Specifically: if x = sum c_l * d_l with c_l < m_l, and sum_{l<j} c_l * d_l < d_j,
-/// then x / d_j = sum_{l>=j} c_l * (d_l / d_j).
-proof fn lemma_offset_div_stride(
+/// Sorted strides are transitive: stride[a] <= stride[b] for a <= b.
+proof fn lemma_sorted_transitive(stride: Seq<int>, a: int, b: int)
+    requires
+        0 <= a, a <= b, b < stride.len(),
+        forall|k: int| 0 <= k < stride.len() as int - 1 ==>
+            stride[k] <= #[trigger] stride[k + 1],
+    ensures stride[a] <= stride[b],
+    decreases b - a,
+{
+    if a < b {
+        lemma_sorted_transitive(stride, a, b - 1);
+        // Use (b-1)+1 form to match trigger stride[k+1]
+        assert(stride[(b - 1)] <= stride[(b - 1) + 1]);
+    }
+}
+
+/// For sorted positive strides, find_min_positive returns 0.
+proof fn lemma_find_min_positive_sorted_zero(stride: Seq<int>)
+    requires
+        stride.len() > 0,
+        forall|j: int| 0 <= j < stride.len() ==> stride[j] > 0,
+        forall|j: int| 0 <= j < stride.len() as int - 1 ==>
+            stride[j] <= #[trigger] stride[j + 1],
+    ensures find_min_positive(stride) == 0,
+{
+    let idx = find_min_positive(stride);
+    lemma_find_min_positive_in_bounds(stride);
+    if idx < 0 {
+        lemma_find_min_positive_none_means_all_nonpositive(stride, idx, 0);
+        assert(false);
+    }
+    if idx > 0 {
+        lemma_find_min_positive_is_first(stride, idx);
+        lemma_sorted_transitive(stride, 0, idx);
+        assert(false);
+    }
+}
+
+// Use crate::proof::offset_lemmas::lemma_dot_product_nonneg for non-negativity,
+// and crate::proof::injectivity_lemmas::lemma_dot_with_multiples for divisibility.
+
+/// Tractable sorted positive strides form a divisibility chain.
+proof fn lemma_tractable_divisibility(
+    shape: Seq<nat>, stride: Seq<int>, a: int, b: int,
+)
+    requires
+        shape.len() == stride.len(), shape_valid(shape),
+        0 <= a, a <= b, b < stride.len(),
+        forall|k: int| 0 <= k < stride.len() ==> stride[k] > 0,
+        forall|k: int| 0 <= k < shape.len() as int - 1 ==>
+            #[trigger] tractable_pair(shape, stride, k),
+    ensures stride[b] % stride[a] == 0,
+    decreases b - a,
+{
+    if a == b {
+        // stride[a] % stride[a] == 0 trivially
+        assert(stride[a] % stride[a] == 0) by {
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(stride[a], stride[a]);
+        };
+    } else {
+        lemma_tractable_divisibility(shape, stride, a, b - 1);
+        // stride[b-1] % stride[a] == 0
+
+        // From tractability at k = b-1
+        assert(tractable_pair(shape, stride, b - 1));
+        let s_b = stride[(b - 1) + 1];
+        let prod = (shape[(b - 1) as int] as int) * stride[(b - 1) as int];
+        assert(s_b % prod == 0);
+        assert(prod > 0);
+
+        // prod % stride[b-1] == 0 (since prod = shape[b-1] * stride[b-1])
+        crate::proof::integer_helpers::lemma_multiple_of_multiple(
+            stride[(b - 1) as int], shape[(b - 1) as int], stride[(b - 1) as int]);
+
+        // stride[b] % stride[b-1] == 0 (transitivity through prod)
+        crate::proof::integer_helpers::lemma_divisibility_transitive(
+            s_b, prod, stride[(b - 1) as int]);
+
+        // stride[b] % stride[a] == 0 (transitivity with inductive hypothesis)
+        crate::proof::integer_helpers::lemma_divisibility_transitive(
+            s_b, stride[(b - 1) as int], stride[a]);
+    }
+}
+
+/// Structural characterization of left_inverse_build for sorted tractable positive strides.
+proof fn lemma_left_inverse_build_structure(
+    shape: Seq<nat>, stride: Seq<int>, preprod: Seq<nat>, acc_size: nat,
+)
+    requires
+        shape.len() == stride.len(),
+        shape.len() == preprod.len(),
+        shape_valid(shape),
+        acc_size > 0,
+        forall|j: int| 0 <= j < stride.len() ==> stride[j] > 0,
+        forall|j: int| 0 <= j < stride.len() as int - 1 ==>
+            stride[j] <= #[trigger] stride[j + 1],
+        forall|j: int| 0 <= j < shape.len() as int - 1 ==>
+            #[trigger] tractable_pair(shape, stride, j),
+        forall|j: int| 0 <= j < stride.len() ==>
+            stride[j] % (acc_size as int) == 0,
+    ensures ({
+        let raw = left_inverse_build(shape, stride, preprod, acc_size);
+        let k = shape.len();
+        shape.len() > 0 ==> (
+            raw.shape.len() == k + 1
+            && raw.stride.len() == k
+            && shape_valid(raw.shape)
+            && (forall|j: int| 0 <= j < k ==>
+                shape_size(raw.shape.take(j + 1)) * acc_size == #[trigger] stride[j] as nat)
+            && raw.shape[k as int] == shape[(k - 1) as int]
+            && (forall|j: int| 0 <= j < k ==>
+                #[trigger] raw.stride[j] == preprod[j] as int)
+        )
+    }),
+    decreases shape.len(),
+{
+    if shape.len() == 0 { return; }
+    let k = shape.len();
+
+    lemma_find_min_positive_sorted_zero(stride);
+
+    assert(remove_at_nat(shape, 0) =~= shape.skip(1));
+    assert(remove_at_int(stride, 0) =~= stride.skip(1));
+    assert(remove_at_nat(preprod, 0) =~= preprod.skip(1));
+
+    let d = stride[0] as nat;
+    let gap = d / acc_size;
+
+    // stride[0] % acc_size == 0 (from requires)
+    assert(stride[0] % (acc_size as int) == 0);
+    assert(d > 0nat);
+    assert(d > 0nat);
+    assert(acc_size > 0nat);
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(d as int, acc_size as int);
+    assert((d as int) % (acc_size as int) == 0);
+    assert((d as int) == (acc_size as int) * ((d as int) / (acc_size as int)));
+    assert(gap == (d as int) / (acc_size as int)) by {};
+    assert(gap * acc_size == d) by {
+        vstd::arithmetic::mul::lemma_mul_is_commutative(gap as int, acc_size as int);
+    };
+    assert(gap >= 1) by {
+        if gap == 0 {
+            assert((d as int) == (acc_size as int) * 0);
+            assert(d == 0nat);
+        }
+    };
+
+    if k == 1 {
+        let raw = left_inverse_build(shape, stride, preprod, acc_size);
+        assert(raw.shape =~= seq![gap, shape[0]]);
+        assert(raw.stride =~= seq![preprod[0] as int]);
+        assert(shape_valid(raw.shape)) by {
+            assert(raw.shape[0] == gap && gap > 0);
+            assert(raw.shape[1] == shape[0] && shape[0] > 0);
+        };
+        // shape_size(take(1)) = gap, and gap * acc_size = d = stride[0]
+        crate::runtime::shape_helpers::lemma_shape_size_take_step(raw.shape, 0);
+        // lemma gives: shape_size(take(1)) == shape_size(take(0)) * raw.shape[0]
+        // shape_size(empty) == 1 by unfolding
+        reveal_with_fuel(shape_size, 2);
+        assert(raw.shape.take(0) =~= Seq::<nat>::empty());
+        assert(shape_size(raw.shape.take(0)) == 1);
+        assert(raw.shape[0] == gap);
+        assert(shape_size(raw.shape.take(1)) == 1 * gap);
+        assert(shape_size(raw.shape.take(1)) == gap);
+        assert(shape_size(raw.shape.take(1)) * acc_size == stride[0] as nat);
+    } else {
+        let rest_shape = shape.skip(1);
+        let rest_stride = stride.skip(1);
+        let rest_preprod = preprod.skip(1);
+        let new_acc = acc_size * gap;
+        assert(new_acc == d);
+
+        assert(shape_valid(rest_shape)) by {
+            assert forall|j: int| 0 <= j < rest_shape.len()
+                implies #[trigger] rest_shape[j] > 0
+            by { assert(rest_shape[j] == shape[j + 1]); };
+        };
+        assert forall|j: int| 0 <= j < rest_stride.len()
+            implies rest_stride[j] > 0
+        by { assert(rest_stride[j] == stride[j + 1]); };
+        assert forall|j: int| 0 <= j < rest_stride.len() as int - 1
+            implies rest_stride[j] <= #[trigger] rest_stride[j + 1]
+        by {
+            assert(rest_stride[j] == stride[j + 1]);
+            // Use (j+1)+1 to match trigger stride[k+1] with k=j+1
+            assert(rest_stride[j + 1] == stride[(j + 1) + 1]);
+        };
+        assert forall|j: int| 0 <= j < rest_shape.len() as int - 1
+            implies #[trigger] tractable_pair(rest_shape, rest_stride, j)
+        by {
+            assert(rest_shape[j] == shape[j + 1]);
+            assert(rest_stride[j] == stride[j + 1]);
+            assert(rest_stride[j + 1] == stride[(j + 1) + 1]);
+            // Fire trigger from requires to get tractable_pair(shape, stride, j+1)
+            assert(tractable_pair(shape, stride, j + 1));
+        };
+        assert forall|j: int| 0 <= j < rest_stride.len()
+            implies rest_stride[j] % (new_acc as int) == 0
+        by {
+            assert(rest_stride[j] == stride[j + 1]);
+            lemma_tractable_divisibility(shape, stride, 0, j + 1);
+        };
+
+        lemma_left_inverse_build_structure(rest_shape, rest_stride, rest_preprod, new_acc);
+
+        let rest_raw = left_inverse_build(rest_shape, rest_stride, rest_preprod, new_acc);
+        let raw = left_inverse_build(shape, stride, preprod, acc_size);
+
+        assert(raw.shape =~= seq![gap].add(rest_raw.shape));
+        assert(raw.stride =~= seq![preprod[0] as int].add(rest_raw.stride));
+
+        assert(shape_valid(raw.shape)) by {
+            assert forall|j: int| 0 <= j < raw.shape.len()
+                implies #[trigger] raw.shape[j] > 0
+            by {
+                if j == 0 { } else { assert(raw.shape[j] == rest_raw.shape[j - 1]); }
+            };
+        };
+
+        // Prefix product property
+        assert forall|j: int| 0 <= j < k
+            implies shape_size(raw.shape.take(j + 1)) * acc_size == #[trigger] stride[j] as nat
+        by {
+            if j == 0 {
+                assert(raw.shape.take(1) =~= seq![gap]);
+                reveal_with_fuel(shape_size, 2);
+                assert(shape_size(raw.shape.take(1)) == gap);
+                assert(gap * acc_size == d);
+            } else {
+                let rt = rest_raw.shape.take(j);
+                assert(raw.shape.take(j + 1) =~= seq![gap].add(rt)) by {
+                    assert forall|l: int| 0 <= l < j + 1
+                        implies raw.shape.take(j + 1)[l] == seq![gap].add(rt)[l]
+                    by {
+                        if l == 0 { }
+                        else {
+                            assert(raw.shape[l] == rest_raw.shape[l - 1]);
+                            assert(rt[l - 1] == rest_raw.shape[l - 1]);
+                        }
+                    };
+                };
+                assert(shape_size(raw.shape.take(j + 1)) == gap * shape_size(rt)) by {
+                    let s = raw.shape.take(j + 1);
+                    assert(s.first() == gap);
+                    assert(s.skip(1) =~= rt);
+                };
+                // By induction: shape_size(rt) * new_acc == stride[j] as nat
+                assert(rest_stride[j - 1] == stride[j]);
+                assert(shape_size(rt) * new_acc == stride[j] as nat);
+                // gap * shape_size(rt) * acc_size = shape_size(rt) * (gap * acc_size)
+                //                                = shape_size(rt) * new_acc = stride[j]
+                vstd::arithmetic::mul::lemma_mul_is_commutative(
+                    gap as int, shape_size(rt) as int);
+                vstd::arithmetic::mul::lemma_mul_is_associative(
+                    shape_size(rt) as int, gap as int, acc_size as int);
+            }
+        };
+
+        // Last element
+        assert(raw.shape[k as int] == rest_raw.shape[(k - 1) as int]);
+        assert(rest_raw.shape[(k - 1) as int] == rest_shape[(k - 2) as int]);
+        assert(rest_shape[(k - 2) as int] == shape[(k - 1) as int]);
+
+        // Stride values
+        assert forall|j: int| 0 <= j < k
+            implies #[trigger] raw.stride[j] == preprod[j] as int
+        by {
+            if j == 0 { }
+            else {
+                assert(raw.stride[j] == rest_raw.stride[j - 1]);
+                assert(rest_preprod[j - 1] == preprod[j]);
+            }
+        };
+    }
+}
+
+/// Coordinate extraction for sorted tractable layouts:
+/// (x / d_j) % (d_{j+1}/d_j) == c_j for non-last coordinates,
+/// x / d_{k-1} == c_{k-1} for the last coordinate.
+proof fn lemma_coord_extraction(
     shape: Seq<nat>, stride: Seq<int>, coords: Seq<nat>, j: nat,
 )
     requires
@@ -2273,39 +2638,272 @@ proof fn lemma_offset_div_stride(
         coords.len() == shape.len(),
         shape_valid(shape),
         shape.len() > 0,
+        coords_in_bounds(coords, shape),
         forall|k: int| 0 <= k < stride.len() ==> stride[k] > 0,
         forall|k: int| 0 <= k < stride.len() as int - 1 ==>
             stride[k] <= #[trigger] stride[k + 1],
-        forall|k: int| 0 <= k < shape.len() as int - 1 ==> ({
-            let prod = (shape[k] as int) * stride[k];
-            prod > 0 && #[trigger] stride[k + 1] % prod == 0
-        }),
-        coords_in_bounds(coords, shape),
+        forall|k: int| 0 <= k < shape.len() as int - 1 ==>
+            #[trigger] tractable_pair(shape, stride, k),
         j < shape.len(),
     ensures ({
         let x = dot_product_nat_int(coords, stride);
-        let dj = stride[j as int];
-        j == 0 ==> x / dj == dot_product_nat_int(coords, stride) / dj
-        // For j > 0: x / d_j = sum_{l>=j} c_l * (d_l / d_j)
-        // (too complex to state here; used operationally in the main proof)
+        &&& (j + 1 < shape.len() ==>
+            (x / stride[j as int]) % (stride[(j + 1) as int] / stride[j as int])
+                == coords[j as int] as int)
+        &&& (j + 1 == shape.len() ==>
+            x / stride[j as int] == coords[j as int] as int)
     }),
 {
-    // Operational: used inside the main proof via specific assertions
+    let x = dot_product_nat_int(coords, stride);
+    let dj = stride[j as int];
+    let k = shape.len();
+
+    // Split x = low + coords[j]*dj + high
+    assert(coords =~= coords.take((j + 1) as int).add(coords.skip((j + 1) as int)));
+    assert(stride =~= stride.take((j + 1) as int).add(stride.skip((j + 1) as int)));
+    crate::proof::shape_lemmas::lemma_dot_product_append(
+        coords.take((j + 1) as int), coords.skip((j + 1) as int),
+        stride.take((j + 1) as int), stride.skip((j + 1) as int));
+    crate::proof::shape_lemmas::lemma_dot_product_ext(
+        coords, coords.take((j+1) as int).add(coords.skip((j+1) as int)),
+        stride, stride.take((j+1) as int).add(stride.skip((j+1) as int)));
+    let x_low_mid = dot_product_nat_int(coords.take((j + 1) as int), stride.take((j + 1) as int));
+    let high = dot_product_nat_int(coords.skip((j + 1) as int), stride.skip((j + 1) as int));
+
+    // Split x_low_mid = low + coords[j]*dj
+    assert(coords.take((j + 1) as int) =~= coords.take(j as int).add(seq![coords[j as int]]));
+    assert(stride.take((j + 1) as int) =~= stride.take(j as int).add(seq![stride[j as int]]));
+    crate::proof::shape_lemmas::lemma_dot_product_append(
+        coords.take(j as int), seq![coords[j as int]],
+        stride.take(j as int), seq![stride[j as int]]);
+    let low = dot_product_nat_int(coords.take(j as int), stride.take(j as int));
+    let cj = coords[j as int] as int;
+
+    // Bridge: x_low_mid == low + cj * dj
+    crate::proof::shape_lemmas::lemma_dot_product_ext(
+        coords.take((j + 1) as int), coords.take(j as int).add(seq![coords[j as int]]),
+        stride.take((j + 1) as int), stride.take(j as int).add(seq![stride[j as int]]));
+    assert(x_low_mid == low + cj * dj) by {
+        reveal_with_fuel(dot_product_nat_int, 2);
+    };
+
+    // low >= 0
+    assert(low >= 0) by {
+        if j > 0 {
+            assert forall|l: int| 0 <= l < stride.take(j as int).len()
+                implies stride.take(j as int)[l] >= 0
+            by { assert(stride.take(j as int)[l] == stride[l]); };
+            crate::proof::offset_lemmas::lemma_dot_product_nonneg(coords.take(j as int), stride.take(j as int));
+        }
+    };
+
+    // low < dj
+    if j == 0 {
+        assert(low == 0) by {
+            assert(coords.take(0) =~= Seq::<nat>::empty());
+            assert(stride.take(0) =~= Seq::<int>::empty());
+        };
+    } else {
+        lemma_partial_offset_bound(shape, stride, coords, (j - 1) as nat);
+    }
+
+    // dj | high (each stride[l] for l > j is divisible by dj)
+    let cs = coords.skip((j + 1) as int);
+    let ss = stride.skip((j + 1) as int);
+    assert forall|l: int| 0 <= l < ss.len() implies ss[l] >= 0
+    by { assert(ss[l] == stride[l + (j as int) + 1]); };
+    assert forall|l: int| 0 <= l < ss.len() implies #[trigger] ss[l] % dj == 0
+    by {
+        assert(ss[l] == stride[l + (j as int) + 1]);
+        lemma_tractable_divisibility(shape, stride, j as int, l + (j as int) + 1);
+    };
+    crate::proof::injectivity_lemmas::lemma_dot_with_multiples(cs, ss, dj);
+
+    // x == x_low_mid + high (from first split)
+    assert(x == x_low_mid + high);
+
+    // x / dj = cj + high/dj
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(high, dj);
+    let Q = high / dj;
+    assert(high == dj * Q);
+    vstd::arithmetic::mul::lemma_mul_is_commutative(cj, dj);
+    assert(x == low + dj * cj + dj * Q);
+    vstd::arithmetic::mul::lemma_mul_is_distributive_add(dj, cj, Q);
+    assert(x == low + dj * (cj + Q));
+    assert(low < dj);
+    assert(low >= 0);
+    assert(cj >= 0);
+    assert(Q >= 0) by {
+        crate::proof::offset_lemmas::lemma_dot_product_nonneg(cs, ss);
+    };
+    crate::proof::integer_helpers::lemma_div_mod_decompose(
+        low as nat, (cj + Q) as nat, dj as nat);
+
+    if j + 1 < k {
+        // Use j as int + 1 to match trigger stride[k+1]
+        let djp1 = stride[j as int + 1];
+        let g = djp1 / dj;
+
+        // djp1 | high
+        assert forall|l: int| 0 <= l < ss.len() implies #[trigger] ss[l] % djp1 == 0
+        by {
+            assert(ss[l] == stride[l + (j as int) + 1]);
+            if l == 0 {
+                // ss[0] == stride[j+1] == djp1, so djp1 % djp1 == 0
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(djp1, djp1);
+            } else {
+                lemma_tractable_divisibility(shape, stride, (j + 1) as int, l + (j as int) + 1);
+            }
+        };
+        crate::proof::injectivity_lemmas::lemma_dot_with_multiples(cs, ss, djp1);
+
+        // djp1 = dj * g
+        lemma_tractable_divisibility(shape, stride, j as int, (j + 1) as int);
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(djp1, dj);
+        assert(djp1 == dj * g);
+
+        // Q = g * K
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(high, djp1);
+        let K = high / djp1;
+        assert(high == djp1 * K);
+        vstd::arithmetic::mul::lemma_mul_is_associative(dj, g, K);
+        assert(dj * Q == dj * (g * K));
+
+        // cj < g (from tractability: djp1 >= shape[j] * dj, so g >= shape[j])
+        assert(tractable_pair(shape, stride, j as int));
+        let tract_prod = (shape[j as int] as int) * dj;
+        assert(tract_prod > 0);
+        assert(djp1 % tract_prod == 0);
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(djp1, tract_prod);
+        let tract_q = djp1 / tract_prod;
+        assert(djp1 == tract_prod * tract_q);
+        assert(tract_q >= 1) by {
+            if tract_q == 0 { assert(tract_prod * 0 == 0); }
+        };
+        vstd::arithmetic::mul::lemma_mul_inequality(1, tract_q, tract_prod);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(tract_q, tract_prod);
+        assert(djp1 >= tract_prod);
+        // dj * g == djp1 >= tract_prod == shape[j] * dj, so g >= shape[j] by cancellation
+        assert(g >= shape[j as int] as int) by {
+            if g < shape[j as int] as int {
+                vstd::arithmetic::mul::lemma_mul_strict_inequality(
+                    g, shape[j as int] as int, dj);
+                vstd::arithmetic::mul::lemma_mul_is_commutative(g, dj);
+                // g * dj < shape[j] * dj, i.e., dj * g < tract_prod
+                // but dj * g == djp1 >= tract_prod — contradiction
+            }
+        };
+        assert(cj < g);
+
+        // dj * Q == dj * (g * K) and dj > 0, so Q == g * K by cancellation
+        assert(Q == g * K) by {
+            if Q < g * K {
+                vstd::arithmetic::mul::lemma_mul_strict_inequality(Q, g * K, dj);
+                vstd::arithmetic::mul::lemma_mul_is_commutative(Q, dj);
+                vstd::arithmetic::mul::lemma_mul_is_commutative(g * K, dj);
+            }
+            if Q > g * K {
+                vstd::arithmetic::mul::lemma_mul_strict_inequality(g * K, Q, dj);
+                vstd::arithmetic::mul::lemma_mul_is_commutative(Q, dj);
+                vstd::arithmetic::mul::lemma_mul_is_commutative(g * K, dj);
+            }
+        };
+        crate::proof::integer_helpers::lemma_div_mod_decompose(
+            cj as nat, K as nat, g as nat);
+        assert((cj + g * K) % g == cj);
+        assert(cj + g * K == cj + Q);
+    } else {
+        // Last coordinate: high = 0, x / dj = cj
+        assert(high == 0) by {
+            assert(cs.len() == 0);
+            assert(ss.len() == 0);
+        };
+    }
+}
+
+/// Helper: delinearize(x, pre_shape)[j+1] == coords[j] for a single j.
+/// Extracted from lemma_left_inverse_correct to reduce Z3 context.
+proof fn lemma_delinearize_coord_match(
+    shape: Seq<nat>, stride: Seq<int>, coords: Seq<nat>,
+    pre_shape: Seq<nat>, raw_shape: Seq<nat>,
+    x: int, j: int, k: nat,
+)
+    requires
+        shape.len() == stride.len(),
+        coords.len() == shape.len(),
+        shape_valid(shape),
+        shape.len() > 0,
+        coords_in_bounds(coords, shape),
+        forall|m: int| 0 <= m < stride.len() ==> stride[m] > 0,
+        forall|m: int| 0 <= m < stride.len() as int - 1 ==>
+            stride[m] <= #[trigger] stride[m + 1],
+        forall|m: int| 0 <= m < shape.len() as int - 1 ==>
+            #[trigger] tractable_pair(shape, stride, m),
+        k == shape.len(),
+        pre_shape == raw_shape,
+        shape_valid(pre_shape),
+        raw_shape.len() == k + 1,
+        x >= 0,
+        (x as nat) < shape_size(pre_shape),
+        // Build structure postcondition facts
+        forall|m: int| 0 <= m < k as int ==>
+            shape_size(raw_shape.take(m + 1)) * 1nat == #[trigger] stride[m] as nat,
+        raw_shape[k as int] == shape[(k - 1) as int],
+        x == dot_product_nat_int(coords, stride),
+        0 <= j, j < k as int,
+    ensures
+        delinearize(x as nat, pre_shape)[(j + 1) as int] == coords[j],
+{
+    crate::runtime::shape_helpers::lemma_delinearize_index_formula(
+        x as nat, pre_shape, (j + 1) as nat);
+    // shape_size(pre_shape.take(j+1)) == stride[j] as nat
+    assert(shape_size(pre_shape.take((j + 1) as int)) == stride[j] as nat) by {
+        assert(shape_size(raw_shape.take((j + 1) as int)) * 1 == stride[j] as nat);
+    };
+
+    lemma_coord_extraction(shape, stride, coords, j as nat);
+    let xdot = dot_product_nat_int(coords, stride);
+    assert(x == xdot);
+    let sj = stride[j];
+
+    if j + 1 < k as int {
+        // pre_shape[j+1] = stride[j+1] / stride[j]
+        assert(shape_size(pre_shape.take((j + 2) as int)) == stride[(j+1) as int] as nat) by {
+            assert(shape_size(raw_shape.take((j + 2) as int)) * 1 == stride[(j+1) as int] as nat);
+        };
+        crate::runtime::shape_helpers::lemma_shape_size_take_step(
+            pre_shape, (j + 1) as nat);
+        // shape_size_take_step: stride[j+1] as nat == stride[j] as nat * pre_shape[j+1]
+        let sj1 = stride[(j + 1) as int];
+        let psj1 = pre_shape[(j + 1) as int];
+        // Bridge nat product to int: sj1 == psj1 as int * sj
+        vstd::arithmetic::mul::lemma_mul_is_commutative(sj, psj1 as int);
+        assert(sj1 == (psj1 as int) * sj);
+        // Cancel: sj1 / sj == psj1 as int
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+            sj1, sj, psj1 as int, 0);
+        assert(sj1 / sj == psj1 as int);
+        // coord_extraction: (x / sj) % (sj1 / sj) == coords[j] as int
+        // Substituting: (x / sj) % (psj1 as int) == coords[j] as int
+        assert((x / sj) % (psj1 as int) == coords[j] as int);
+    } else {
+        // j + 1 == k: last coordinate
+        // coord_extraction: x / sj == coords[j] as int
+        assert(x / sj == coords[j] as int);
+        // pre_shape[j+1] = pre_shape[k] = shape[k-1] = shape[j]
+        assert(pre_shape[(j + 1) as int] == shape[j]);
+        crate::proof::integer_helpers::lemma_mod_small(
+            coords[j] as nat, shape[j] as nat);
+    }
 }
 
 /// Left inverse correctness for sorted, tractable, injective layouts:
 /// left_inverse(L).offset(L.offset(i)) == i for all i in [0, L.size()).
-///
-/// The preconditions require the coalesced layout to be sorted and tractable;
-/// without tractability, the gap decomposition (integer division) can lose information.
-/// Counterexample: (2,2):(3,2) is injective but not tractable (3 % (2*2) != 0),
-/// and left_inverse fails for it.
 pub proof fn lemma_left_inverse_correct(layout: &LayoutSpec, i: nat)
     requires
         layout.valid(),
         layout.is_injective(),
         i < layout.size(),
-        // Additional conditions needed for correctness
         is_fully_coalesced(layout),
         layout.shape.len() > 0,
         forall|j: int| 0 <= j < layout.stride.len() ==> layout.stride[j] > 0,
@@ -2314,7 +2912,187 @@ pub proof fn lemma_left_inverse_correct(layout: &LayoutSpec, i: nat)
     ensures
         left_inverse(layout).offset(layout.offset(i) as nat) == i as int,
 {
-    assume(false); // TODO: prove using gap decomposition
+    // 1. coalesce(layout) = layout (fully coalesced)
+    lemma_fully_coalesced_identity(layout);
+    let C = *layout;
+    assert(coalesce(C) == C);
+    let k = C.shape.len();
+
+    // 2. Prefix products
+    let pp = shape_prefix_products(C.shape);
+    lemma_prefix_products_len(C.shape);
+    let preprod = pp.take(k as int);
+
+    // 3. Build result — establish sorted, tractable, positive for C
+    assert forall|j: int| 0 <= j < C.stride.len()
+        implies C.stride[j] % 1int == 0 by {};
+    assert forall|j: int| 0 <= j < C.stride.len() as int - 1
+        implies C.stride[j] <= #[trigger] C.stride[j + 1] by {};
+    assert forall|j: int| 0 <= j < C.shape.len() as int - 1
+        implies #[trigger] tractable_pair(C.shape, C.stride, j)
+    by {
+        assert(C.tractable_at(j));
+    };
+    lemma_left_inverse_build_structure(C.shape, C.stride, preprod, 1);
+    let raw = left_inverse_build(C.shape, C.stride, preprod, 1);
+    let pre = LayoutSpec {
+        shape: raw.shape,
+        stride: seq![0int].add(raw.stride),
+    };
+    assert(pre.valid());
+
+    // 4. Coordinates
+    let coords = delinearize(i, C.shape);
+    crate::proof::shape_lemmas::lemma_delinearize_bounds(i, C.shape);
+
+    // 5. x = C.offset(i) >= 0
+    let x = C.offset(i);
+    assert forall|j: int| 0 <= j < C.stride.len() implies C.stride[j] >= 0 by {};
+    crate::proof::offset_lemmas::lemma_dot_product_nonneg(coords, C.stride);
+
+    // 6. x < shape_size(pre.shape)
+    // pre.size() = shape_size(raw.shape.take(k)) * raw.shape[k] = stride[k-1] * shape[k-1]
+    crate::runtime::shape_helpers::lemma_shape_size_take_step(raw.shape, k as nat);
+    assert(raw.shape.take((k + 1) as int) =~= raw.shape);
+    assert(shape_size(raw.shape.take(k as int)) * 1 == C.stride[(k-1) as int] as nat);
+    assert(raw.shape[k as int] == C.shape[(k-1) as int]);
+
+    if k >= 2 {
+        lemma_partial_offset_bound(C.shape, C.stride, coords, (k - 2) as nat);
+        let low = dot_product_nat_int(coords.take((k - 1) as int), C.stride.take((k - 1) as int));
+        // Decompose: take(k) = take(k-1) ++ skip(k-1).take(1)
+        let cs_last = coords.skip((k - 1) as int).take(1);
+        let ss_last = C.stride.skip((k - 1) as int).take(1);
+        assert(cs_last[0] == coords[(k-1) as int]) by {
+            assert(coords.skip((k-1) as int)[0] == coords[(k-1) as int]);
+        };
+        assert(ss_last[0] == C.stride[(k-1) as int]) by {
+            assert(C.stride.skip((k-1) as int)[0] == C.stride[(k-1) as int]);
+        };
+        assert(coords.take(k as int) =~= coords.take((k-1) as int).add(cs_last)) by {
+            assert forall|l: int| 0 <= l < k as int
+                implies coords.take(k as int)[l] == coords.take((k-1) as int).add(cs_last)[l]
+            by { if l < (k-1) as int { } else {} };
+        };
+        assert(C.stride.take(k as int) =~= C.stride.take((k-1) as int).add(ss_last)) by {
+            assert forall|l: int| 0 <= l < k as int
+                implies C.stride.take(k as int)[l] == C.stride.take((k-1) as int).add(ss_last)[l]
+            by { if l < (k-1) as int { } else {} };
+        };
+        crate::proof::shape_lemmas::lemma_dot_product_append(
+            coords.take((k-1) as int), cs_last,
+            C.stride.take((k-1) as int), ss_last);
+        lemma_dot_take_one(coords.skip((k-1) as int), C.stride.skip((k-1) as int));
+        assert(coords.take(k as int) =~= coords);
+        assert(C.stride.take(k as int) =~= C.stride);
+        // Bridge: take(k) =~= take(k-1).add(cs_last), so dot equal
+        crate::proof::shape_lemmas::lemma_dot_product_ext(
+            coords.take(k as int), coords.take((k-1) as int).add(cs_last),
+            C.stride.take(k as int), C.stride.take((k-1) as int).add(ss_last));
+        crate::proof::shape_lemmas::lemma_dot_product_ext(
+            coords.take(k as int), coords, C.stride.take(k as int), C.stride);
+        // x = low + coords[k-1]*stride[k-1]
+        assert(x == low + (coords[(k-1) as int] as int) * C.stride[(k-1) as int]) by {
+            reveal_with_fuel(dot_product_nat_int, 2);
+        };
+        // low < stride[k-1], coords[k-1] < shape[k-1]
+        // so x < stride[k-1] + (shape[k-1]-1)*stride[k-1] = shape[k-1]*stride[k-1]
+        let ck = coords[(k-1) as int] as int;
+        let sk = C.stride[(k-1) as int];
+        let mk = C.shape[(k-1) as int] as int;
+        vstd::arithmetic::mul::lemma_mul_inequality(ck, mk - 1, sk);
+        assert(ck * sk <= (mk - 1) * sk);
+        // (mk - 1) * sk == mk * sk - sk by distribution
+        vstd::arithmetic::mul::lemma_mul_is_distributive_sub(sk, mk, 1);
+        // gives: sk * (mk - 1) == sk * mk - sk
+        vstd::arithmetic::mul::lemma_mul_is_commutative(mk - 1, sk);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(mk, sk);
+        assert((mk - 1) * sk == mk * sk - sk);
+        assert(low < sk);
+        assert(x < sk + (mk - 1) * sk);
+        assert(x < mk * sk);
+        assert(x < (C.shape[(k-1) as int] as int) * C.stride[(k-1) as int]);
+    } else {
+        // k == 1
+        assert(coords.len() == 1);
+        assert(C.stride.len() == 1);
+        lemma_dot_take_one(coords, C.stride);
+        assert(coords.take(1) =~= coords);
+        assert(C.stride.take(1) =~= C.stride);
+        crate::proof::shape_lemmas::lemma_dot_product_ext(
+            coords.take(1), coords, C.stride.take(1), C.stride);
+        assert(x == (coords[0] as int) * C.stride[0]);
+        vstd::arithmetic::mul::lemma_mul_strict_inequality(
+            coords[0] as int, C.shape[0] as int, C.stride[0]);
+        assert(x < (C.shape[(k-1) as int] as int) * C.stride[(k-1) as int]);
+    }
+    assert(x < (C.shape[(k-1) as int] as int) * C.stride[(k-1) as int]);
+    // pre.size() = shape_size(raw.shape) = shape_size(raw.shape.take(k)) * raw.shape[k]
+    //            = stride[k-1] * shape[k-1]
+    assert(pre.size() == (C.stride[(k-1) as int] as nat) * C.shape[(k-1) as int]) by {
+        assert(pre.shape == raw.shape);
+        assert(shape_size(raw.shape.take((k) as int)) * 1 == C.stride[(k-1) as int] as nat);
+        assert(raw.shape.len() == k + 1) by {
+            // from build_structure postcondition
+        };
+        assert(raw.shape.take((k + 1) as int) =~= raw.shape);
+    };
+    vstd::arithmetic::mul::lemma_mul_is_commutative(
+        C.shape[(k-1) as int] as int, C.stride[(k-1) as int]);
+    assert((x as nat) < pre.size());
+
+    // 7. For each j, delinearize(x, pre.shape)[j+1] == coords[j]
+    assert forall|j: int| 0 <= j < k
+        implies delinearize(x as nat, pre.shape)[(j + 1) as int] == coords[j]
+    by {
+        lemma_delinearize_coord_match(
+            C.shape, C.stride, coords, pre.shape, raw.shape, x, j, k);
+    };
+
+    // 8. pre.stride.skip(1) =~= preprod_int
+    let preprod_int = Seq::new(k, |j: int| preprod[j] as int);
+    assert(pre.stride.skip(1) =~= preprod_int) by {
+        assert forall|j: int| 0 <= j < k
+            implies pre.stride.skip(1)[j] == preprod_int[j]
+        by {
+            assert(pre.stride.skip(1)[j] == pre.stride[j + 1]);
+            assert(pre.stride[j + 1] == raw.stride[j]);
+        };
+    };
+
+    // 9. delinearize(x, pre.shape).skip(1) =~= coords
+    crate::proof::shape_lemmas::lemma_delinearize_len(x as nat, pre.shape);
+    let delin = delinearize(x as nat, pre.shape);
+    assert(delin.skip(1) =~= coords) by {
+        assert forall|j: int| 0 <= j < k
+            implies delin.skip(1)[j] == coords[j]
+        by { assert(delin.skip(1)[j] == delin[j + 1]); };
+    };
+
+    // 10. pre.offset(x) = dot(coords, preprod_int)
+    assert(pre.offset(x as nat) == dot_product_nat_int(coords, preprod_int)) by {
+        assert(pre.stride.first() == 0int);
+        crate::proof::shape_lemmas::lemma_dot_product_ext(
+            delin.skip(1), coords, pre.stride.skip(1), preprod_int);
+    };
+
+    // 11. preprod_int =~= column_major_strides(C.shape)
+    lemma_preprod_is_column_major(C.shape);
+    let cms = column_major_strides(C.shape);
+    crate::proof::shape_lemmas::lemma_dot_product_ext(coords, coords, preprod_int, cms);
+
+    // 12. dot(coords, cms) = linearize(coords, C.shape)
+    crate::proof::injectivity_lemmas::lemma_column_major_dot_is_linearize(coords, C.shape);
+
+    // 13. linearize(delinearize(i, shape), shape) = i
+    crate::proof::shape_lemmas::lemma_delinearize_roundtrip(i, C.shape);
+
+    // 14. coalesce(pre).offset(x) = pre.offset(x)
+    crate::proof::shape_lemmas::lemma_shape_size_positive(pre.shape);
+    crate::proof::coalesce_lemmas::lemma_coalesce(pre, x as nat);
+
+    assert(left_inverse(layout) == coalesce(pre));
+    assert(left_inverse(layout).offset(layout.offset(i) as nat) == i as int);
 }
 
 } // verus!

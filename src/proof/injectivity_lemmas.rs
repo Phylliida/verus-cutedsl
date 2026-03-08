@@ -382,7 +382,7 @@ proof fn lemma_tractable_higher_strides_multiple(
 }
 
 /// Helper: dot product with strides that are all multiples of d gives a multiple of d.
-proof fn lemma_dot_with_multiples(
+pub proof fn lemma_dot_with_multiples(
     coords: Seq<nat>, strides: Seq<int>, d: int,
 )
     requires

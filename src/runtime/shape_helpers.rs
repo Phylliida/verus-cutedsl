@@ -236,7 +236,7 @@ pub proof fn lemma_take_shape_valid(s: Seq<nat>, k: nat)
 }
 
 /// delinearize(idx, s)[k] == (idx / shape_size(s.take(k))) % s[k]
-proof fn lemma_delinearize_index_formula(idx: nat, s: Seq<nat>, k: nat)
+pub proof fn lemma_delinearize_index_formula(idx: nat, s: Seq<nat>, k: nat)
     requires shape_valid(s), k < s.len(), idx < shape_size(s),
     ensures delinearize(idx, s)[k as int] == (idx / shape_size(s.take(k as int))) % s[k as int],
     decreases k,
