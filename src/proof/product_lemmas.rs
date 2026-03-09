@@ -337,4 +337,152 @@ pub proof fn lemma_blocked_product_valid(a: &LayoutSpec, b: &LayoutSpec)
     lemma_product_valid(a, b);
 }
 
+// ══════════════════════════════════════════════════════════════
+// Product injectivity
+// ══════════════════════════════════════════════════════════════
+
+/// If A and B are both injective, A has non-negative strides, and B has
+/// non-negative strides, then logical_product(A, B) is injective.
+///
+/// Proof: product.offset(x) = A.offset(x % sa) + cosize(A) * B.offset(x / sa).
+/// The A-part is in [0, cosize(A)) and the B-part is a multiple of cosize(A),
+/// so modular arithmetic separates distinct inputs.
+pub proof fn lemma_product_injective(a: &LayoutSpec, b: &LayoutSpec)
+    requires
+        product_admissible(a, b),
+        b.non_negative_strides(),
+        a.is_injective(),
+        b.is_injective(),
+    ensures
+        logical_product(a, b).is_injective(),
+{
+    let p = logical_product(a, b);
+    let sa = a.size();
+    let sb = b.size();
+    let cs = a.cosize_nonneg() as int;
+
+    lemma_product_valid(a, b);
+    lemma_product_size(a, b);
+    lemma_shape_size_positive(a.shape);
+    lemma_shape_size_positive(b.shape);
+
+    assert forall|x1: nat, x2: nat|
+        x1 < p.size() && x2 < p.size() && x1 != x2
+    implies
+        #[trigger] p.offset(x1) != #[trigger] p.offset(x2)
+    by {
+        // p.size() == sa * sb
+        assert(x1 < sa * sb);
+        assert(x2 < sa * sb);
+
+        lemma_product_offset(a, b, x1);
+        lemma_product_offset(a, b, x2);
+
+        let r1 = x1 % sa;
+        let q1 = x1 / sa;
+        let r2 = x2 % sa;
+        let q2 = x2 / sa;
+
+        // r1, r2 < sa
+        crate::proof::integer_helpers::lemma_mod_bound(x1, sa);
+        crate::proof::integer_helpers::lemma_mod_bound(x2, sa);
+
+        // q1, q2 < sb
+        crate::proof::integer_helpers::lemma_div_upper_bound(x1, sa, sb);
+        crate::proof::integer_helpers::lemma_div_upper_bound(x2, sa, sb);
+
+        // A.offset(r) is in [0, cosize(A)) for r < sa
+        crate::proof::offset_lemmas::lemma_offset_nonneg(*a, r1);
+        crate::proof::offset_lemmas::lemma_offset_nonneg(*a, r2);
+        crate::proof::offset_lemmas::lemma_offset_upper_bound(*a, r1);
+        crate::proof::offset_lemmas::lemma_offset_upper_bound(*a, r2);
+        let oa1 = a.offset(r1);
+        let oa2 = a.offset(r2);
+
+        // B.offset(q) >= 0
+        crate::proof::offset_lemmas::lemma_offset_nonneg(*b, q1);
+        crate::proof::offset_lemmas::lemma_offset_nonneg(*b, q2);
+        let ob1 = b.offset(q1);
+        let ob2 = b.offset(q2);
+
+        // x1 != x2 means (r1, q1) != (r2, q2)
+        crate::proof::integer_helpers::lemma_div_mod_identity(x1, sa);
+        crate::proof::integer_helpers::lemma_div_mod_identity(x2, sa);
+
+        // Suppose offsets are equal:
+        // oa1 + cs * ob1 == oa2 + cs * ob2
+        // oa1 - oa2 == cs * (ob2 - ob1)
+        // |oa1 - oa2| < cs, and RHS is a multiple of cs
+        // So ob2 - ob1 == 0, then oa1 == oa2
+
+        if p.offset(x1) == p.offset(x2) {
+            // oa1 + cs * ob1 == oa2 + cs * ob2
+            assert(oa1 + cs * ob1 == oa2 + cs * ob2);
+
+            // Case 1: cs == 0 means cosize == 0, which implies sa == 0 (contradiction since shape_valid)
+            // Actually cosize >= 1 always for valid non-neg layouts
+            // But cs could be 0 if the layout is empty... no, product_admissible requires a.shape.len() > 0 + valid
+            // Let's just handle cases
+
+            if cs == 0 {
+                // offset of A is always 0 (all strides 0 and non-neg means all strides == 0)
+                // Then oa1 == oa2 == 0, so 0 == 0, which doesn't give contradiction
+                // But A injective + cosize == 0 is impossible for non-trivial A
+                // Actually cosize = dot(shape_minus_one, stride) + 1 >= 1
+                // So cs >= 1
+                crate::proof::offset_lemmas::lemma_cosize_equals_dot_plus_one(*a);
+                assert(false); // cosize >= 1
+            }
+
+            // cs >= 1
+            // From equal: oa1 + cs*ob1 == oa2 + cs*ob2
+            // So oa1 - oa2 == cs*ob2 - cs*ob1 == cs*(ob2 - ob1)
+            let diff = oa1 - oa2;
+            vstd::arithmetic::mul::lemma_mul_is_distributive_sub(cs, ob2, ob1);
+            assert(cs * ob2 - cs * ob1 == cs * (ob2 - ob1));
+            assert(diff == cs * (ob2 - ob1));
+
+            // |diff| < cs since both oa1, oa2 in [0, cs)
+            assert(-cs < diff);
+            assert(diff < cs);
+
+            // |cs * (ob2 - ob1)| < cs means ob2 - ob1 == 0
+            if ob2 - ob1 > 0 {
+                vstd::arithmetic::mul::lemma_mul_inequality(1, ob2 - ob1, cs);
+                vstd::arithmetic::mul::lemma_mul_basics(cs);
+                assert(cs * (ob2 - ob1) >= cs);
+                assert(false);
+            } else if ob2 - ob1 < 0 {
+                vstd::arithmetic::mul::lemma_mul_inequality(1, ob1 - ob2, cs);
+                vstd::arithmetic::mul::lemma_mul_basics(cs);
+                assert(cs * (ob1 - ob2) >= cs);
+                assert(cs * (ob2 - ob1) == -(cs * (ob1 - ob2))) by (nonlinear_arith)
+                    requires cs > 0, ob1 - ob2 > 0;
+                assert(diff <= -cs);
+                assert(false);
+            }
+            assert(ob1 == ob2);
+            // B injective: ob1 == ob2 and q1, q2 < sb => q1 == q2
+            if q1 != q2 {
+                assert(b.offset(q1) != b.offset(q2));
+                assert(false);
+            }
+            assert(q1 == q2);
+
+            // oa1 == oa2
+            assert(oa1 == oa2);
+            // A injective: oa1 == oa2 and r1, r2 < sa => r1 == r2
+            if r1 != r2 {
+                assert(a.offset(r1) != a.offset(r2));
+                assert(false);
+            }
+            assert(r1 == r2);
+
+            // x1 == sa * q1 + r1 == sa * q2 + r2 == x2
+            assert(x1 == x2);
+            assert(false);
+        }
+    }
+}
+
 } // verus!

@@ -10,3 +10,4 @@ pub mod integer_helpers;
 pub mod injectivity_lemmas;
 pub mod slice_lemmas;
 pub mod inverse_lemmas;
+pub mod tiling_lemmas;

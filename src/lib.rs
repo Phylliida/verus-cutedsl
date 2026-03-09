@@ -29,6 +29,9 @@ pub mod inverse;
 pub mod slice;
 
 #[cfg(verus_keep_ghost)]
+pub mod tiling;
+
+#[cfg(verus_keep_ghost)]
 pub mod proof;
 
 #[cfg(verus_keep_ghost)]

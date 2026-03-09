@@ -3095,4 +3095,70 @@ pub proof fn lemma_left_inverse_correct(layout: &LayoutSpec, i: nat)
     assert(left_inverse(layout).offset(layout.offset(i) as nat) == i as int);
 }
 
+// ══════════════════════════════════════════════════════════════
+// Inverse compose cancellation
+// ══════════════════════════════════════════════════════════════
+
+/// Right inverse compose cancellation:
+/// compose(L, right_inverse(L)).offset(j) == j
+///
+/// This bridges the pointwise result (L.offset(R.offset(j)) == j) to the
+/// compose formulation. Requires that R's image fits within L's first mode.
+pub proof fn lemma_right_inverse_compose_cancel(layout: &LayoutSpec, j: nat)
+    requires
+        layout.valid(),
+        layout.is_bijective_upto(layout.size()),
+        layout.shape.len() > 0,
+        j < right_inverse(layout).size(),
+        // R has non-negative strides and image fits within L's first mode
+        right_inverse(layout).non_negative_strides(),
+        right_inverse(layout).offset(j) >= 0,
+        right_inverse(layout).offset(j) < layout.shape.first() as int,
+    ensures
+        crate::composition::compose(*layout, right_inverse(layout)).offset(j) == j as int,
+{
+    let r = right_inverse(layout);
+    lemma_right_inverse_valid(layout);
+
+    // compose(L, R).offset(j) == L.offset(R.offset(j))
+    crate::proof::composition_lemmas::lemma_compose_correct(*layout, r, j);
+
+    // L.offset(R.offset(j)) == j
+    lemma_right_inverse_correct(layout, j);
+}
+
+/// Left inverse compose cancellation:
+/// compose(left_inverse(L), L).offset(i) == i
+///
+/// Bridges the pointwise result (LI.offset(L.offset(i)) == i) to compose.
+/// Requires that L's image fits within LI's first mode.
+pub proof fn lemma_left_inverse_compose_cancel(layout: &LayoutSpec, i: nat)
+    requires
+        layout.valid(),
+        layout.is_injective(),
+        i < layout.size(),
+        is_fully_coalesced(layout),
+        layout.shape.len() > 0,
+        forall|j: int| 0 <= j < layout.stride.len() ==> layout.stride[j] > 0,
+        layout.is_sorted(),
+        layout.is_tractable(),
+        // L has non-negative strides (follows from positive strides)
+        layout.non_negative_strides(),
+        // L's image fits within LI's first mode
+        left_inverse(layout).shape.len() > 0,
+        layout.offset(i) >= 0,
+        layout.offset(i) < left_inverse(layout).shape.first() as int,
+    ensures
+        crate::composition::compose(left_inverse(layout), *layout).offset(i) == i as int,
+{
+    let li = left_inverse(layout);
+    lemma_left_inverse_valid(layout);
+
+    // compose(LI, L).offset(i) == LI.offset(L.offset(i))
+    crate::proof::composition_lemmas::lemma_compose_correct(li, *layout, i);
+
+    // LI.offset(L.offset(i)) == i
+    lemma_left_inverse_correct(layout, i);
+}
+
 } // verus!

@@ -266,6 +266,56 @@ pub proof fn lemma_compose_preserves_injectivity_1d_a(a: LayoutSpec, b: LayoutSp
 }
 
 // ══════════════════════════════════════════════════════════════
+// Injectivity preservation under composition (general rank A)
+// ══════════════════════════════════════════════════════════════
+
+/// If A and B are both injective, and B's image fits within A's first mode,
+/// then compose(A, B) is injective. Generalizes the rank-1 case above.
+pub proof fn lemma_compose_preserves_injectivity(a: LayoutSpec, b: LayoutSpec)
+    requires
+        a.valid(), b.valid(),
+        a.shape.len() > 0,
+        b.non_negative_strides(),
+        a.is_injective(),
+        b.is_injective(),
+        forall|x: nat| x < b.size() ==> b.offset(x) >= 0 && b.offset(x) < a.shape.first() as int,
+    ensures
+        compose(a, b).is_injective(),
+{
+    let c = compose(a, b);
+    crate::proof::composition_lemmas::lemma_compose_shape(a, b);
+
+    // a.size() >= a.shape[0] (first mode fits in domain)
+    crate::proof::shape_lemmas::lemma_size_at_least_first(a.shape);
+
+    assert forall|i: nat, j: nat|
+        i < c.size() && j < c.size() && i != j
+    implies
+        #[trigger] c.offset(i) != #[trigger] c.offset(j)
+    by {
+        assert(i < b.size());
+        assert(j < b.size());
+
+        crate::proof::composition_lemmas::lemma_compose_correct(a, b, i);
+        crate::proof::composition_lemmas::lemma_compose_correct(a, b, j);
+
+        // B injective: i != j ==> b.offset(i) != b.offset(j)
+        assert(b.offset(i) != b.offset(j));
+
+        let bi = b.offset(i) as nat;
+        let bj = b.offset(j) as nat;
+        assert(bi < a.shape.first());
+        assert(bj < a.shape.first());
+        assert(bi < a.size());
+        assert(bj < a.size());
+        assert(bi != bj);
+
+        // A injective: bi != bj ==> a.offset(bi) != a.offset(bj)
+        assert(a.offset(bi) != a.offset(bj));
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
 // Coalesce preserves injectivity (position 0)
 // ══════════════════════════════════════════════════════════════
 

@@ -563,3 +563,32 @@ proof fn lemma_dot_product_partial_le_total_nat(coords: Seq<nat>, strides: Seq<i
 }
 
 } // verus!
+
+// Display/Debug outside verus! macro (external_body impls)
+use std::fmt;
+
+#[cfg(verus_keep_ghost)]
+#[verifier::external]
+impl fmt::Display for RuntimeLayout {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "(")?;
+        for (i, s) in self.shape.iter().enumerate() {
+            if i > 0 { write!(f, ",")?; }
+            write!(f, "{}", s)?;
+        }
+        write!(f, "):(")?;
+        for (i, d) in self.stride.iter().enumerate() {
+            if i > 0 { write!(f, ",")?; }
+            write!(f, "{}", d)?;
+        }
+        write!(f, ")")
+    }
+}
+
+#[cfg(verus_keep_ghost)]
+#[verifier::external]
+impl fmt::Debug for RuntimeLayout {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
+    }
+}

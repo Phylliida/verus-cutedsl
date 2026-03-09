@@ -5,6 +5,7 @@ pub mod layout;
 pub mod ops;
 pub mod swizzle;
 pub mod inverse;
+pub mod tiling;
 
 verus! {
 
