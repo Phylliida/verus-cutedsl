@@ -6,6 +6,7 @@ pub mod ops;
 pub mod swizzle;
 pub mod inverse;
 pub mod tiling;
+pub mod predication;
 
 verus! {
 

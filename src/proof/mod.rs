@@ -11,3 +11,6 @@ pub mod injectivity_lemmas;
 pub mod slice_lemmas;
 pub mod inverse_lemmas;
 pub mod tiling_lemmas;
+pub mod predication_lemmas;
+pub mod compatibility_lemmas;
+pub mod permutation_lemmas;

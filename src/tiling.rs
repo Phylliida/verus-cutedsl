@@ -4,6 +4,7 @@ use crate::layout::*;
 use crate::divide::*;
 use crate::product::*;
 use crate::slice::*;
+use crate::predication::*;
 
 verus! {
 
@@ -124,6 +125,22 @@ pub open spec fn local_partition(
         slice_layout(&tensor.layout, 0, thread_id),
         slice_offset(&tensor.layout, 0, thread_id),
     )
+}
+
+// ══════════════════════════════════════════════════════════════
+// Predicated divide: pad to next multiple, then tile
+// ══════════════════════════════════════════════════════════════
+
+/// Predicated divide: pad tensor to next multiple of tile_size, then tile.
+/// Returns a DividedLayout where tile modes index within each tile,
+/// and rest modes iterate across tiles (including potential padding tiles).
+pub open spec fn predicated_divide(original_size: nat, tile_size: nat) -> DividedLayout
+    recommends padded_divide_admissible(original_size, tile_size),
+{
+    let padded = padded_size(original_size, tile_size);
+    let a = make_identity(padded);
+    let b = make_identity(tile_size);
+    zipped_divide(&a, &b)
 }
 
 } // verus!

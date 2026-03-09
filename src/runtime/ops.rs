@@ -1043,4 +1043,312 @@ pub fn dice_exec(layout: &RuntimeLayout, mode: usize) -> (result: RuntimeLayout)
     }
 }
 
+/// Remove a single mode at position `pos` from a RuntimeLayout.
+fn remove_mode_exec(layout: &RuntimeLayout, pos: usize) -> (result: RuntimeLayout)
+    requires
+        layout.wf_spec(),
+        (pos as int) < layout@.shape.len() as int,
+        ({
+            let removed = LayoutSpec {
+                shape: layout@.shape.take(pos as int).add(layout@.shape.skip(pos as int + 1)),
+                stride: layout@.stride.take(pos as int).add(layout@.stride.skip(pos as int + 1)),
+            };
+            &&& removed.valid()
+            &&& removed.size() <= u64::MAX as nat
+        }),
+    ensures
+        result.wf_spec(),
+        result@.shape =~= layout@.shape.take(pos as int).add(layout@.shape.skip(pos as int + 1)),
+        result@.stride =~= layout@.stride.take(pos as int).add(layout@.stride.skip(pos as int + 1)),
+{
+    let n = layout.shape.len();
+    let mut new_shape: Vec<u64> = Vec::new();
+    let mut new_stride: Vec<i64> = Vec::new();
+
+    proof {
+        assert(layout@.shape == shape_to_nat_seq(layout.shape@));
+        assert(layout@.stride == strides_to_int_seq(layout.stride@));
+    }
+
+    let mut j: usize = 0;
+    while j < n
+        invariant
+            0 <= j <= n,
+            n == layout.shape.len(),
+            layout.wf_spec(),
+            layout@.shape == shape_to_nat_seq(layout.shape@),
+            layout@.stride == strides_to_int_seq(layout.stride@),
+            (pos as int) < n as int,
+            new_shape@.len() == new_stride@.len(),
+            new_shape@.len() == (if pos < j { (j - 1) as nat } else { j as nat }),
+            forall|k: int| 0 <= k < new_shape@.len() as int ==>
+                #[trigger] new_shape@[k] == layout.shape@[if k < pos as int { k } else { k + 1 }],
+            forall|k: int| 0 <= k < new_stride@.len() as int ==>
+                #[trigger] new_stride@[k] == layout.stride@[if k < pos as int { k } else { k + 1 }],
+        decreases n - j,
+    {
+        if j != pos {
+            new_shape.push(layout.shape[j]);
+            new_stride.push(layout.stride[j]);
+        }
+        j = j + 1;
+    }
+
+    proof {
+        let removed_shape = layout@.shape.take(pos as int).add(layout@.shape.skip(pos as int + 1));
+        let removed_stride = layout@.stride.take(pos as int).add(layout@.stride.skip(pos as int + 1));
+
+        assert(shape_to_nat_seq(new_shape@) =~= removed_shape) by {
+            assert forall|k: int| 0 <= k < new_shape@.len() as int implies
+                shape_to_nat_seq(new_shape@)[k] == removed_shape[k]
+            by {
+                let orig = if k < pos as int { k } else { k + 1 };
+                assert(new_shape@[k] == layout.shape@[orig]);
+                if k < pos as int {
+                    assert(removed_shape[k] == layout@.shape.take(pos as int)[k]);
+                    assert(layout@.shape.take(pos as int)[k] == layout@.shape[k]);
+                } else {
+                    assert(removed_shape[k] == layout@.shape.skip(pos as int + 1)[k - pos as int]);
+                    assert(layout@.shape.skip(pos as int + 1)[k - pos as int] == layout@.shape[k + 1]);
+                }
+            };
+        };
+
+        assert(strides_to_int_seq(new_stride@) =~= removed_stride) by {
+            assert forall|k: int| 0 <= k < new_stride@.len() as int implies
+                strides_to_int_seq(new_stride@)[k] == removed_stride[k]
+            by {
+                let orig = if k < pos as int { k } else { k + 1 };
+                assert(new_stride@[k] == layout.stride@[orig]);
+                if k < pos as int {
+                    assert(removed_stride[k] == layout@.stride.take(pos as int)[k]);
+                    assert(layout@.stride.take(pos as int)[k] == layout@.stride[k]);
+                } else {
+                    assert(removed_stride[k] == layout@.stride.skip(pos as int + 1)[k - pos as int]);
+                    assert(layout@.stride.skip(pos as int + 1)[k - pos as int] == layout@.stride[k + 1]);
+                }
+            };
+        };
+    }
+
+    let ghost removed = LayoutSpec {
+        shape: layout@.shape.take(pos as int).add(layout@.shape.skip(pos as int + 1)),
+        stride: layout@.stride.take(pos as int).add(layout@.stride.skip(pos as int + 1)),
+    };
+    RuntimeLayout {
+        shape: new_shape,
+        stride: new_stride,
+        model: Ghost(removed),
+    }
+}
+
+/// Remove all size-1 modes from a layout at runtime.
+/// Mirrors the spec `remove_units_iter(layout, 0)` by scanning left-to-right
+/// and removing unit modes one at a time.
+pub fn remove_units_iter_exec(layout: RuntimeLayout) -> (result: RuntimeLayout)
+    requires layout.wf_spec(),
+    ensures
+        result.wf_spec(),
+        result@ == remove_units_iter(layout@, 0),
+{
+    let ghost orig = layout@;
+    let mut current = layout;
+    let mut pos: usize = 0;
+
+    while pos < current.shape.len()
+        invariant
+            current.wf_spec(),
+            pos <= current.shape.len(),
+            remove_units_iter(current@, pos as nat) == remove_units_iter(orig, 0),
+        decreases current.shape.len() - pos,
+    {
+        if current.shape[pos] == 1 {
+            proof {
+                // remove_units_iter steps: shape[pos] == 1 => remove that mode, recurse at same pos
+                crate::proof::shape_lemmas::lemma_shape_size_positive(current@.shape);
+                crate::proof::coalesce_lemmas::lemma_remove_unit_mode_offset(current@, 0, pos as nat);
+                crate::proof::coalesce_lemmas::lemma_remove_unit_mode_size_bound(current@, pos as nat);
+            }
+            current = remove_mode_exec(&current, pos);
+            // pos stays the same — the next element shifted into this position
+        } else {
+            pos = pos + 1;
+        }
+    }
+
+    // At this point: pos >= current.shape.len(), so remove_units_iter(current@, pos) == current@
+    current
+}
+
+/// Flatten a layout at runtime: coalesce then remove unit modes.
+pub fn flatten_exec(layout: RuntimeLayout) -> (result: RuntimeLayout)
+    requires layout.wf_spec(),
+    ensures
+        result.wf_spec(),
+        result@ == flatten(layout@),
+{
+    let ghost orig = layout@;
+    let coalesced = coalesce_exec(layout);
+    proof {
+        crate::proof::coalesce_lemmas::lemma_flatten_valid(orig);
+        crate::proof::coalesce_lemmas::lemma_flatten_size(orig);
+    }
+    remove_units_iter_exec(coalesced)
+}
+
+/// Group (merge) contiguous modes [lo, hi) into a single mode.
+/// Repeatedly coalesces at position lo, reducing rank by 1 each step.
+pub fn group_modes_exec(layout: &RuntimeLayout, lo: usize, hi: usize) -> (result: RuntimeLayout)
+    requires
+        layout.wf_spec(),
+        group_modes_admissible(&layout@, lo as nat, hi as nat),
+    ensures
+        result.wf_spec(),
+        result@ == group_modes(layout@, lo as nat, hi as nat),
+    decreases hi - lo,
+{
+    if hi <= lo + 1 {
+        // Clone the layout (no coalescing needed)
+        let mut shape_vec: Vec<u64> = Vec::new();
+        let mut stride_vec: Vec<i64> = Vec::new();
+        let n = layout.shape.len();
+        let mut i: usize = 0;
+        while i < n
+            invariant
+                0 <= i <= n,
+                n == layout.shape.len(),
+                layout.wf_spec(),
+                shape_vec@.len() == i,
+                stride_vec@.len() == i,
+                forall|j: int| 0 <= j < i as int ==> #[trigger] shape_vec@[j] == layout.shape@[j],
+                forall|j: int| 0 <= j < i as int ==> #[trigger] stride_vec@[j] == layout.stride@[j],
+            decreases n - i,
+        {
+            shape_vec.push(layout.shape[i]);
+            stride_vec.push(layout.stride[i]);
+            i = i + 1;
+        }
+        proof {
+            assert(shape_to_nat_seq(shape_vec@) =~= layout@.shape) by {
+                assert forall|j: int| 0 <= j < shape_vec@.len() as int implies
+                    shape_to_nat_seq(shape_vec@)[j] == layout@.shape[j]
+                by {
+                    assert(shape_vec@[j] == layout.shape@[j]);
+                    assert(layout@.shape == shape_to_nat_seq(layout.shape@));
+                };
+            };
+            assert(strides_to_int_seq(stride_vec@) =~= layout@.stride) by {
+                assert forall|j: int| 0 <= j < stride_vec@.len() as int implies
+                    strides_to_int_seq(stride_vec@)[j] == layout@.stride[j]
+                by {
+                    assert(stride_vec@[j] == layout.stride@[j]);
+                    assert(layout@.stride == strides_to_int_seq(layout.stride@));
+                };
+            };
+        }
+        RuntimeLayout {
+            shape: shape_vec,
+            stride: stride_vec,
+            model: Ghost(layout@),
+        }
+    } else {
+        // Coalesce at lo, then recurse with [lo, hi-1)
+        proof {
+            crate::proof::coalesce_lemmas::lemma_group_modes_admissible_step(layout@, lo as nat, hi as nat);
+            crate::proof::shape_lemmas::lemma_shape_size_positive(layout@.shape);
+            crate::proof::inverse_lemmas::lemma_two_modes_product_bound(
+                layout@.shape, lo as int, (lo + 1) as int);
+            crate::proof::coalesce_lemmas::lemma_coalesce_pair_size_general(layout@, lo as nat);
+        }
+        let coalesced = coalesce_pair_exec(layout, lo);
+        proof {
+            // Recursion: admissible for [lo, hi-1) on coalesced layout
+            // Overflow forall shifts: group_modes(layout, lo, hi) steps to
+            //   group_modes(coalesce_pair(layout, lo), lo, hi-1)
+        }
+        group_modes_exec(&coalesced, lo, hi - 1)
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Permutation
+// ══════════════════════════════════════════════════════════════
+
+/// Permute the modes of a layout at runtime.
+/// perm must be a valid permutation of [0, layout.rank).
+pub fn permute_modes_exec(layout: &RuntimeLayout, perm: &Vec<u64>) -> (result: RuntimeLayout)
+    requires
+        layout.wf_spec(),
+        perm@.len() == layout.shape@.len(),
+        crate::permutation::is_valid_permutation(
+            Seq::new(perm@.len(), |i: int| perm@[i] as nat),
+            layout.shape@.len(),
+        ),
+        shape_size(crate::permutation::permute_modes(layout@, Seq::new(perm@.len(), |i: int| perm@[i] as nat)).shape) <= u64::MAX as nat,
+    ensures
+        result.wf_spec(),
+        result@ == crate::permutation::permute_modes(layout@, Seq::new(perm@.len(), |i: int| perm@[i] as nat)),
+{
+    let n = layout.shape.len();
+    let ghost perm_nat: Seq<nat> = Seq::new(perm@.len(), |i: int| perm@[i] as nat);
+    let mut new_shape: Vec<u64> = Vec::with_capacity(n);
+    let mut new_stride: Vec<i64> = Vec::with_capacity(n);
+
+    let mut k: usize = 0;
+    while k < n
+        invariant
+            n == layout.shape@.len(),
+            layout.stride@.len() == n,
+            perm@.len() == n,
+            k <= n,
+            new_shape@.len() == k,
+            new_stride@.len() == k,
+            forall|j: int| 0 <= j < k as int ==> new_shape@[j] == layout.shape@[perm@[j] as int],
+            forall|j: int| 0 <= j < k as int ==> new_stride@[j] == layout.stride@[perm@[j] as int],
+            // perm values are in bounds
+            forall|j: nat| j < n ==> #[trigger] perm_nat[j as int] < n,
+            forall|j: nat| j < n ==> perm_nat[j as int] == perm@[j as int] as nat,
+        decreases n - k,
+    {
+        assert(perm_nat[k as int] < n);
+        let pi = perm[k] as usize;
+        new_shape.push(layout.shape[pi]);
+        new_stride.push(layout.stride[pi]);
+        k = k + 1;
+    }
+
+    let ghost spec_result = crate::permutation::permute_modes(layout@, perm_nat);
+
+    proof {
+        crate::proof::permutation_lemmas::lemma_permute_modes_valid(&layout@, perm_nat);
+
+        // Bridge: new_shape matches spec shape
+        assert(shape_to_nat_seq(new_shape@) =~= spec_result.shape) by {
+            assert forall|i: int| 0 <= i < new_shape@.len()
+                implies shape_to_nat_seq(new_shape@)[i] == spec_result.shape[i]
+            by {
+                assert(new_shape@[i] == layout.shape@[perm@[i] as int]);
+                assert(spec_result.shape[i] == layout@.shape[perm_nat[i] as int]);
+                assert(layout@.shape[perm_nat[i] as int] == shape_to_nat_seq(layout.shape@)[perm_nat[i] as int]);
+            };
+        };
+        // Bridge: new_stride matches spec stride
+        assert(strides_to_int_seq(new_stride@) =~= spec_result.stride) by {
+            assert forall|i: int| 0 <= i < new_stride@.len()
+                implies strides_to_int_seq(new_stride@)[i] == spec_result.stride[i]
+            by {
+                assert(new_stride@[i] == layout.stride@[perm@[i] as int]);
+                assert(spec_result.stride[i] == layout@.stride[perm_nat[i] as int]);
+                assert(layout@.stride[perm_nat[i] as int] == strides_to_int_seq(layout.stride@)[perm_nat[i] as int]);
+            };
+        };
+    }
+
+    RuntimeLayout {
+        shape: new_shape,
+        stride: new_stride,
+        model: Ghost(spec_result),
+    }
+}
+
 } // verus!

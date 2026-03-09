@@ -2,6 +2,7 @@ use vstd::prelude::*;
 use crate::shape::*;
 use crate::layout::*;
 use crate::coalesce::*;
+use crate::runtime::inverse::is_fully_coalesced;
 use crate::proof::shape_lemmas::*;
 use crate::proof::integer_helpers::*;
 
@@ -706,6 +707,339 @@ pub proof fn lemma_remove_units(layout: LayoutSpec, idx: nat)
         remove_units_iter(layout, 0).offset(idx) == layout.offset(idx),
 {
     lemma_remove_units_iter(layout, 0, idx);
+}
+
+/// Removing a unit mode preserves size fitting in u64.
+pub proof fn lemma_remove_unit_mode_size_bound(layout: LayoutSpec, pos: nat)
+    requires
+        layout.valid(),
+        (pos as int) < layout.shape.len() as int,
+        layout.shape[pos as int] == 1,
+        layout.size() <= u64::MAX as nat,
+    ensures ({
+        let removed = LayoutSpec {
+            shape: layout.shape.take(pos as int).add(layout.shape.skip(pos as int + 1)),
+            stride: layout.stride.take(pos as int).add(layout.stride.skip(pos as int + 1)),
+        };
+        removed.size() <= u64::MAX as nat
+    }),
+{
+    lemma_shape_size_positive(layout.shape);
+    lemma_remove_unit_mode_offset(layout, 0, pos);
+}
+
+/// Flatten preserves validity.
+pub proof fn lemma_flatten_valid(layout: LayoutSpec)
+    requires layout.valid(),
+    ensures flatten(layout).valid(),
+{
+    lemma_shape_size_positive(layout.shape);
+    lemma_coalesce(layout, 0);
+    lemma_remove_units(coalesce(layout), 0);
+}
+
+/// Flatten preserves size.
+pub proof fn lemma_flatten_size(layout: LayoutSpec)
+    requires layout.valid(),
+    ensures flatten(layout).size() == layout.size(),
+{
+    lemma_shape_size_positive(layout.shape);
+    lemma_coalesce(layout, 0);
+    lemma_remove_units(coalesce(layout), 0);
+}
+
+/// Flatten preserves offset for all valid indices.
+pub proof fn lemma_flatten_offset(layout: LayoutSpec, idx: nat)
+    requires layout.valid(), idx < layout.size(),
+    ensures flatten(layout).offset(idx) == layout.offset(idx),
+{
+    lemma_coalesce(layout, idx);
+    lemma_remove_units(coalesce(layout), idx);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Group modes lemmas
+// ══════════════════════════════════════════════════════════════
+
+/// After coalescing at position lo, mode lo is still coalesceable with the new lo+1
+/// (the old lo+2). This follows from stride[lo+2] == s[lo+1]*s[lo]*d[lo] == (s[lo]*s[lo+1])*d[lo].
+pub proof fn lemma_coalesce_pair_preserves_coalesceable(layout: LayoutSpec, lo: nat)
+    requires
+        layout.valid(),
+        (lo as int) + 2 < layout.shape.len() as int,
+        modes_coalesceable(&layout, lo as int),
+        modes_coalesceable(&layout, lo as int + 1),
+    ensures
+        modes_coalesceable(&coalesce_pair(layout, lo), lo as int),
+{
+    let cp = coalesce_pair(layout, lo);
+    let ii = lo as int;
+    // cp.shape[lo] = layout.shape[lo] * layout.shape[lo+1]
+    // cp.stride[lo] = layout.stride[lo]
+    // cp.shape[lo+1] = layout.shape[lo+2] (shifted from skip(lo+2))
+    // cp.stride[lo+1] = layout.stride[lo+2]
+    assert(cp.shape[ii] == layout.shape[ii] * layout.shape[ii + 1]);
+    assert(cp.stride[ii] == layout.stride[ii]);
+
+    // From take(ii).add(seq![...]).add(skip(ii+2)):
+    // cp.shape[ii+1] is skip(ii+2)[0] = layout.shape[ii+2]
+    assert(cp.shape[ii + 1] == layout.shape[ii + 2]);
+    assert(cp.stride[ii + 1] == layout.stride[ii + 2]);
+
+    // Need: cp.stride[lo+1] == cp.shape[lo] * cp.stride[lo]
+    // i.e., layout.stride[lo+2] == (layout.shape[lo] * layout.shape[lo+1]) * layout.stride[lo]
+    // From coalesceable(lo): layout.stride[lo+1] == layout.shape[lo] * layout.stride[lo]
+    // From coalesceable(lo+1): layout.stride[lo+2] == layout.shape[lo+1] * layout.stride[lo+1]
+    //   == layout.shape[lo+1] * (layout.shape[lo] * layout.stride[lo])
+    //   == (layout.shape[lo+1] * layout.shape[lo]) * layout.stride[lo]
+    //   == (layout.shape[lo] * layout.shape[lo+1]) * layout.stride[lo]
+    let s0 = layout.shape[ii] as int;
+    let s1 = layout.shape[ii + 1] as int;
+    let d0 = layout.stride[ii];
+    let d1 = layout.stride[ii + 1];
+    let d2 = layout.stride[ii + 2];
+
+    assert(d1 == s0 * d0);
+    assert(d2 == s1 * d1);
+    // d2 == s1 * (s0 * d0) == (s1 * s0) * d0 == (s0 * s1) * d0
+    vstd::arithmetic::mul::lemma_mul_is_associative(s1, s0, d0);
+    vstd::arithmetic::mul::lemma_mul_is_commutative(s1, s0);
+    assert(d2 == (s0 * s1) * d0);
+    // (s0 * s1) as int == (layout.shape[lo] * layout.shape[lo+1]) as int
+    assert((cp.shape[ii] as int) * cp.stride[ii] == (s0 * s1) * d0);
+}
+
+/// After coalescing at lo, higher coalesceable pairs are preserved.
+/// Specifically, if modes_coalesceable(layout, j) for j > lo, then
+/// modes_coalesceable(coalesce_pair(layout, lo), j-1) (shifted by 1).
+proof fn lemma_coalesce_pair_preserves_higher(layout: LayoutSpec, lo: nat, j: int)
+    requires
+        layout.valid(),
+        (lo as int) < layout.shape.len() as int - 1,
+        modes_coalesceable(&layout, lo as int),
+        j > lo as int + 1,
+        j < layout.shape.len() as int - 1,
+        modes_coalesceable(&layout, j),
+    ensures
+        modes_coalesceable(&coalesce_pair(layout, lo), j - 1),
+{
+    let cp = coalesce_pair(layout, lo);
+    let ii = lo as int;
+    // For j > lo + 1: cp.shape[j-1] == layout.shape[j], cp.stride[j-1] == layout.stride[j]
+    // cp.stride[j] == layout.stride[j+1]
+    // modes_coalesceable(cp, j-1): cp.stride[j] == cp.shape[j-1] * cp.stride[j-1]
+    assert(cp.shape[j - 1] == layout.shape[j]);
+    assert(cp.stride[j - 1] == layout.stride[j]);
+    assert(cp.stride[j] == layout.stride[j + 1]);
+    // From layout: layout.stride[j+1] == layout.shape[j] * layout.stride[j]
+}
+
+/// Coalescing at lo preserves admissibility for [lo, hi-1) in the result.
+pub proof fn lemma_group_modes_admissible_step(layout: LayoutSpec, lo: nat, hi: nat)
+    requires
+        group_modes_admissible(&layout, lo, hi),
+        hi > lo + 1,
+    ensures ({
+        let cp = coalesce_pair(layout, lo);
+        &&& cp.valid()
+        &&& cp.size() == layout.size()
+        &&& group_modes_admissible(&cp, lo, (hi - 1) as nat)
+    }),
+{
+    let cp = coalesce_pair(layout, lo);
+    let ii = lo as int;
+
+    // cp.valid() and size preservation from existing lemmas
+    lemma_coalesce_pair_size_general(layout, lo);
+    lemma_shape_size_positive(layout.shape);
+    lemma_coalesce_pair_offset_general(layout, lo, 0);
+
+    // cp.shape.len() == layout.shape.len() - 1
+    assert(cp.shape.len() == layout.shape.len() - 1);
+
+    // lo < hi - 1, hi - 1 <= cp.shape.len() == layout.shape.len() - 1
+    assert(lo < (hi - 1) as nat);
+    assert((hi - 1) as nat <= cp.shape.len());
+
+    // Need: forall i in [lo, hi-2): modes_coalesceable(cp, i)
+    assert forall|i: int| lo as int <= i < (hi - 1) as int - 1
+        implies #[trigger] modes_coalesceable(&cp, i)
+    by {
+        if i == lo as int {
+            // Need coalesceable(cp, lo): merged mode lo with old lo+2
+            // From admissible: coalesceable(layout, lo) and coalesceable(layout, lo+1)
+            assert(modes_coalesceable(&layout, lo as int));
+            assert(modes_coalesceable(&layout, lo as int + 1));
+            // lo + 2 < hi <= layout.shape.len(), so lo + 2 < layout.shape.len()
+            lemma_coalesce_pair_preserves_coalesceable(layout, lo);
+        } else {
+            // i > lo, so cp mode i corresponds to layout mode i+1
+            // Need modes_coalesceable(cp, i), which means cp.stride[i+1] == cp.shape[i] * cp.stride[i]
+            // cp.shape[i] == layout.shape[i+1], cp.stride[i] == layout.stride[i+1]
+            // cp.stride[i+1] == layout.stride[i+2]
+            // This is modes_coalesceable(layout, i+1)
+            assert(lo as int + 1 <= i + 1);
+            assert(i + 1 < hi as int - 1);
+            assert(modes_coalesceable(&layout, i + 1));
+            lemma_coalesce_pair_preserves_higher(layout, lo, i + 1);
+        }
+    };
+}
+
+/// group_modes preserves validity.
+pub proof fn lemma_group_modes_valid(layout: LayoutSpec, lo: nat, hi: nat)
+    requires group_modes_admissible(&layout, lo, hi),
+    ensures group_modes(layout, lo, hi).valid(),
+    decreases hi - lo,
+{
+    if hi <= lo + 1 {
+        // base case: group_modes returns layout unchanged
+    } else {
+        lemma_group_modes_admissible_step(layout, lo, hi);
+        lemma_group_modes_valid(coalesce_pair(layout, lo), lo, (hi - 1) as nat);
+    }
+}
+
+/// group_modes preserves size.
+pub proof fn lemma_group_modes_size(layout: LayoutSpec, lo: nat, hi: nat)
+    requires group_modes_admissible(&layout, lo, hi),
+    ensures group_modes(layout, lo, hi).size() == layout.size(),
+    decreases hi - lo,
+{
+    if hi <= lo + 1 {
+    } else {
+        lemma_group_modes_admissible_step(layout, lo, hi);
+        let cp = coalesce_pair(layout, lo);
+        lemma_group_modes_size(cp, lo, (hi - 1) as nat);
+    }
+}
+
+/// group_modes preserves offset.
+pub proof fn lemma_group_modes_offset(layout: LayoutSpec, lo: nat, hi: nat, idx: nat)
+    requires group_modes_admissible(&layout, lo, hi), idx < layout.size(),
+    ensures group_modes(layout, lo, hi).offset(idx) == layout.offset(idx),
+    decreases hi - lo,
+{
+    if hi <= lo + 1 {
+    } else {
+        lemma_group_modes_admissible_step(layout, lo, hi);
+        let cp = coalesce_pair(layout, lo);
+        lemma_coalesce_pair_offset_general(layout, lo, idx);
+        lemma_group_modes_offset(cp, lo, (hi - 1) as nat, idx);
+    }
+}
+
+/// group_modes decreases rank by (hi - lo - 1).
+pub proof fn lemma_group_modes_rank(layout: LayoutSpec, lo: nat, hi: nat)
+    requires group_modes_admissible(&layout, lo, hi),
+    ensures
+        group_modes(layout, lo, hi).shape.len() == layout.shape.len() - (hi - lo - 1),
+        group_modes(layout, lo, hi).stride.len() == layout.stride.len() - (hi - lo - 1),
+    decreases hi - lo,
+{
+    if hi <= lo + 1 {
+    } else {
+        lemma_group_modes_admissible_step(layout, lo, hi);
+        let cp = coalesce_pair(layout, lo);
+        lemma_group_modes_rank(cp, lo, (hi - 1) as nat);
+        assert(cp.shape.len() == layout.shape.len() - 1);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Coalesce produces fully coalesced output
+// ══════════════════════════════════════════════════════════════
+
+/// After coalescing at position lo, non-coalesceability at positions before lo is preserved.
+proof fn lemma_coalesce_pair_preserves_lower(layout: LayoutSpec, lo: nat, j: int)
+    requires
+        layout.valid(),
+        (lo as int) < layout.shape.len() as int - 1,
+        modes_coalesceable(&layout, lo as int),
+        0 <= j < lo as int,
+        j < layout.shape.len() as int - 2,
+        !modes_coalesceable(&layout, j),
+    ensures
+        !modes_coalesceable(&coalesce_pair(layout, lo), j),
+{
+    let cp = coalesce_pair(layout, lo);
+    // For j < lo - 1: both modes j and j+1 are in the take(lo) prefix, unchanged.
+    // For j == lo - 1: mode j is from prefix, mode j+1 is the merged mode.
+    // In both cases: cp.shape[j] == layout.shape[j], cp.stride[j] == layout.stride[j],
+    //   cp.stride[j+1] == layout.stride[j+1] (if j+1 < lo) or layout.stride[lo] (if j+1 == lo).
+    if j + 1 < lo as int {
+        assert(cp.shape[j] == layout.shape[j]);
+        assert(cp.stride[j] == layout.stride[j]);
+        assert(cp.stride[j + 1] == layout.stride[j + 1]);
+    } else {
+        // j + 1 == lo, so j == lo - 1
+        assert(cp.shape[j] == layout.shape[j]);
+        assert(cp.stride[j] == layout.stride[j]);
+        assert(cp.stride[j + 1] == layout.stride[lo as int]);
+    }
+}
+
+/// coalesce_pass(layout, start) produces a fully coalesced layout,
+/// provided positions [0, start) are already not coalesceable.
+proof fn lemma_coalesce_pass_fully_coalesced(layout: LayoutSpec, start: nat)
+    requires
+        layout.valid(),
+        forall|j: int| 0 <= j < start as int && j < layout.shape.len() as int - 1
+            ==> !modes_coalesceable(&layout, j),
+    ensures
+        is_fully_coalesced(&coalesce_pass(layout, start)),
+    decreases layout.shape.len() as int - start as int,
+{
+    if start as int >= layout.shape.len() as int - 1 {
+        // Base: returns layout. All positions checked.
+        assert(coalesce_pass(layout, start) == layout);
+    } else if modes_coalesceable(&layout, start as int) {
+        let cp = coalesce_pair(layout, start);
+        // cp has one fewer mode. Positions [0, start) are still not coalesceable in cp.
+        lemma_shape_size_positive(layout.shape);
+        lemma_coalesce_pair_offset_general(layout, start, 0);
+        // gives cp.valid()
+        assert forall|j: int| 0 <= j < start as int && j < cp.shape.len() as int - 1
+            implies !modes_coalesceable(&cp, j)
+        by {
+            lemma_coalesce_pair_preserves_lower(layout, start, j);
+        };
+        lemma_coalesce_pass_fully_coalesced(cp, start);
+    } else {
+        // Not coalesceable at start. Advance.
+        // Positions [0, start+1) are all not coalesceable.
+        assert forall|j: int| 0 <= j < start as int + 1 && j < layout.shape.len() as int - 1
+            implies !modes_coalesceable(&layout, j)
+        by {
+            if j < start as int {
+            } else {
+                assert(j == start as int);
+                assert(!modes_coalesceable(&layout, start as int));
+            }
+        };
+        lemma_coalesce_pass_fully_coalesced(layout, start + 1);
+    }
+}
+
+/// coalesce(L) is always fully coalesced.
+pub proof fn lemma_coalesce_fully_coalesced(layout: LayoutSpec)
+    requires
+        layout.valid(),
+    ensures
+        is_fully_coalesced(&coalesce(layout)),
+{
+    lemma_coalesce_pass_fully_coalesced(layout, 0);
+}
+
+/// coalesce is idempotent: coalesce(coalesce(L)) == coalesce(L).
+pub proof fn lemma_coalesce_idempotent(layout: LayoutSpec)
+    requires
+        layout.valid(),
+    ensures
+        coalesce(coalesce(layout)) == coalesce(layout),
+{
+    lemma_coalesce_fully_coalesced(layout);
+    crate::proof::inverse_lemmas::lemma_fully_coalesced_identity(&coalesce(layout));
 }
 
 } // verus!

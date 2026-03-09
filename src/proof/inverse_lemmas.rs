@@ -3161,4 +3161,156 @@ pub proof fn lemma_left_inverse_compose_cancel(layout: &LayoutSpec, i: nat)
     lemma_left_inverse_correct(layout, i);
 }
 
+// ══════════════════════════════════════════════════════════════
+// Inverse ↔ coalesce/flatten connection
+// ══════════════════════════════════════════════════════════════
+
+/// right_inverse is invariant under coalesce: right_inverse(coalesce(L)) == right_inverse(L).
+/// Both start with coalesce(input), and coalesce(coalesce(L)) == coalesce(L) by idempotency.
+pub proof fn lemma_right_inverse_coalesce_invariant(layout: &LayoutSpec)
+    requires
+        layout.valid(),
+    ensures
+        right_inverse(&coalesce(*layout)) == right_inverse(layout),
+{
+    // right_inverse(L) uses coalesce(*L) internally.
+    // right_inverse(coalesce(L)) uses coalesce(coalesce(*L)) = coalesce(*L) by idempotency.
+    // So both produce the same coalesced form, hence the same result.
+    crate::proof::coalesce_lemmas::lemma_coalesce_idempotent(*layout);
+    // coalesce(coalesce(*layout)) == coalesce(*layout)
+    // right_inverse(layout) = right_inverse_build(coalesce(*layout).shape, ...)
+    // right_inverse(coalesce(layout)) = right_inverse_build(coalesce(coalesce(*layout)).shape, ...)
+    //                                 = right_inverse_build(coalesce(*layout).shape, ...)
+}
+
+/// left_inverse is invariant under coalesce: left_inverse(coalesce(L)) == left_inverse(L).
+pub proof fn lemma_left_inverse_coalesce_invariant(layout: &LayoutSpec)
+    requires
+        layout.valid(),
+    ensures
+        left_inverse(&coalesce(*layout)) == left_inverse(layout),
+{
+    crate::proof::coalesce_lemmas::lemma_coalesce_idempotent(*layout);
+}
+
+/// Right inverse of flatten(L) correctly inverts L:
+/// L.offset(right_inverse(flatten(L)).offset(j)) == j.
+pub proof fn lemma_right_inverse_of_flatten_correct(layout: &LayoutSpec, j: nat)
+    requires
+        layout.valid(),
+        layout.is_bijective_upto(layout.size()),
+        j < right_inverse(&flatten(*layout)).size(),
+    ensures
+        layout.offset(right_inverse(&flatten(*layout)).offset(j) as nat) == j as int,
+{
+    let fl = flatten(*layout);
+
+    // 1. flatten(L) is valid and offset-equivalent to L
+    crate::proof::compatibility_lemmas::lemma_flatten_offset_equivalent(layout);
+    crate::proof::coalesce_lemmas::lemma_flatten_valid(*layout);
+
+    // 2. Transfer bijectivity from L to flatten(L)
+    crate::proof::compatibility_lemmas::lemma_equivalent_transfers_bijectivity(
+        layout, &fl, layout.size(),
+    );
+    // flatten(L).is_bijective_upto(layout.size())
+    // Also flatten(L).size() == layout.size()
+    crate::proof::coalesce_lemmas::lemma_flatten_size(*layout);
+
+    // 3. right_inverse(flatten(L)) is correct: fl.offset(R.offset(j)) == j
+    lemma_right_inverse_correct(&fl, j);
+
+    // 4. r.offset(j) as nat < fl.size() == layout.size()
+    lemma_right_inverse_image_bound(&fl, j);
+
+    // 5. Use offset equivalence: layout.offset(idx) == fl.offset(idx) for idx < layout.size()
+    let idx = right_inverse(&fl).offset(j) as nat;
+    assert(layout.offset(idx) == fl.offset(idx));
+}
+
+/// Helper: right_inverse output is within the layout's domain.
+/// Proof mirrors steps 1-8 of lemma_right_inverse_correct.
+proof fn lemma_right_inverse_image_bound(layout: &LayoutSpec, j: nat)
+    requires
+        layout.valid(),
+        layout.is_bijective_upto(layout.size()),
+        j < right_inverse(layout).size(),
+    ensures
+        right_inverse(layout).offset(j) >= 0,
+        (right_inverse(layout).offset(j) as nat) < layout.size(),
+{
+    let R = right_inverse(layout);
+    crate::proof::shape_lemmas::lemma_shape_size_positive(layout.shape);
+    crate::proof::coalesce_lemmas::lemma_coalesce(*layout, 0);
+    let c = coalesce(*layout);
+    assert(c.valid());
+    assert(c.size() == layout.size());
+
+    // Set up prefix products
+    let pp = shape_prefix_products(c.shape);
+    lemma_prefix_products_len(c.shape);
+    let preprod = pp.take(c.shape.len() as int);
+    assert(preprod.len() == c.shape.len());
+    assert(R == right_inverse_build(c.shape, c.stride, preprod, 1));
+
+    // Get coordinates from the inductive lemma
+    lemma_right_inverse_build_correct(c.shape, c.stride, preprod, 1, j);
+    let coords = right_inverse_coords(c.shape, c.stride, 1, j);
+    let preprod_int = Seq::new(preprod.len(), |i: int| preprod[i] as int);
+
+    assert(coords.len() == c.shape.len());
+    assert(coords_in_bounds(coords, c.shape));
+    assert(dot_product_nat_int(coords, preprod_int) == R.offset(j));
+
+    // preprod_int =~= column_major_strides(c.shape)
+    lemma_preprod_is_column_major(c.shape);
+    let cms = column_major_strides(c.shape);
+    assert(preprod_int =~= cms);
+    crate::proof::shape_lemmas::lemma_dot_product_ext(coords, coords, preprod_int, cms);
+    assert(dot_product_nat_int(coords, cms) == R.offset(j));
+
+    // dot(coords, cms) == linearize(coords, c.shape)
+    crate::proof::injectivity_lemmas::lemma_column_major_dot_is_linearize(coords, c.shape);
+    let lin = linearize(coords, c.shape);
+    assert(lin as int == R.offset(j));
+
+    // R.offset(j) >= 0 and linearize < size
+    assert(R.offset(j) >= 0);
+    crate::proof::shape_lemmas::lemma_linearize_bound(coords, c.shape);
+    assert(lin < c.size());
+    assert((R.offset(j) as nat) < layout.size());
+}
+
+/// Left inverse of flatten(L) correctly inverts L:
+/// left_inverse(flatten(L)).offset(L.offset(i)) == i.
+pub proof fn lemma_left_inverse_of_flatten_correct(layout: &LayoutSpec, i: nat)
+    requires
+        layout.valid(),
+        layout.is_injective(),
+        i < layout.size(),
+        is_fully_coalesced(&flatten(*layout)),
+        flatten(*layout).shape.len() > 0,
+        forall|j: int| 0 <= j < flatten(*layout).stride.len()
+            ==> #[trigger] flatten(*layout).stride[j] > 0,
+        flatten(*layout).is_sorted(),
+        flatten(*layout).is_tractable(),
+    ensures
+        left_inverse(&flatten(*layout)).offset(layout.offset(i) as nat) == i as int,
+{
+    let fl = flatten(*layout);
+
+    crate::proof::compatibility_lemmas::lemma_flatten_offset_equivalent(layout);
+    crate::proof::coalesce_lemmas::lemma_flatten_valid(*layout);
+    crate::proof::coalesce_lemmas::lemma_flatten_size(*layout);
+
+    // Transfer injectivity from L to flatten(L)
+    crate::proof::compatibility_lemmas::lemma_equivalent_transfers_injectivity(layout, &fl);
+
+    // left_inverse(fl).offset(fl.offset(i)) == i
+    lemma_left_inverse_correct(&fl, i);
+
+    // fl.offset(i) == layout.offset(i) from offset equivalence
+    assert(fl.offset(i) == layout.offset(i));
+}
+
 } // verus!

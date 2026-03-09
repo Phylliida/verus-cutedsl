@@ -32,6 +32,15 @@ pub mod slice;
 pub mod tiling;
 
 #[cfg(verus_keep_ghost)]
+pub mod predication;
+
+#[cfg(verus_keep_ghost)]
+pub mod compatibility;
+
+#[cfg(verus_keep_ghost)]
+pub mod permutation;
+
+#[cfg(verus_keep_ghost)]
 pub mod proof;
 
 #[cfg(verus_keep_ghost)]

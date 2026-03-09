@@ -101,4 +101,32 @@ pub open spec fn filter_non_unit(shape: Seq<nat>, start: int) -> Seq<int>
     }
 }
 
+/// Flatten a layout: coalesce all adjacent coalesceable pairs, then remove unit modes.
+/// This produces the minimal representation of the layout's offset function.
+pub open spec fn flatten(layout: LayoutSpec) -> LayoutSpec {
+    remove_units_iter(coalesce(layout), 0)
+}
+
+/// Admissibility for group_modes: all adjacent pairs in [lo, hi) are coalesceable.
+pub open spec fn group_modes_admissible(layout: &LayoutSpec, lo: nat, hi: nat) -> bool {
+    &&& layout.valid()
+    &&& lo < hi
+    &&& hi <= layout.shape.len()
+    &&& forall|i: int| lo as int <= i < hi as int - 1 ==>
+        #[trigger] modes_coalesceable(layout, i)
+}
+
+/// Group (merge) contiguous modes [lo, hi) into a single mode by repeated coalesce_pair at lo.
+/// Each step merges modes lo and lo+1, reducing rank by 1 and the range by 1.
+pub open spec fn group_modes(layout: LayoutSpec, lo: nat, hi: nat) -> LayoutSpec
+    recommends group_modes_admissible(&layout, lo, hi),
+    decreases hi - lo,
+{
+    if hi <= lo + 1 {
+        layout
+    } else {
+        group_modes(coalesce_pair(layout, lo), lo, (hi - 1) as nat)
+    }
+}
+
 } // verus!

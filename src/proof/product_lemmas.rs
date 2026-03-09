@@ -450,6 +450,7 @@ pub proof fn lemma_product_injective(a: &LayoutSpec, b: &LayoutSpec)
             if ob2 - ob1 > 0 {
                 vstd::arithmetic::mul::lemma_mul_inequality(1, ob2 - ob1, cs);
                 vstd::arithmetic::mul::lemma_mul_basics(cs);
+                vstd::arithmetic::mul::lemma_mul_is_commutative(ob2 - ob1, cs);
                 assert(cs * (ob2 - ob1) >= cs);
                 assert(false);
             } else if ob2 - ob1 < 0 {
@@ -483,6 +484,227 @@ pub proof fn lemma_product_injective(a: &LayoutSpec, b: &LayoutSpec)
             assert(false);
         }
     }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Raked product offset decomposition
+// ══════════════════════════════════════════════════════════════
+
+/// Raked product offset decomposition:
+/// raked_product(a,b).offset(x) == cosize(b) * a.offset(x % size_a) + b.offset(x / size_a)
+pub proof fn lemma_raked_product_offset(a: &LayoutSpec, b: &LayoutSpec, x: nat)
+    requires
+        raked_product_admissible(a, b),
+        x < a.size() * b.size(),
+    ensures
+        raked_product(a, b).offset(x)
+            == (b.cosize_nonneg() as int) * a.offset(x % a.size()) + b.offset(x / a.size()),
+{
+    let r = raked_product(a, b);
+    let s_a = a.shape;
+    let s_b = b.shape;
+    let size_a = shape_size(s_a);
+    let size_b = shape_size(s_b);
+    let cs = b.cosize_nonneg() as int;
+
+    lemma_raked_product_size(a, b);
+    lemma_shape_size_append(s_a, s_b);
+    assert(x < shape_size(s_a.add(s_b)));
+
+    // Step 1: delinearize distributes over concat
+    lemma_delinearize_concat(x, s_a, s_b);
+    let d_a = delinearize(x % size_a, s_a);
+    let d_b = delinearize(x / size_a, s_b);
+    assert(delinearize(x, s_a.add(s_b)) =~= d_a.add(d_b));
+    assert(r.shape =~= s_a.add(s_b));
+
+    // Step 2: split dot product
+    // r.stride = scale_strides(a.stride, cs) ++ b.stride
+    let scaled_a = scale_strides(a.stride, cs);
+    assert(r.stride =~= scaled_a.add(b.stride));
+
+    lemma_delinearize_len(x % size_a, s_a);
+    lemma_delinearize_len(x / size_a, s_b);
+    assert(d_a.len() == s_a.len());
+    assert(d_b.len() == s_b.len());
+    assert(d_a.len() == scaled_a.len());
+    assert(d_b.len() == b.stride.len());
+
+    lemma_dot_product_append(d_a, d_b, scaled_a, b.stride);
+
+    // Step 3: factor out cs from scaled A strides
+    lemma_scale_strides_eq(a.stride, cs);
+    assert(scaled_a =~= scale_strides_spec(a.stride, cs));
+    lemma_dot_product_scale(d_a, a.stride, cs);
+    assert(dot_product_nat_int(d_a, scaled_a) == cs * dot_product_nat_int(d_a, a.stride));
+
+    // Step 4: connect to offset definitions
+    assert(r.offset(x) == dot_product_nat_int(delinearize(x, r.shape), r.stride));
+    assert(delinearize(x, r.shape) =~= d_a.add(d_b));
+    assert(dot_product_nat_int(delinearize(x, r.shape), r.stride)
+        == dot_product_nat_int(d_a.add(d_b), scaled_a.add(b.stride)));
+}
+
+/// First tile of raked product: for x < size(A), offset(x) == cosize(B) * a.offset(x).
+pub proof fn lemma_raked_product_compatible(a: &LayoutSpec, b: &LayoutSpec, x: nat)
+    requires
+        raked_product_admissible(a, b),
+        x < a.size(),
+    ensures
+        raked_product(a, b).offset(x) == (b.cosize_nonneg() as int) * a.offset(x),
+{
+    lemma_shape_size_positive(a.shape);
+    lemma_shape_size_positive(b.shape);
+    let sa = a.size();
+    let sb = b.size();
+
+    crate::proof::integer_helpers::lemma_mod_small(x, sa);
+    crate::proof::integer_helpers::lemma_div_small(x, sa);
+
+    // x < sa * sb
+    assert(sb >= 1) by { lemma_shape_size_positive(b.shape); };
+    vstd::arithmetic::mul::lemma_mul_basics(sa as int);
+    vstd::arithmetic::mul::lemma_mul_inequality(1, sb as int, sa as int);
+    assert(x < sa * sb);
+
+    lemma_raked_product_offset(a, b, x);
+    // offset(x) == cs * a.offset(x % sa) + b.offset(x / sa)
+    //           == cs * a.offset(x) + b.offset(0)
+
+    crate::proof::offset_lemmas::lemma_offset_zero(*b);
+    vstd::arithmetic::mul::lemma_mul_basics(b.cosize_nonneg() as int);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Product surjectivity and bijectivity
+// ══════════════════════════════════════════════════════════════
+
+/// If A is surjective onto [0, m_a) and B is surjective onto [0, m_b),
+/// then logical_product(A, B) is surjective onto [0, m_a * m_b).
+pub proof fn lemma_product_surjective(a: &LayoutSpec, b: &LayoutSpec, m_a: nat, m_b: nat)
+    requires
+        product_admissible(a, b),
+        b.non_negative_strides(),
+        a.is_surjective_upto(m_a),
+        b.is_surjective_upto(m_b),
+        m_a == a.cosize_nonneg(),
+        m_a > 0,
+        m_b > 0,
+    ensures
+        logical_product(a, b).is_surjective_upto(m_a * m_b),
+{
+    let p = logical_product(a, b);
+    let sa = a.size();
+    let sb = b.size();
+
+    lemma_product_size(a, b);
+    lemma_product_valid(a, b);
+    lemma_shape_size_positive(a.shape);
+    lemma_shape_size_positive(b.shape);
+
+    assert forall|k: int| 0 <= k < (m_a * m_b) as int
+        implies #[trigger] p.offset_hit(k)
+    by {
+        let k_a: nat = (k % m_a as int) as nat;
+        let k_b: nat = (k / m_a as int) as nat;
+
+        assert(0 <= k_a < m_a);
+        crate::proof::integer_helpers::lemma_div_upper_bound(k as nat, m_a, m_b);
+        assert(0 <= k_b < m_b);
+
+        assert(a.offset_hit(k_a as int));
+        let r: nat = choose|r: nat| r < sa && a.offset(r) == k_a as int;
+        assert(r < sa && a.offset(r) == k_a as int);
+
+        assert(b.offset_hit(k_b as int));
+        let q: nat = choose|q: nat| q < sb && b.offset(q) == k_b as int;
+        assert(q < sb && b.offset(q) == k_b as int);
+
+        let x: nat = r + sa * q;
+
+        // x < sa * sb
+        assert(x < sa * sb) by (nonlinear_arith)
+            requires r < sa, q < sb, sa > 0, x == r + sa * q;
+
+        crate::proof::integer_helpers::lemma_div_mod_decompose(r, q, sa);
+
+        lemma_product_offset(a, b, x);
+        assert(p.offset(x) == a.offset(r) + (m_a as int) * b.offset(q));
+        assert(p.offset(x) == k_a as int + (m_a as int) * (k_b as int));
+
+        crate::proof::integer_helpers::lemma_div_mod_identity(k as nat, m_a);
+        assert(p.offset(x) == k);
+        assert(x < p.size());
+    };
+}
+
+/// Product bijectivity: injective + surjective → bijective.
+pub proof fn lemma_product_bijective(a: &LayoutSpec, b: &LayoutSpec, m_a: nat, m_b: nat)
+    requires
+        product_admissible(a, b),
+        b.non_negative_strides(),
+        a.is_injective(),
+        b.is_injective(),
+        a.is_surjective_upto(m_a),
+        b.is_surjective_upto(m_b),
+        m_a == a.cosize_nonneg(),
+        m_a > 0,
+        m_b > 0,
+    ensures
+        logical_product(a, b).is_bijective_upto(m_a * m_b),
+{
+    lemma_product_injective(a, b);
+    lemma_product_surjective(a, b, m_a, m_b);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Blocked product: surjectivity and bijectivity aliases
+// ══════════════════════════════════════════════════════════════
+
+/// Blocked product offset decomposition (alias for product offset).
+pub proof fn lemma_blocked_product_offset(a: &LayoutSpec, b: &LayoutSpec, x: nat)
+    requires
+        product_admissible(a, b),
+        x < a.size() * b.size(),
+    ensures
+        blocked_product(a, b).offset(x)
+            == a.offset(x % a.size()) + (a.cosize_nonneg() as int) * b.offset(x / a.size()),
+{
+    lemma_product_offset(a, b, x);
+}
+
+/// Blocked product surjectivity (alias for product surjectivity).
+pub proof fn lemma_blocked_product_surjective(a: &LayoutSpec, b: &LayoutSpec, m_a: nat, m_b: nat)
+    requires
+        product_admissible(a, b),
+        b.non_negative_strides(),
+        a.is_surjective_upto(m_a),
+        b.is_surjective_upto(m_b),
+        m_a == a.cosize_nonneg(),
+        m_a > 0,
+        m_b > 0,
+    ensures
+        blocked_product(a, b).is_surjective_upto(m_a * m_b),
+{
+    lemma_product_surjective(a, b, m_a, m_b);
+}
+
+/// Blocked product bijectivity (alias for product bijectivity).
+pub proof fn lemma_blocked_product_bijective(a: &LayoutSpec, b: &LayoutSpec, m_a: nat, m_b: nat)
+    requires
+        product_admissible(a, b),
+        b.non_negative_strides(),
+        a.is_injective(),
+        b.is_injective(),
+        a.is_surjective_upto(m_a),
+        b.is_surjective_upto(m_b),
+        m_a == a.cosize_nonneg(),
+        m_a > 0,
+        m_b > 0,
+    ensures
+        blocked_product(a, b).is_bijective_upto(m_a * m_b),
+{
+    lemma_product_bijective(a, b, m_a, m_b);
 }
 
 } // verus!
