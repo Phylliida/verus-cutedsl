@@ -1,4 +1,5 @@
 use vstd::prelude::*;
+use crate::layout::*;
 
 verus! {
 
@@ -74,6 +75,31 @@ pub open spec fn swizzle(x: nat, b: nat, m: nat, s: nat) -> nat {
 pub open spec fn swizzle_admissible(b: nat, m: nat, s: nat) -> bool {
     &&& b > 0
     &&& s >= b  // non-overlapping windows
+}
+
+// ══════════════════════════════════════════════════════════════
+// Bank conflict specs
+// ══════════════════════════════════════════════════════════════
+
+/// Bank index: which bank an address maps to (modular partitioning).
+pub open spec fn bank_index(offset: int, num_banks: nat) -> nat
+    recommends num_banks > 0,
+{
+    (offset % (num_banks as int)) as nat
+}
+
+/// A layout is bank-conflict-free if all addresses within count map to distinct banks.
+pub open spec fn bank_conflict_free(layout: &LayoutSpec, num_banks: nat, count: nat) -> bool
+    recommends num_banks > 0,
+{
+    forall|i: nat, j: nat|
+        i < count && j < count && i != j
+        ==> bank_index(layout.offset(i), num_banks) != bank_index(layout.offset(j), num_banks)
+}
+
+/// Domain size for a swizzle with parameters (B, M, S).
+pub open spec fn swizzle_domain(b: nat, m: nat, s: nat) -> nat {
+    pow2(m + s + b)
 }
 
 } // verus!

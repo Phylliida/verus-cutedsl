@@ -443,7 +443,7 @@ impl RuntimeLayout {
 // === Helper lemmas ===
 
 /// shape_minus_one(s)[i] == (s[i] - 1) as nat
-proof fn lemma_shape_minus_one_index(s: Seq<nat>, i: nat)
+pub proof fn lemma_shape_minus_one_index(s: Seq<nat>, i: nat)
     requires shape_valid(s), i < s.len(),
     ensures shape_minus_one(s).len() == s.len(),
         shape_minus_one(s)[i as int] == (s[i as int] - 1) as nat,
@@ -465,7 +465,7 @@ proof fn lemma_shape_minus_one_index(s: Seq<nat>, i: nat)
     }
 }
 
-proof fn lemma_shape_minus_one_len(s: Seq<nat>)
+pub proof fn lemma_shape_minus_one_len(s: Seq<nat>)
     requires shape_valid(s),
     ensures shape_minus_one(s).len() == s.len(),
     decreases s.len(),

@@ -7,6 +7,7 @@ use crate::complement::*;
 use crate::composition::*;
 use crate::tiling::*;
 use crate::predication::*;
+use crate::slice::*;
 use crate::proof::shape_lemmas::*;
 use crate::proof::divide_lemmas::*;
 use crate::proof::product_lemmas::*;
@@ -396,6 +397,301 @@ pub proof fn lemma_predicated_divide_offset_identity(
     // make_column_major(seq![padded]).offset(x) == x
     // a and make_column_major(seq![padded]) have same shape and stride
     assert(a.offset(x) == make_column_major(seq![padded]).offset(x));
+}
+
+// ══════════════════════════════════════════════════════════════
+// Slice partition lemmas (Phase 3b)
+// ══════════════════════════════════════════════════════════════
+
+/// For mode-0 slice: L.offset(i * M_0 + c) == slice_offset(L, 0, c) + slice_layout(L, 0, c).offset(i).
+///
+/// This reconstructs the full layout offset from a slice's residual offset plus the base.
+pub proof fn lemma_slice_offset_reconstruction(
+    layout: &LayoutSpec, c: nat, i: nat,
+)
+    requires
+        layout.valid(),
+        layout.rank() > 0,
+        c < layout.shape[0],
+        i < shape_size(layout.shape.skip(1)),
+    ensures
+        layout.offset(i * layout.shape[0] + c)
+            == crate::slice::slice_offset(layout, 0, c)
+               + crate::slice::slice_layout(layout, 0, c).offset(i),
+{
+    let m0 = layout.shape[0];
+    let rest_shape = layout.shape.skip(1);
+    let rest_stride = layout.stride.skip(1);
+    let x = i * m0 + c;
+
+    // x < shape_size(layout.shape)
+    assert(shape_size(layout.shape) == m0 * shape_size(rest_shape));
+    assert(x < shape_size(layout.shape)) by (nonlinear_arith)
+        requires i < shape_size(rest_shape), c < m0, x == i * m0 + c,
+            shape_size(layout.shape) == m0 * shape_size(rest_shape),
+            m0 > 0;
+
+    // delinearize(x, shape) = seq![c] ++ delinearize(i, rest_shape)
+    // since x % m0 = c and x / m0 = i
+    assert(x % m0 == c) by (nonlinear_arith)
+        requires c < m0, x == i * m0 + c, m0 > 0;
+    assert(x / m0 == i) by (nonlinear_arith)
+        requires c < m0, x == i * m0 + c, m0 > 0;
+
+    // Unfold delinearize one step
+    assert(layout.shape.first() == m0);
+    assert(delinearize(x, layout.shape) =~=
+        seq![x % m0].add(delinearize(x / m0, rest_shape)));
+    assert(delinearize(x, layout.shape) =~=
+        seq![c].add(delinearize(i, rest_shape)));
+
+    // Unfold the offset: dot(delinearize(x, shape), stride)
+    // = dot(seq![c] ++ delinearize(i, rest_shape), seq![stride[0]] ++ rest_stride)
+    assert(layout.stride =~= seq![layout.stride[0]].add(rest_stride)) by {
+        assert(layout.stride.first() == layout.stride[0]);
+        assert(layout.stride =~= seq![layout.stride.first()].add(layout.stride.skip(1)));
+    };
+
+    // Split the dot product
+    lemma_delinearize_len(i, rest_shape);
+    crate::proof::shape_lemmas::lemma_dot_product_append(
+        seq![c], delinearize(i, rest_shape),
+        seq![layout.stride[0]], rest_stride,
+    );
+
+    // dot(seq![c], seq![stride[0]]) = c * stride[0]
+    assert(seq![c].first() == c);
+    assert(seq![layout.stride[0]].first() == layout.stride[0]);
+    assert(seq![c].skip(1) =~= Seq::<nat>::empty());
+    assert(seq![layout.stride[0]].skip(1) =~= Seq::<int>::empty());
+    assert(dot_product_nat_int(Seq::<nat>::empty(), Seq::<int>::empty()) == 0int);
+    assert(dot_product_nat_int(seq![c], seq![layout.stride[0]]) == (c as int) * layout.stride[0]);
+
+    // The residual layout offset
+    crate::proof::slice_lemmas::lemma_slice_mode0(layout, c);
+    let sl = crate::slice::slice_layout(layout, 0, c);
+    assert(sl.shape =~= rest_shape);
+    assert(sl.stride =~= rest_stride);
+
+    // sl.offset(i) = dot(delinearize(i, rest_shape), rest_stride)
+    // slice_offset(layout, 0, c) = c * stride[0]
+    // So: layout.offset(x) = c * stride[0] + sl.offset(i) = slice_offset + sl.offset(i)
+}
+
+/// Different mode-0 slices of an injective layout produce disjoint offset sets.
+///
+/// For c1 != c2, no offset in slice c1 can equal any offset in slice c2.
+pub proof fn lemma_slice_disjoint(
+    layout: &LayoutSpec, c1: nat, c2: nat, i: nat, j: nat,
+)
+    requires
+        layout.valid(),
+        layout.is_injective(),
+        layout.rank() > 0,
+        c1 < layout.shape[0],
+        c2 < layout.shape[0],
+        c1 != c2,
+        i < shape_size(layout.shape.skip(1)),
+        j < shape_size(layout.shape.skip(1)),
+    ensures
+        crate::slice::slice_offset(layout, 0, c1)
+            + crate::slice::slice_layout(layout, 0, c1).offset(i)
+        != crate::slice::slice_offset(layout, 0, c2)
+            + crate::slice::slice_layout(layout, 0, c2).offset(j),
+{
+    let m0 = layout.shape[0];
+    let rest_size = shape_size(layout.shape.skip(1));
+
+    // Reconstruct full layout offsets
+    lemma_slice_offset_reconstruction(layout, c1, i);
+    lemma_slice_offset_reconstruction(layout, c2, j);
+
+    let x1 = i * m0 + c1;
+    let x2 = j * m0 + c2;
+
+    // x1 != x2 because c1 != c2 and both < m0
+    assert(x1 != x2) by (nonlinear_arith)
+        requires c1 != c2, c1 < m0, c2 < m0, x1 == i * m0 + c1, x2 == j * m0 + c2, m0 > 0
+    {
+        // x1 % m0 = c1, x2 % m0 = c2, c1 != c2 => x1 != x2
+        assert(x1 % m0 == c1);
+        assert(x2 % m0 == c2);
+    };
+
+    // Both x1, x2 < shape_size(layout.shape)
+    assert(shape_size(layout.shape) == m0 * rest_size);
+    assert(x1 < shape_size(layout.shape)) by (nonlinear_arith)
+        requires i < rest_size, c1 < m0, x1 == i * m0 + c1,
+            shape_size(layout.shape) == m0 * rest_size, m0 > 0;
+    assert(x2 < shape_size(layout.shape)) by (nonlinear_arith)
+        requires j < rest_size, c2 < m0, x2 == j * m0 + c2,
+            shape_size(layout.shape) == m0 * rest_size, m0 > 0;
+
+    // By injectivity: layout.offset(x1) != layout.offset(x2)
+    assert(layout.offset(x1) != layout.offset(x2));
+
+    // By reconstruction: layout.offset(x1) == slice_offset(0,c1) + slice(0,c1).offset(i)
+    //                    layout.offset(x2) == slice_offset(0,c2) + slice(0,c2).offset(j)
+}
+
+/// Every element of the full layout is covered by some mode-0 slice.
+///
+/// For any x < size(layout), there exist c < shape[0] and i < rest_size such that
+/// layout.offset(x) == slice_offset(L, 0, c) + slice_layout(L, 0, c).offset(i).
+pub proof fn lemma_partition_coverage(
+    layout: &LayoutSpec, x: nat,
+)
+    requires
+        layout.valid(),
+        layout.rank() > 0,
+        x < shape_size(layout.shape),
+    ensures ({
+        let m0 = layout.shape[0];
+        let c = x % m0;
+        let i = x / m0;
+        &&& c < m0
+        &&& i < shape_size(layout.shape.skip(1))
+        &&& layout.offset(x)
+            == crate::slice::slice_offset(layout, 0, c)
+               + crate::slice::slice_layout(layout, 0, c).offset(i)
+    }),
+{
+    let m0 = layout.shape[0];
+    let rest_size = shape_size(layout.shape.skip(1));
+    let c = x % m0;
+    let i = x / m0;
+
+    assert(shape_size(layout.shape) == m0 * rest_size);
+
+    // c < m0 and i < rest_size
+    assert(c < m0) by (nonlinear_arith)
+        requires x < m0 * rest_size, m0 > 0, c == x % m0;
+    assert(i < rest_size) by (nonlinear_arith)
+        requires x < m0 * rest_size, m0 > 0, i == x / m0;
+
+    // x == i * m0 + c
+    assert(x == i * m0 + c) by (nonlinear_arith)
+        requires c == x % m0, i == x / m0, m0 > 0;
+
+    lemma_slice_offset_reconstruction(layout, c, i);
+}
+
+// ══════════════════════════════════════════════════════════════
+// TiledCopy pipeline correctness (Phase 3c)
+// ══════════════════════════════════════════════════════════════
+
+/// Tiled copy produces an injective layout when all components are injective.
+pub proof fn lemma_tiled_copy_injective(
+    atom: &LayoutSpec, thr_layout: &LayoutSpec, val_layout: &LayoutSpec,
+)
+    requires
+        tiled_copy_admissible(atom, thr_layout, val_layout),
+        atom.is_injective(),
+        atom.non_negative_strides(),
+        thr_layout.is_injective(),
+        val_layout.is_injective(),
+        val_layout.non_negative_strides(),
+    ensures
+        make_tiled_copy(atom, thr_layout, val_layout).is_injective(),
+{
+    let tv = logical_product(thr_layout, val_layout);
+
+    // TV is injective
+    lemma_product_injective(thr_layout, val_layout);
+
+    // TV has non-negative strides (from tiled_copy_admissible)
+    assert(tv.non_negative_strides());
+
+    // raked_product(atom, tv) is injective
+    lemma_product_valid(thr_layout, val_layout);
+    lemma_raked_product_injective(atom, &tv);
+}
+
+/// Tiled copy produces a bijective layout when all components are bijective.
+pub proof fn lemma_tiled_copy_bijective(
+    atom: &LayoutSpec, thr_layout: &LayoutSpec, val_layout: &LayoutSpec,
+    m_atom: nat, m_thr: nat, m_val: nat,
+)
+    requires
+        tiled_copy_admissible(atom, thr_layout, val_layout),
+        atom.is_injective(),
+        atom.non_negative_strides(),
+        thr_layout.is_injective(),
+        val_layout.is_injective(),
+        val_layout.non_negative_strides(),
+        atom.is_surjective_upto(m_atom),
+        thr_layout.is_surjective_upto(m_thr),
+        val_layout.is_surjective_upto(m_val),
+        m_thr == thr_layout.cosize_nonneg(),
+        m_val == val_layout.cosize_nonneg(),
+        m_atom > 0,
+        m_thr > 0,
+        m_val > 0,
+    ensures
+        make_tiled_copy(atom, thr_layout, val_layout).is_bijective_upto(m_atom * (m_thr * m_val)),
+{
+    let tv = logical_product(thr_layout, val_layout);
+
+    // TV is valid with non-negative strides
+    lemma_product_valid(thr_layout, val_layout);
+
+    // TV cosize = m_thr * m_val
+    lemma_product_cosize(thr_layout, val_layout);
+
+    // TV is bijective onto m_thr * m_val
+    lemma_product_bijective(thr_layout, val_layout, m_thr, m_val);
+
+    // raked_product(atom, tv) is bijective onto m_atom * (m_thr * m_val)
+    let m_tv = m_thr * m_val;
+    assert(m_thr as int * m_val as int > 0) by (nonlinear_arith)
+        requires m_thr > 0nat, m_val > 0nat;
+    assert(m_tv > 0);
+    assert(m_tv == tv.cosize_nonneg());
+    lemma_raked_product_bijective(atom, &tv, m_atom, m_tv);
+}
+
+/// Tiled copy partitions correctly: different threads get disjoint offset sets
+/// from mode-0 slicing of an injective divided layout.
+pub proof fn lemma_tiled_copy_partitions_correctly(
+    layout: &LayoutSpec, t1: nat, t2: nat, i: nat, j: nat,
+)
+    requires
+        layout.valid(),
+        layout.is_injective(),
+        layout.rank() > 0,
+        t1 < layout.shape[0],
+        t2 < layout.shape[0],
+        t1 != t2,
+        i < shape_size(layout.shape.skip(1)),
+        j < shape_size(layout.shape.skip(1)),
+    ensures
+        slice_offset(layout, 0, t1) + slice_layout(layout, 0, t1).offset(i)
+        != slice_offset(layout, 0, t2) + slice_layout(layout, 0, t2).offset(j),
+{
+    lemma_slice_disjoint(layout, t1, t2, i, j);
+}
+
+/// Tiled copy covers all elements: for any element x < size(layout), there exists
+/// a thread t and local index i that produces the same offset.
+pub proof fn lemma_tiled_copy_covers_all(
+    layout: &LayoutSpec, x: nat,
+)
+    requires
+        layout.valid(),
+        layout.rank() > 0,
+        x < shape_size(layout.shape),
+    ensures ({
+        let m0 = layout.shape[0];
+        let t = x % m0;
+        let i = x / m0;
+        &&& t < m0
+        &&& i < shape_size(layout.shape.skip(1))
+        &&& layout.offset(x)
+            == slice_offset(layout, 0, t)
+               + slice_layout(layout, 0, t).offset(i)
+    }),
+{
+    lemma_partition_coverage(layout, x);
 }
 
 } // verus!

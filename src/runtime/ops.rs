@@ -5,6 +5,7 @@ use crate::composition::*;
 use crate::complement::*;
 use crate::product::*;
 use crate::coalesce::*;
+use crate::divide::*;
 use super::*;
 use super::layout::RuntimeLayout;
 
@@ -1349,6 +1350,58 @@ pub fn permute_modes_exec(layout: &RuntimeLayout, perm: &Vec<u64>) -> (result: R
         stride: new_stride,
         model: Ghost(spec_result),
     }
+}
+
+/// Divide tile at runtime: just compose(A, B).
+pub fn divide_tile_exec(a: &RuntimeLayout, b: &RuntimeLayout) -> (result: RuntimeLayout)
+    requires
+        a.wf_spec(),
+        b.wf_spec(),
+        divide_admissible(&a@, &b@),
+        forall|i: int| 0 <= i < b@.stride.len() ==> #[trigger] b@.stride[i] >= 0,
+        forall|i: int| 0 <= i < b@.shape.len() ==>
+            (#[trigger] b@.stride[i]) * a@.stride.first() >= i64::MIN as int &&
+            b@.stride[i] * a@.stride.first() <= i64::MAX as int,
+        shape_size(divide_tile(&a@, &b@).shape) <= u64::MAX as nat,
+    ensures
+        result.wf_spec(),
+        result@ == divide_tile(&a@, &b@),
+{
+    compose_exec(a, b)
+}
+
+/// Divide rest at runtime: compose(A, complement(B, size(A))).
+pub fn divide_rest_exec(
+    a: &RuntimeLayout,
+    b: &RuntimeLayout,
+    complement_result: &RuntimeLayout,
+) -> (result: RuntimeLayout)
+    requires
+        a.wf_spec(),
+        b.wf_spec(),
+        complement_result.wf_spec(),
+        divide_admissible(&a@, &b@),
+        complement_result@ == crate::complement::complement(&b@, shape_size(a@.shape)),
+        forall|i: int| 0 <= i < complement_result@.stride.len() ==>
+            #[trigger] complement_result@.stride[i] >= 0,
+        forall|i: int| 0 <= i < complement_result@.shape.len() ==>
+            (#[trigger] complement_result@.stride[i]) * a@.stride.first() >= i64::MIN as int &&
+            complement_result@.stride[i] * a@.stride.first() <= i64::MAX as int,
+        shape_size(divide_rest(&a@, &b@).shape) <= u64::MAX as nat,
+    ensures
+        result.wf_spec(),
+        result@ == divide_rest(&a@, &b@),
+{
+    proof {
+        // Bridge: compose(a@, complement_result@) == divide_rest(&a@, &b@)
+        assert(complement_result@ == crate::complement::complement(&b@, shape_size(a@.shape)));
+        // compose_exec precondition: a@.shape.len() > 0 (from divide_admissible)
+        assert(a@.shape.len() > 0);
+        // compose result shape
+        crate::proof::composition_lemmas::lemma_compose_shape(a@, complement_result@);
+        crate::proof::complement_lemmas::lemma_complement_valid(&b@, shape_size(a@.shape));
+    }
+    compose_exec(a, complement_result)
 }
 
 } // verus!

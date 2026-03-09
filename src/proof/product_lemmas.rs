@@ -707,4 +707,315 @@ pub proof fn lemma_blocked_product_bijective(a: &LayoutSpec, b: &LayoutSpec, m_a
     lemma_product_bijective(a, b, m_a, m_b);
 }
 
+// ══════════════════════════════════════════════════════════════
+// Raked product injectivity, surjectivity, bijectivity
+// ══════════════════════════════════════════════════════════════
+
+/// Raked product preserves injectivity:
+/// if A (non-neg strides) and B are both injective,
+/// then raked_product(A, B) is injective.
+pub proof fn lemma_raked_product_injective(a: &LayoutSpec, b: &LayoutSpec)
+    requires
+        raked_product_admissible(a, b),
+        a.non_negative_strides(),
+        a.is_injective(),
+        b.is_injective(),
+    ensures
+        raked_product(a, b).is_injective(),
+{
+    let p = raked_product(a, b);
+    let sa = a.size();
+    let sb = b.size();
+    let cs = b.cosize_nonneg() as int;
+
+    lemma_raked_product_valid(a, b);
+    lemma_raked_product_size(a, b);
+    lemma_shape_size_positive(a.shape);
+    lemma_shape_size_positive(b.shape);
+
+    assert forall|x1: nat, x2: nat|
+        x1 < p.size() && x2 < p.size() && x1 != x2
+    implies
+        #[trigger] p.offset(x1) != #[trigger] p.offset(x2)
+    by {
+        assert(x1 < sa * sb);
+        assert(x2 < sa * sb);
+
+        lemma_raked_product_offset(a, b, x1);
+        lemma_raked_product_offset(a, b, x2);
+
+        let r1 = x1 % sa;
+        let q1 = x1 / sa;
+        let r2 = x2 % sa;
+        let q2 = x2 / sa;
+
+        crate::proof::integer_helpers::lemma_mod_bound(x1, sa);
+        crate::proof::integer_helpers::lemma_mod_bound(x2, sa);
+        crate::proof::integer_helpers::lemma_div_upper_bound(x1, sa, sb);
+        crate::proof::integer_helpers::lemma_div_upper_bound(x2, sa, sb);
+
+        // A.offset(r) in [0, cosize(A))
+        crate::proof::offset_lemmas::lemma_offset_nonneg(*a, r1);
+        crate::proof::offset_lemmas::lemma_offset_nonneg(*a, r2);
+        crate::proof::offset_lemmas::lemma_offset_upper_bound(*a, r1);
+        crate::proof::offset_lemmas::lemma_offset_upper_bound(*a, r2);
+
+        // B.offset(q) >= 0
+        crate::proof::offset_lemmas::lemma_offset_nonneg(*b, q1);
+        crate::proof::offset_lemmas::lemma_offset_nonneg(*b, q2);
+        // B.offset(q) < cosize(B)
+        crate::proof::offset_lemmas::lemma_offset_upper_bound(*b, q1);
+        crate::proof::offset_lemmas::lemma_offset_upper_bound(*b, q2);
+
+        crate::proof::integer_helpers::lemma_div_mod_identity(x1, sa);
+        crate::proof::integer_helpers::lemma_div_mod_identity(x2, sa);
+
+        let oa1 = a.offset(r1);
+        let oa2 = a.offset(r2);
+        let ob1 = b.offset(q1);
+        let ob2 = b.offset(q2);
+
+        // p.offset(x) = cs * a.offset(r) + b.offset(q)
+        // If equal: cs * oa1 + ob1 == cs * oa2 + ob2
+        // ob1 - ob2 == cs * (oa2 - oa1)
+        // |ob1 - ob2| < cs (since both in [0, cs))
+        // So oa1 == oa2, then ob1 == ob2
+
+        if p.offset(x1) == p.offset(x2) {
+            assert(cs * oa1 + ob1 == cs * oa2 + ob2);
+
+            if cs == 0 {
+                crate::proof::offset_lemmas::lemma_cosize_equals_dot_plus_one(*b);
+                assert(false); // cosize >= 1
+            }
+
+            let diff = ob1 - ob2;
+            vstd::arithmetic::mul::lemma_mul_is_distributive_sub(cs, oa2, oa1);
+            assert(cs * oa2 - cs * oa1 == cs * (oa2 - oa1));
+            assert(diff == cs * (oa2 - oa1));
+
+            assert(-cs < diff);
+            assert(diff < cs);
+
+            if oa2 - oa1 > 0 {
+                vstd::arithmetic::mul::lemma_mul_inequality(1, oa2 - oa1, cs);
+                vstd::arithmetic::mul::lemma_mul_basics(cs);
+                vstd::arithmetic::mul::lemma_mul_is_commutative(oa2 - oa1, cs);
+                assert(cs * (oa2 - oa1) >= cs);
+                assert(false);
+            } else if oa2 - oa1 < 0 {
+                vstd::arithmetic::mul::lemma_mul_inequality(1, oa1 - oa2, cs);
+                vstd::arithmetic::mul::lemma_mul_basics(cs);
+                assert(cs * (oa1 - oa2) >= cs);
+                assert(cs * (oa2 - oa1) == -(cs * (oa1 - oa2))) by (nonlinear_arith)
+                    requires cs > 0, oa1 - oa2 > 0;
+                assert(diff <= -cs);
+                assert(false);
+            }
+            assert(oa1 == oa2);
+
+            // A injective: oa1 == oa2, r1 != r2 → contradiction
+            if r1 != r2 {
+                assert(a.offset(r1) != a.offset(r2));
+                assert(false);
+            }
+            assert(r1 == r2);
+
+            assert(ob1 == ob2);
+            if q1 != q2 {
+                assert(b.offset(q1) != b.offset(q2));
+                assert(false);
+            }
+            assert(q1 == q2);
+
+            assert(x1 == x2);
+            assert(false);
+        }
+    }
+}
+
+/// Raked product surjectivity:
+/// If A is surjective onto [0, m_a) and B is surjective onto [0, m_b),
+/// then raked_product(A, B) is surjective onto [0, m_a * m_b).
+pub proof fn lemma_raked_product_surjective(a: &LayoutSpec, b: &LayoutSpec, m_a: nat, m_b: nat)
+    requires
+        raked_product_admissible(a, b),
+        a.non_negative_strides(),
+        a.is_surjective_upto(m_a),
+        b.is_surjective_upto(m_b),
+        m_b == b.cosize_nonneg(),
+        m_a > 0,
+        m_b > 0,
+    ensures
+        raked_product(a, b).is_surjective_upto(m_a * m_b),
+{
+    let p = raked_product(a, b);
+    let sa = a.size();
+    let sb = b.size();
+
+    lemma_raked_product_size(a, b);
+    lemma_raked_product_valid(a, b);
+    lemma_shape_size_positive(a.shape);
+    lemma_shape_size_positive(b.shape);
+
+    assert forall|k: int| 0 <= k < (m_a * m_b) as int
+        implies #[trigger] p.offset_hit(k)
+    by {
+        // Decompose k = m_b * k_a + k_b where k_a < m_a, k_b < m_b
+        let k_b: nat = (k % m_b as int) as nat;
+        let k_a: nat = (k / m_b as int) as nat;
+
+        assert(0 <= k_b < m_b);
+        crate::proof::integer_helpers::lemma_div_upper_bound(k as nat, m_b, m_a);
+        assert(0 <= k_a < m_a);
+
+        // Find witnesses: r < sa with a.offset(r) == k_a
+        assert(a.offset_hit(k_a as int));
+        let r: nat = choose|r: nat| r < sa && a.offset(r) == k_a as int;
+        assert(r < sa && a.offset(r) == k_a as int);
+
+        // q < sb with b.offset(q) == k_b
+        assert(b.offset_hit(k_b as int));
+        let q: nat = choose|q: nat| q < sb && b.offset(q) == k_b as int;
+        assert(q < sb && b.offset(q) == k_b as int);
+
+        let x: nat = r + sa * q;
+        assert(x < sa * sb) by (nonlinear_arith)
+            requires r < sa, q < sb, sa > 0, x == r + sa * q;
+
+        crate::proof::integer_helpers::lemma_div_mod_decompose(r, q, sa);
+
+        lemma_raked_product_offset(a, b, x);
+        assert(p.offset(x) == (m_b as int) * a.offset(r) + b.offset(q));
+        assert(p.offset(x) == (m_b as int) * (k_a as int) + (k_b as int));
+
+        crate::proof::integer_helpers::lemma_div_mod_identity(k as nat, m_b);
+        assert(p.offset(x) == k);
+        assert(x < p.size());
+    };
+}
+
+/// Raked product bijectivity.
+pub proof fn lemma_raked_product_bijective(a: &LayoutSpec, b: &LayoutSpec, m_a: nat, m_b: nat)
+    requires
+        raked_product_admissible(a, b),
+        a.non_negative_strides(),
+        a.is_injective(),
+        b.is_injective(),
+        a.is_surjective_upto(m_a),
+        b.is_surjective_upto(m_b),
+        m_b == b.cosize_nonneg(),
+        m_a > 0,
+        m_b > 0,
+    ensures
+        raked_product(a, b).is_bijective_upto(m_a * m_b),
+{
+    lemma_raked_product_injective(a, b);
+    lemma_raked_product_surjective(a, b, m_a, m_b);
+}
+
+/// Product cosize: for non-negative-stride layouts,
+/// cosize(product(A, B)) == cosize(A) * cosize(B).
+pub proof fn lemma_product_cosize(a: &LayoutSpec, b: &LayoutSpec)
+    requires
+        product_admissible(a, b),
+        a.non_negative_strides(),
+        b.non_negative_strides(),
+    ensures
+        logical_product(a, b).non_negative_strides(),
+        logical_product(a, b).cosize_nonneg() == a.cosize_nonneg() * b.cosize_nonneg(),
+{
+    let p = logical_product(a, b);
+    let ca = a.cosize_nonneg();
+    let cb = b.cosize_nonneg();
+
+    lemma_product_valid(a, b);
+
+    // Product has non-negative strides:
+    // First part: A strides (unchanged, non-negative by hypothesis)
+    // Second part: B strides scaled by cosize(A) (non-neg * non-neg)
+    assert(p.non_negative_strides()) by {
+        assert forall|i: int| 0 <= i < p.stride.len() implies #[trigger] p.stride[i] >= 0
+        by {
+            if i < a.stride.len() as int {
+                assert(p.stride[i] == a.stride[i]);
+            } else {
+                let j = i - a.stride.len() as int;
+                assert(p.stride[i] == b.stride[j] * (ca as int));
+                assert(b.stride[j] >= 0);
+                assert(ca as int >= 0);
+                assert(b.stride[j] * (ca as int) >= 0) by (nonlinear_arith)
+                    requires b.stride[j] >= 0, ca as int >= 0;
+            }
+        };
+    };
+
+    // cosize = max offset + 1
+    // max offset of product = max_A + cosize_A * max_B
+    // cosize = max_A + cosize_A * max_B + 1
+    //        = (cosize_A - 1) + cosize_A * (cosize_B - 1) + 1
+    //        = cosize_A * cosize_B
+    crate::proof::offset_lemmas::lemma_cosize_equals_dot_plus_one(*a);
+    crate::proof::offset_lemmas::lemma_cosize_equals_dot_plus_one(*b);
+    crate::proof::offset_lemmas::lemma_cosize_equals_dot_plus_one(p);
+
+    // For the product: dot_product(shape_minus_one(p.shape), p.stride) + 1
+    // = dot_product(smo_a ++ smo_b, stride_a ++ scale(stride_b, ca)) + 1
+    // = dot(smo_a, stride_a) + dot(smo_b, scale(stride_b, ca)) + 1
+    // = (ca - 1) + ca * dot(smo_b, stride_b) + 1
+    // = ca * (dot(smo_b, stride_b) + 1)
+    // = ca * cb
+
+    let smo_a = shape_minus_one(a.shape);
+    let smo_b = shape_minus_one(b.shape);
+    let smo_p = shape_minus_one(p.shape);
+
+    // shape_minus_one distributes over concat
+    crate::runtime::layout::lemma_shape_minus_one_len(p.shape);
+    crate::runtime::layout::lemma_shape_minus_one_len(a.shape);
+    crate::runtime::layout::lemma_shape_minus_one_len(b.shape);
+
+    assert(smo_p =~= smo_a.add(smo_b)) by {
+        assert(p.shape =~= a.shape.add(b.shape));
+        assert forall|i: int| 0 <= i < smo_p.len() implies smo_p[i] == smo_a.add(smo_b)[i]
+        by {
+            crate::runtime::layout::lemma_shape_minus_one_index(p.shape, i as nat);
+            if i < a.shape.len() as int {
+                crate::runtime::layout::lemma_shape_minus_one_index(a.shape, i as nat);
+                assert(p.shape[i] == a.shape[i]);
+            } else {
+                let j = i - a.shape.len() as int;
+                crate::runtime::layout::lemma_shape_minus_one_index(b.shape, j as nat);
+                assert(p.shape[i] == b.shape[j]);
+                assert(smo_a.add(smo_b)[i] == smo_b[j]);
+            }
+        };
+    };
+
+    // Split dot product
+    let scaled_b = scale_strides(b.stride, ca as int);
+    assert(p.stride =~= a.stride.add(scaled_b));
+    assert(smo_a.len() == a.stride.len());
+    assert(smo_b.len() == scaled_b.len()) by {
+        assert(scaled_b.len() == b.stride.len());
+    };
+
+    crate::proof::shape_lemmas::lemma_dot_product_append(smo_a, smo_b, a.stride, scaled_b);
+
+    // dot(smo_b, scale(stride_b, ca)) == ca * dot(smo_b, stride_b)
+    lemma_scale_strides_eq(b.stride, ca as int);
+    crate::proof::injectivity_lemmas::lemma_dot_product_scale(smo_b, b.stride, ca as int);
+
+    // Now: cosize_p = dot(smo_a, stride_a) + ca * dot(smo_b, stride_b) + 1
+    //              = (ca - 1) + ca * (cb - 1) + 1
+    //              = ca * cb
+    assert(p.cosize_nonneg() == ca * cb) by (nonlinear_arith)
+        requires
+            p.cosize_nonneg() as int
+                == dot_product_nat_int(smo_a, a.stride) + (ca as int) * dot_product_nat_int(smo_b, b.stride) + 1,
+            ca as int == dot_product_nat_int(smo_a, a.stride) + 1,
+            cb as int == dot_product_nat_int(smo_b, b.stride) + 1,
+    {};
+}
+
 } // verus!

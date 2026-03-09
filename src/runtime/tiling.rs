@@ -4,6 +4,7 @@ use crate::layout::*;
 use crate::divide::*;
 use crate::product::*;
 use crate::tiling::*;
+use super::*;
 use super::layout::RuntimeLayout;
 
 verus! {
@@ -267,6 +268,110 @@ pub fn make_tiled_copy_exec(
     }
 
     super::ops::raked_product_exec(atom, &tv, cosize_tv)
+}
+
+/// Extract tile shape from a RuntimeDividedLayout.
+pub fn tile_shape_exec(d: &RuntimeDividedLayout) -> (result: Vec<u64>)
+    requires
+        d.wf_spec(),
+    ensures
+        shape_to_nat_seq(result@) =~= tile_shape(&d.view_divided()),
+        shape_valid_u64(result@),
+{
+    let mut result: Vec<u64> = Vec::new();
+    let mut i: usize = 0;
+    while i < d.tile_rank
+        invariant
+            0 <= i <= d.tile_rank,
+            d.wf_spec(),
+            result@.len() == i as int,
+            forall|j: int| 0 <= j < i as int ==>
+                #[trigger] result@[j] == d.layout.shape@[j],
+        decreases d.tile_rank - i,
+    {
+        result.push(d.layout.shape[i]);
+        i = i + 1;
+    }
+    proof {
+        assert(shape_to_nat_seq(result@) =~= tile_shape(&d.view_divided())) by {
+            assert(result@.len() == d.tile_rank as int);
+            assert forall|j: int| 0 <= j < result@.len() implies
+                shape_to_nat_seq(result@)[j] == d.view_divided().layout.shape.take(d.tile_rank as int)[j]
+            by {
+                assert(result@[j] == d.layout.shape@[j]);
+            };
+        };
+        assert forall|j: int| 0 <= j < result@.len() implies #[trigger] result@[j] > 0u64
+        by {
+            assert(result@[j] == d.layout.shape@[j]);
+            assert(d.layout@.shape[j] > 0nat);
+        };
+    }
+    result
+}
+
+/// Extract rest shape from a RuntimeDividedLayout.
+pub fn rest_shape_exec(d: &RuntimeDividedLayout) -> (result: Vec<u64>)
+    requires
+        d.wf_spec(),
+    ensures
+        shape_to_nat_seq(result@) =~= rest_shape(&d.view_divided()),
+        shape_valid_u64(result@),
+{
+    let mut result: Vec<u64> = Vec::new();
+    let mut i: usize = d.tile_rank;
+    while i < d.layout.shape.len()
+        invariant
+            d.tile_rank <= i <= d.layout.shape.len(),
+            d.wf_spec(),
+            result@.len() == (i - d.tile_rank) as int,
+            forall|j: int| 0 <= j < (i - d.tile_rank) as int ==>
+                #[trigger] result@[j] == d.layout.shape@[(d.tile_rank as int) + j],
+        decreases d.layout.shape.len() - i,
+    {
+        result.push(d.layout.shape[i]);
+        i = i + 1;
+    }
+    proof {
+        assert(shape_to_nat_seq(result@) =~= rest_shape(&d.view_divided())) by {
+            assert(result@.len() == (d.layout.shape@.len() - d.tile_rank) as int);
+            assert forall|j: int| 0 <= j < result@.len() implies
+                shape_to_nat_seq(result@)[j] == d.view_divided().layout.shape.skip(d.tile_rank as int)[j]
+            by {
+                assert(result@[j] == d.layout.shape@[(d.tile_rank as int) + j]);
+            };
+        };
+        assert forall|j: int| 0 <= j < result@.len() implies #[trigger] result@[j] > 0u64
+        by {
+            assert(result@[j] == d.layout.shape@[(d.tile_rank as int) + j]);
+            assert(d.layout@.shape[(d.tile_rank as int) + j] > 0nat);
+        };
+    }
+    result
+}
+
+/// Compute tile size (product of tile shape elements).
+pub fn tile_size_exec(d: &RuntimeDividedLayout) -> (result: u64)
+    requires
+        d.wf_spec(),
+        tile_size(&d.view_divided()) <= u64::MAX as nat,
+    ensures
+        result as nat == tile_size(&d.view_divided()),
+{
+    let ts = tile_shape_exec(d);
+    super::shape_helpers::shape_size_exec(&ts)
+}
+
+/// Compute number of tiles (product of rest shape elements).
+pub fn num_tiles_exec(d: &RuntimeDividedLayout) -> (result: u64)
+    requires
+        d.wf_spec(),
+        num_tiles_divided(&d.view_divided()) <= u64::MAX as nat,
+    ensures
+        result as nat == num_tiles_divided(&d.view_divided()),
+{
+    let rs = rest_shape_exec(d);
+    super::shape_helpers::shape_size_exec(&rs)
 }
 
 } // verus!
