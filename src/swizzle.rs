@@ -102,4 +102,32 @@ pub open spec fn swizzle_domain(b: nat, m: nat, s: nat) -> nat {
     pow2(m + s + b)
 }
 
+// ══════════════════════════════════════════════════════════════
+// Swizzle-layout composition
+// ══════════════════════════════════════════════════════════════
+
+/// Apply swizzle to a layout offset at a given index.
+/// Requires non-negative strides so offset >= 0.
+pub open spec fn swizzled_offset(
+    layout: &LayoutSpec, b: nat, m: nat, s: nat, idx: nat,
+) -> nat
+    recommends
+        layout.valid(),
+        layout.non_negative_strides(),
+        idx < layout.size(),
+{
+    swizzle(layout.offset(idx) as nat, b, m, s)
+}
+
+/// Admissibility for swizzle-layout composition.
+pub open spec fn swizzle_layout_admissible(
+    layout: &LayoutSpec, b: nat, m: nat, s: nat,
+) -> bool {
+    &&& layout.valid()
+    &&& layout.non_negative_strides()
+    &&& layout.is_injective()
+    &&& swizzle_admissible(b, m, s)
+    &&& layout.cosize_nonneg() <= pow2(m + s + b)
+}
+
 } // verus!

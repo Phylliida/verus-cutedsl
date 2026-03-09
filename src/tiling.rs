@@ -143,4 +143,50 @@ pub open spec fn predicated_divide(original_size: nat, tile_size: nat) -> Divide
     zipped_divide(&a, &b)
 }
 
+// ══════════════════════════════════════════════════════════════
+// Copy atom specs
+// ══════════════════════════════════════════════════════════════
+
+/// A copy atom is a rank-1, contiguous, stride-1 layout of `access_width` elements.
+/// Models CuTe's Copy_Atom: the smallest unit of a vectorized memory access.
+pub open spec fn copy_atom_valid(atom: &LayoutSpec, access_width: nat) -> bool {
+    &&& atom.valid()
+    &&& atom.rank() == 1
+    &&& atom.shape[0] == access_width
+    &&& atom.stride[0] == 1
+}
+
+/// An offset is aligned to `access_width` if it is a multiple.
+pub open spec fn access_aligned(offset: int, access_width: nat) -> bool
+    recommends access_width > 0,
+{
+    offset % (access_width as int) == 0
+}
+
+// ══════════════════════════════════════════════════════════════
+// Nested partition specs
+// ══════════════════════════════════════════════════════════════
+
+/// Two-level partition: slice layout first with id1 (outer), then with id2 (inner).
+/// Returns (inner_layout, total_base_offset).
+///
+/// Models block→warp or warp→thread partitioning.
+pub open spec fn nested_local_partition(
+    tensor: &LayoutSpec,
+    id1: nat,
+    id2: nat,
+) -> (LayoutSpec, int)
+    recommends
+        tensor.valid(),
+        tensor.rank() >= 2,
+        id1 < tensor.shape[0],
+        id2 < slice_layout(tensor, 0, id1).shape[0],
+{
+    let residual1 = slice_layout(tensor, 0, id1);
+    let off1 = slice_offset(tensor, 0, id1);
+    let inner = slice_layout(&residual1, 0, id2);
+    let off2 = slice_offset(&residual1, 0, id2);
+    (inner, off1 + off2)
+}
+
 } // verus!

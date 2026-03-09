@@ -694,4 +694,468 @@ pub proof fn lemma_tiled_copy_covers_all(
     lemma_partition_coverage(layout, x);
 }
 
+// ══════════════════════════════════════════════════════════════
+// Copy atom proofs (Phase 4)
+// ══════════════════════════════════════════════════════════════
+
+/// A copy atom has contiguous offsets: offset(idx) == idx.
+pub proof fn lemma_copy_atom_contiguous(
+    atom: &LayoutSpec, access_width: nat, idx: nat,
+)
+    requires
+        copy_atom_valid(atom, access_width),
+        idx < access_width,
+    ensures
+        atom.offset(idx) == idx as int,
+{
+    // atom = (aw):(1), which is make_column_major(seq![aw])
+    assert(atom.shape =~= seq![access_width]);
+    assert(atom.stride =~= seq![1int]);
+
+    // make_column_major(seq![aw]).shape =~= seq![aw]
+    // make_column_major(seq![aw]).stride =~= seq![1]
+    assert(seq![access_width].skip(1) =~= Seq::<nat>::empty());
+    assert(column_major_strides(Seq::<nat>::empty()) =~= Seq::<int>::empty());
+    assert(scale_strides_spec(Seq::<int>::empty(), access_width as int) =~= Seq::<int>::empty());
+    assert(seq![1int].add(Seq::<int>::empty()) =~= seq![1int]);
+    assert(make_column_major(seq![access_width]).shape =~= seq![access_width]);
+    assert(make_column_major(seq![access_width]).stride =~= seq![1int]);
+
+    // So atom matches make_column_major(seq![aw])
+    assert(atom.shape =~= make_column_major(seq![access_width]).shape);
+    assert(atom.stride =~= make_column_major(seq![access_width]).stride);
+
+    // offset is determined by shape and stride, extensionally equal layouts have equal offsets
+    // delinearize and dot_product depend only on shape/stride contents
+    lemma_shape_size_singleton(access_width);
+    assert(shape_size(seq![access_width]) == access_width);
+    assert(idx < shape_size(seq![access_width]));
+
+    crate::proof::injectivity_lemmas::lemma_column_major_offset_is_identity(
+        seq![access_width], idx,
+    );
+    // make_column_major(seq![aw]).offset(idx) == idx
+
+    // atom.offset(idx) == make_column_major(seq![aw]).offset(idx) since same shape/stride
+    assert(atom.offset(idx) == make_column_major(seq![access_width]).offset(idx));
+}
+
+/// A copy atom has cosize equal to access_width and non-negative strides.
+pub proof fn lemma_copy_atom_cosize(
+    atom: &LayoutSpec, access_width: nat,
+)
+    requires
+        copy_atom_valid(atom, access_width),
+        access_width > 0,
+    ensures
+        atom.cosize_nonneg() == access_width,
+        atom.non_negative_strides(),
+{
+    // stride[0] = 1 >= 0
+    assert(atom.non_negative_strides());
+
+    // cosize = dot(shape_minus_one, stride) + 1
+    // shape_minus_one(seq![aw]) = seq![aw - 1]
+    // dot(seq![aw-1], seq![1]) = (aw-1)*1 + dot(empty, empty) = (aw-1) + 0 = aw-1
+    // cosize = aw - 1 + 1 = aw
+    crate::proof::offset_lemmas::lemma_cosize_equals_dot_plus_one(*atom);
+
+    // Explicitly compute shape_minus_one and dot product
+    assert(atom.shape =~= seq![access_width]);
+    assert(atom.shape.first() == access_width);
+    assert(atom.shape.skip(1) =~= Seq::<nat>::empty());
+    assert(shape_minus_one(Seq::<nat>::empty()) =~= Seq::<nat>::empty());
+    assert(seq![(access_width - 1) as nat].add(Seq::<nat>::empty())
+        =~= seq![(access_width - 1) as nat]);
+    let smo = shape_minus_one(atom.shape);
+    assert(smo =~= seq![(access_width - 1) as nat]);
+    assert(atom.stride =~= seq![1int]);
+
+    // dot_product_nat_int(seq![aw-1], seq![1]) = (aw-1)*1 + dot(empty, empty)
+    assert(seq![(access_width - 1) as nat].skip(1) =~= Seq::<nat>::empty());
+    assert(seq![1int].skip(1) =~= Seq::<int>::empty());
+    assert(dot_product_nat_int(Seq::<nat>::empty(), Seq::<int>::empty()) == 0int);
+    assert(dot_product_nat_int(smo, atom.stride) == ((access_width - 1) as int) * 1 + 0);
+}
+
+/// A copy atom has size equal to access_width.
+pub proof fn lemma_copy_atom_size(
+    atom: &LayoutSpec, access_width: nat,
+)
+    requires
+        copy_atom_valid(atom, access_width),
+    ensures
+        shape_size(atom.shape) == access_width,
+{
+    // shape_size(seq![aw]) = aw * shape_size(empty) = aw * 1 = aw
+    assert(atom.shape =~= seq![access_width]);
+    lemma_shape_size_singleton(access_width);
+}
+
+/// In a tiled copy, the atom contribution to each element's offset
+/// is exactly (x % access_width), scaled by cosize_tv.
+pub proof fn lemma_tiled_copy_atom_aligned(
+    atom: &LayoutSpec, thr: &LayoutSpec, val: &LayoutSpec,
+    access_width: nat, x: nat,
+)
+    requires
+        copy_atom_valid(atom, access_width),
+        access_width > 0,
+        tiled_copy_admissible(atom, thr, val),
+        atom.non_negative_strides(),
+        x < shape_size(make_tiled_copy(atom, thr, val).shape),
+    ensures ({
+        let tv = logical_product(thr, val);
+        let sa = shape_size(atom.shape);
+        &&& sa == access_width
+        &&& atom.offset(x % sa) == (x % access_width) as int
+    }),
+{
+    let tv = logical_product(thr, val);
+    lemma_copy_atom_size(atom, access_width);
+    let sa = shape_size(atom.shape);
+    assert(sa == access_width);
+
+    // x % sa < sa = access_width
+    crate::proof::shape_lemmas::lemma_shape_size_positive(atom.shape);
+    assert(sa > 0);
+    assert(x % sa < sa) by (nonlinear_arith)
+        requires sa > 0;
+
+    lemma_copy_atom_contiguous(atom, access_width, x % sa);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Slice prerequisite proofs for nested tiling (Phase 4b)
+// ══════════════════════════════════════════════════════════════
+
+/// Slicing an injective layout at mode 0 preserves injectivity.
+pub proof fn lemma_slice_injective_residual(
+    layout: &LayoutSpec, c: nat,
+)
+    requires
+        layout.valid(),
+        layout.is_injective(),
+        layout.rank() > 0,
+        c < layout.shape[0],
+    ensures
+        slice_layout(layout, 0, c).is_injective(),
+{
+    let sl = slice_layout(layout, 0, c);
+    let m0 = layout.shape[0];
+    let rest_size = shape_size(layout.shape.skip(1));
+
+    crate::proof::slice_lemmas::lemma_slice_mode0(layout, c);
+    assert(sl.shape =~= layout.shape.skip(1));
+
+    // sl is injective: for i != j < rest_size, sl.offset(i) != sl.offset(j)
+    assert forall|i: nat, j: nat|
+        i < shape_size(sl.shape) && j < shape_size(sl.shape) && i != j
+    implies
+        sl.offset(i) != sl.offset(j)
+    by {
+        // Reconstruct full layout indices
+        let x1 = i * m0 + c;
+        let x2 = j * m0 + c;
+
+        // x1 != x2 since i != j
+        assert(x1 != x2) by (nonlinear_arith)
+            requires i != j, x1 == i * m0 + c, x2 == j * m0 + c, m0 > 0;
+
+        // Both < shape_size(layout.shape)
+        assert(shape_size(layout.shape) == m0 * rest_size);
+        assert(x1 < shape_size(layout.shape)) by (nonlinear_arith)
+            requires i < rest_size, c < m0, x1 == i * m0 + c,
+                shape_size(layout.shape) == m0 * rest_size, m0 > 0;
+        assert(x2 < shape_size(layout.shape)) by (nonlinear_arith)
+            requires j < rest_size, c < m0, x2 == j * m0 + c,
+                shape_size(layout.shape) == m0 * rest_size, m0 > 0;
+
+        // By injectivity: layout.offset(x1) != layout.offset(x2)
+        assert(layout.offset(x1) != layout.offset(x2));
+
+        // By reconstruction lemma
+        lemma_slice_offset_reconstruction(layout, c, i);
+        lemma_slice_offset_reconstruction(layout, c, j);
+
+        // layout.offset(x1) = slice_offset(c) + sl.offset(i)
+        // layout.offset(x2) = slice_offset(c) + sl.offset(j)
+        // Since layout.offset(x1) != layout.offset(x2),
+        // slice_offset(c) + sl.offset(i) != slice_offset(c) + sl.offset(j)
+        // => sl.offset(i) != sl.offset(j)
+    };
+}
+
+/// Slicing a layout with non-negative strides preserves non-negative strides.
+pub proof fn lemma_slice_non_negative_strides(
+    layout: &LayoutSpec, c: nat,
+)
+    requires
+        layout.valid(),
+        layout.non_negative_strides(),
+        layout.rank() > 0,
+        c < layout.shape[0],
+    ensures
+        slice_layout(layout, 0, c).non_negative_strides(),
+{
+    crate::proof::slice_lemmas::lemma_slice_mode0(layout, c);
+    let sl = slice_layout(layout, 0, c);
+    assert(sl.stride =~= layout.stride.skip(1));
+    assert forall|i: int| 0 <= i < sl.stride.len()
+    implies #[trigger] sl.stride[i] >= 0
+    by {
+        assert(sl.stride[i] == layout.stride[i + 1]);
+        assert(layout.stride[i + 1] >= 0);
+    };
+}
+
+/// Slicing at mode 0 gives size = shape_size(shape.skip(1)).
+pub proof fn lemma_slice_mode0_size(
+    layout: &LayoutSpec, c: nat,
+)
+    requires
+        layout.valid(),
+        layout.rank() > 0,
+        c < layout.shape[0],
+    ensures
+        shape_size(slice_layout(layout, 0, c).shape) == shape_size(layout.shape.skip(1)),
+{
+    crate::proof::slice_lemmas::lemma_slice_mode0(layout, c);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Nested partition proofs (Phase 4c)
+// ══════════════════════════════════════════════════════════════
+
+/// Different outer IDs → disjoint nested offsets.
+pub proof fn lemma_nested_partition_disjoint_outer(
+    layout: &LayoutSpec,
+    t1: nat, t2: nat,
+    w1: nat, w2: nat,
+    i: nat, j: nat,
+)
+    requires
+        layout.valid(),
+        layout.is_injective(),
+        layout.rank() >= 2,
+        t1 < layout.shape[0],
+        t2 < layout.shape[0],
+        t1 != t2,
+        // r1 = slice(layout, 0, t1) has rank >= 1 since layout.rank() >= 2
+        w1 < slice_layout(layout, 0, t1).shape[0],
+        w2 < slice_layout(layout, 0, t2).shape[0],
+        i < shape_size(slice_layout(&slice_layout(layout, 0, t1), 0, w1).shape),
+        j < shape_size(slice_layout(&slice_layout(layout, 0, t2), 0, w2).shape),
+    ensures
+        nested_local_partition(layout, t1, w1).1
+            + nested_local_partition(layout, t1, w1).0.offset(i)
+        != nested_local_partition(layout, t2, w2).1
+            + nested_local_partition(layout, t2, w2).0.offset(j),
+{
+    let r1 = slice_layout(layout, 0, t1);
+    let r2 = slice_layout(layout, 0, t2);
+    let rest_size = shape_size(layout.shape.skip(1));
+
+    crate::proof::slice_lemmas::lemma_slice_valid(layout, 0, t1);
+    crate::proof::slice_lemmas::lemma_slice_valid(layout, 0, t2);
+    crate::proof::slice_lemmas::lemma_slice_mode0(layout, t1);
+    crate::proof::slice_lemmas::lemma_slice_mode0(layout, t2);
+    assert(r1.shape =~= layout.shape.skip(1));
+    assert(r2.shape =~= layout.shape.skip(1));
+    assert(r1.rank() >= 1);
+
+    // Get inner slice info
+    let inner1 = slice_layout(&r1, 0, w1);
+    let inner2 = slice_layout(&r2, 0, w2);
+
+    crate::proof::slice_lemmas::lemma_slice_valid(&r1, 0, w1);
+    crate::proof::slice_lemmas::lemma_slice_valid(&r2, 0, w2);
+
+    // Reconstruct: nested offset = slice_offset(layout, 0, t) + slice_offset(r, 0, w) + inner.offset(k)
+    // = slice_offset(layout, 0, t) + r.offset(w * M_1_rest + inner_idx_in_r)
+    // We need to show these are within the full layout reconstruction...
+
+    // Strategy: find full layout indices inner_x1, inner_x2 within the respective slices
+    // and use lemma_slice_disjoint on the outer level.
+
+    // r1.offset is within rest_size
+    // We need an index q1 < rest_size such that r1.offset(q1) = inner offset in r1
+    // Use coverage: for any element in r1, there's a (w1, local_i) decomposition
+    // But actually we can reconstruct directly:
+
+    // inner1.offset(i) is an offset within r1 after slicing at w1
+    // slice_offset(r1, 0, w1) + inner1.offset(i) = r1.offset(some_q1)
+    // by lemma_slice_offset_reconstruction on r1
+
+    // r1 has rank >= 1 and shape = layout.shape.skip(1)
+    let m1 = r1.shape[0];  // = layout.shape[1]
+
+    // Find q1 = i * m1 + w1, then r1.offset(q1) = slice_offset(r1, 0, w1) + inner1.offset(i)
+    crate::proof::slice_lemmas::lemma_slice_mode0(&r1, w1);
+    let inner1_size = shape_size(r1.shape.skip(1));
+    assert(i < inner1_size);
+    lemma_slice_offset_reconstruction(&r1, w1, i);
+    let q1 = i * m1 + w1;
+
+    // Same for q2
+    let m2 = r2.shape[0];
+    assert(m2 == m1);  // same skip(1) shape
+    crate::proof::slice_lemmas::lemma_slice_mode0(&r2, w2);
+    let inner2_size = shape_size(r2.shape.skip(1));
+    assert(j < inner2_size);
+    lemma_slice_offset_reconstruction(&r2, w2, j);
+    let q2 = j * m1 + w2;
+
+    // q1 < rest_size and q2 < rest_size
+    assert(q1 < rest_size) by (nonlinear_arith)
+        requires i < inner1_size, w1 < m1, q1 == i * m1 + w1,
+            shape_size(r1.shape) == m1 * inner1_size, m1 > 0,
+            rest_size == shape_size(r1.shape);
+    assert(q2 < rest_size) by (nonlinear_arith)
+        requires j < inner2_size, w2 < m1, q2 == j * m1 + w2,
+            shape_size(r2.shape) == m1 * inner2_size, m1 > 0,
+            rest_size == shape_size(r2.shape);
+
+    // Now use lemma_slice_disjoint on the outer level
+    lemma_slice_disjoint(layout, t1, t2, q1, q2);
+
+    // This gives us:
+    // slice_offset(layout, 0, t1) + r1.offset(q1) != slice_offset(layout, 0, t2) + r2.offset(q2)
+    // And r1.offset(q1) = slice_offset(r1, 0, w1) + inner1.offset(i)
+    //     r2.offset(q2) = slice_offset(r2, 0, w2) + inner2.offset(j)
+    // So: (off_t1 + off_w1 + inner1.offset(i)) != (off_t2 + off_w2 + inner2.offset(j))
+}
+
+/// Same outer ID, different inner IDs → disjoint nested offsets.
+pub proof fn lemma_nested_partition_disjoint_inner(
+    layout: &LayoutSpec,
+    t: nat,
+    w1: nat, w2: nat,
+    i: nat, j: nat,
+)
+    requires
+        layout.valid(),
+        layout.is_injective(),
+        layout.rank() >= 2,
+        t < layout.shape[0],
+        w1 < slice_layout(layout, 0, t).shape[0],
+        w2 < slice_layout(layout, 0, t).shape[0],
+        w1 != w2,
+        i < shape_size(slice_layout(&slice_layout(layout, 0, t), 0, w1).shape),
+        j < shape_size(slice_layout(&slice_layout(layout, 0, t), 0, w2).shape),
+    ensures
+        nested_local_partition(layout, t, w1).1
+            + nested_local_partition(layout, t, w1).0.offset(i)
+        != nested_local_partition(layout, t, w2).1
+            + nested_local_partition(layout, t, w2).0.offset(j),
+{
+    let r = slice_layout(layout, 0, t);
+    crate::proof::slice_lemmas::lemma_slice_valid(layout, 0, t);
+    crate::proof::slice_lemmas::lemma_slice_mode0(layout, t);
+    assert(r.shape =~= layout.shape.skip(1));
+    assert(r.rank() >= 1);
+
+    // r is injective (by slice preserving injectivity)
+    lemma_slice_injective_residual(layout, t);
+    assert(r.is_injective());
+
+    // Use slice_disjoint on r with w1 != w2
+    lemma_slice_disjoint(&r, w1, w2, i, j);
+
+    // This gives:
+    // slice_offset(r, 0, w1) + inner1.offset(i) != slice_offset(r, 0, w2) + inner2.offset(j)
+    // Adding slice_offset(layout, 0, t) to both sides preserves inequality:
+    // (off_t + off_w1 + inner1.offset(i)) != (off_t + off_w2 + inner2.offset(j))
+    let off_t = slice_offset(layout, 0, t);
+    let off_w1 = slice_offset(&r, 0, w1);
+    let off_w2 = slice_offset(&r, 0, w2);
+    let inner1 = slice_layout(&r, 0, w1);
+    let inner2 = slice_layout(&r, 0, w2);
+    assert(off_w1 + inner1.offset(i) != off_w2 + inner2.offset(j));
+    // off_t + (off_w1 + inner1.offset(i)) != off_t + (off_w2 + inner2.offset(j))
+}
+
+/// Full nested partition coverage: every element has a (t, w, k) decomposition.
+pub proof fn lemma_nested_partition_coverage(
+    layout: &LayoutSpec, x: nat,
+)
+    requires
+        layout.valid(),
+        layout.rank() >= 2,
+        x < shape_size(layout.shape),
+    ensures ({
+        let m0 = layout.shape[0];
+        let t = x % m0;
+        let q = x / m0;
+        let r = slice_layout(layout, 0, t);
+        let m1 = r.shape[0];
+        let w = q % m1;
+        let k = q / m1;
+        &&& t < m0
+        &&& q < shape_size(layout.shape.skip(1))
+        &&& w < r.shape[0]
+        &&& k < shape_size(r.shape.skip(1))
+        &&& layout.offset(x)
+            == nested_local_partition(layout, t, w).1
+               + nested_local_partition(layout, t, w).0.offset(k)
+    }),
+{
+    // First level: decompose x into (t, q)
+    lemma_partition_coverage(layout, x);
+    let m0 = layout.shape[0];
+    let t = x % m0;
+    let q = x / m0;
+    let r = slice_layout(layout, 0, t);
+
+    // r is valid with rank >= 1
+    crate::proof::slice_lemmas::lemma_slice_valid(layout, 0, t);
+    crate::proof::slice_lemmas::lemma_slice_mode0(layout, t);
+    assert(r.shape =~= layout.shape.skip(1));
+    assert(r.rank() >= 1);
+
+    // Second level: decompose q within r
+    let rest_size = shape_size(layout.shape.skip(1));
+    assert(q < rest_size);
+    assert(q < shape_size(r.shape));
+    lemma_partition_coverage(&r, q);
+
+    // This gives (w, k) where w = q % r.shape[0], k = q / r.shape[0]
+    // and r.offset(q) = slice_offset(r, 0, w) + slice_layout(r, 0, w).offset(k)
+
+    // From first level: layout.offset(x) = slice_offset(layout, 0, t) + r.offset(q)
+    // From second level: r.offset(q) = slice_offset(r, 0, w) + inner.offset(k)
+    // Combined: layout.offset(x) = off_t + off_w + inner.offset(k) = nested_local_partition.1 + inner.offset(k)
+}
+
+/// Full disjointness: if (t1, w1) != (t2, w2), nested offsets are distinct.
+pub proof fn lemma_nested_partition_full_disjoint(
+    layout: &LayoutSpec,
+    t1: nat, w1: nat, i: nat,
+    t2: nat, w2: nat, j: nat,
+)
+    requires
+        layout.valid(),
+        layout.is_injective(),
+        layout.rank() >= 2,
+        t1 < layout.shape[0],
+        t2 < layout.shape[0],
+        w1 < slice_layout(layout, 0, t1).shape[0],
+        w2 < slice_layout(layout, 0, t2).shape[0],
+        i < shape_size(slice_layout(&slice_layout(layout, 0, t1), 0, w1).shape),
+        j < shape_size(slice_layout(&slice_layout(layout, 0, t2), 0, w2).shape),
+        t1 != t2 || w1 != w2,
+    ensures
+        nested_local_partition(layout, t1, w1).1
+            + nested_local_partition(layout, t1, w1).0.offset(i)
+        != nested_local_partition(layout, t2, w2).1
+            + nested_local_partition(layout, t2, w2).0.offset(j),
+{
+    if t1 != t2 {
+        lemma_nested_partition_disjoint_outer(layout, t1, t2, w1, w2, i, j);
+    } else {
+        // t1 == t2 and w1 != w2
+        lemma_nested_partition_disjoint_inner(layout, t1, w1, w2, i, j);
+    }
+}
+
 } // verus!

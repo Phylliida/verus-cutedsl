@@ -1404,4 +1404,23 @@ pub fn divide_rest_exec(
     compose_exec(a, complement_result)
 }
 
+/// Blocked product at runtime: alias for logical_product_exec.
+pub fn blocked_product_exec(a: &RuntimeLayout, b: &RuntimeLayout, cosize_a: u64) -> (result: RuntimeLayout)
+    requires
+        a.wf_spec(),
+        b.wf_spec(),
+        a@.non_negative_strides(),
+        a@.shape.len() > 0,
+        cosize_a as nat == a@.cosize_nonneg(),
+        forall|i: int| 0 <= i < b@.stride.len() ==>
+            #[trigger] b@.stride[i] * (cosize_a as int) >= i64::MIN as int &&
+            b@.stride[i] * (cosize_a as int) <= i64::MAX as int,
+        shape_size(blocked_product(&a@, &b@).shape) <= u64::MAX as nat,
+    ensures
+        result.wf_spec(),
+        result@ == blocked_product(&a@, &b@),
+{
+    logical_product_exec(a, b, cosize_a)
+}
+
 } // verus!

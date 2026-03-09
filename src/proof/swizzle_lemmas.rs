@@ -831,4 +831,76 @@ pub proof fn lemma_swizzle_commute(
     lemma_bxor_commutative(mask1, mask2);
 }
 
+// ══════════════════════════════════════════════════════════════
+// Swizzle-layout composition proofs
+// ══════════════════════════════════════════════════════════════
+
+/// Swizzled offsets are injective: distinct indices give distinct swizzled offsets.
+pub proof fn lemma_swizzled_offset_injective(
+    layout: &LayoutSpec, b: nat, m: nat, s: nat,
+)
+    requires
+        swizzle_layout_admissible(layout, b, m, s),
+    ensures
+        forall|i: nat, j: nat|
+            i < layout.size() && j < layout.size() && i != j
+            ==> swizzled_offset(layout, b, m, s, i)
+                != swizzled_offset(layout, b, m, s, j),
+{
+    lemma_swizzle_preserves_injectivity(layout, b, m, s, layout.size());
+}
+
+/// Swizzle involution on layout offsets: double-swizzle recovers original offset.
+pub proof fn lemma_swizzled_offset_involution(
+    layout: &LayoutSpec, b: nat, m: nat, s: nat, idx: nat,
+)
+    requires
+        swizzle_layout_admissible(layout, b, m, s),
+        idx < layout.size(),
+    ensures
+        swizzle(swizzled_offset(layout, b, m, s, idx), b, m, s)
+            == layout.offset(idx) as nat,
+{
+    crate::proof::offset_lemmas::lemma_offset_nonneg(*layout, idx);
+    lemma_swizzle_involution(layout.offset(idx) as nat, b, m, s);
+}
+
+/// Swizzled offsets stay within the swizzle domain.
+pub proof fn lemma_swizzled_offset_bounded(
+    layout: &LayoutSpec, b: nat, m: nat, s: nat, idx: nat,
+)
+    requires
+        swizzle_layout_admissible(layout, b, m, s),
+        idx < layout.size(),
+    ensures
+        swizzled_offset(layout, b, m, s, idx) < pow2(m + s + b),
+{
+    crate::proof::offset_lemmas::lemma_offset_nonneg(*layout, idx);
+    crate::proof::offset_lemmas::lemma_offset_upper_bound(*layout, idx);
+    // offset < cosize <= pow2(m+s+b)
+    let off = layout.offset(idx) as nat;
+    assert(off < layout.cosize_nonneg());
+    assert(off < pow2(m + s + b));
+    lemma_swizzle_bounded(off, b, m, s);
+}
+
+/// Distinct swizzled bank indices imply distinct swizzled offsets.
+pub proof fn lemma_swizzled_bank_distinct(
+    layout: &LayoutSpec, b: nat, m: nat, s: nat,
+    num_banks: nat, i: nat, j: nat,
+)
+    requires
+        swizzle_layout_admissible(layout, b, m, s),
+        num_banks > 0,
+        i < layout.size(),
+        j < layout.size(),
+        swizzled_offset(layout, b, m, s, i) % num_banks
+            != swizzled_offset(layout, b, m, s, j) % num_banks,
+    ensures
+        swizzled_offset(layout, b, m, s, i)
+            != swizzled_offset(layout, b, m, s, j),
+{
+    // Contraposition: equal offsets → equal bank indices. Contrapositive is what we need.
+}
+
 } // verus!

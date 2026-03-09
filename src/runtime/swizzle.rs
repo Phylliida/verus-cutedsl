@@ -83,4 +83,33 @@ proof fn lemma_pow2_63_bound()
     reveal_with_fuel(pow2, 65);
 }
 
+/// Compute swizzled layout offset at runtime.
+/// Returns swizzle(layout.offset(idx), b, m, s).
+pub fn swizzled_offset_exec(
+    layout: &super::layout::RuntimeLayout,
+    b: u32, m: u32, s: u32,
+    idx: u64,
+) -> (result: u64)
+    requires
+        layout.wf_spec(),
+        layout@.non_negative_strides(),
+        (idx as nat) < layout@.size(),
+        layout@.offset(idx as nat) >= 0,
+        layout@.offset(idx as nat) <= i64::MAX as int,
+        swizzle_admissible(b as nat, m as nat, s as nat),
+        (m + s + b) <= 63,
+        forall|k: nat| k <= layout@.shape.len() ==>
+            #[trigger] crate::runtime::layout::partial_dot_in_range(
+                crate::shape::delinearize(idx as nat, layout@.shape),
+                layout@.stride, k),
+    ensures
+        result as nat == swizzled_offset(&layout@, b as nat, m as nat, s as nat, idx as nat),
+{
+    let off: i64 = layout.offset(idx);
+    proof {
+        crate::proof::offset_lemmas::lemma_offset_nonneg(layout@, idx as nat);
+    }
+    swizzle_exec(off as u64, b, m, s)
+}
+
 } // verus!
