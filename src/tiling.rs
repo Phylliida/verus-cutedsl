@@ -329,6 +329,43 @@ pub open spec fn register_partition(
     }
 }
 
+// ══════════════════════════════════════════════════════════════
+// Warp-level partition specs
+// ══════════════════════════════════════════════════════════════
+
+/// Warp scheduling fairness: all warps handle work from the same CTA tile.
+pub open spec fn warp_scheduling_fair(
+    cta_tile: &DividedLayout,
+    warp_layout: &LayoutSpec,
+    num_warps: nat,
+) -> bool {
+    let wp = warp_partition(cta_tile, warp_layout);
+    num_warps > 0 && num_warps == warp_layout.size()
+    && wp.tile_rank == warp_layout.shape.len()
+}
+
+/// Warp element count: number of elements assigned to each warp.
+pub open spec fn warp_elements_per_warp(
+    cta_tile: &DividedLayout,
+    warp_layout: &LayoutSpec,
+) -> nat
+    recommends divided_layout_valid(cta_tile),
+{
+    let wp = warp_partition(cta_tile, warp_layout);
+    shape_size(tile_shape(&wp))
+}
+
+/// Two-level partition disjointness: distinct (warp_id, elem_id) pairs map to distinct offsets.
+pub open spec fn warp_partition_injective(
+    cta_tile: &DividedLayout,
+    warp_layout: &LayoutSpec,
+) -> bool
+    recommends divided_layout_valid(cta_tile),
+{
+    let wp = warp_partition(cta_tile, warp_layout);
+    wp.layout.is_injective()
+}
+
 /// Which buffer slot to use at K-iteration k_iter.
 pub open spec fn double_buffer_slot(k_iter: nat, num_buffers: nat) -> nat
     recommends num_buffers > 0,

@@ -75,4 +75,133 @@ pub fn tile_valid_count_exec(tile_idx: u64, tile_size: u64, total_size: u64) -> 
     }
 }
 
+/// Generate predicate mask for a tile at runtime.
+/// Returns Vec<bool> where result[i] == tile_element_valid(tile_idx, tile_size, i, total_size).
+pub fn tile_predicate_mask_exec(
+    tile_idx: u64, tile_size: u64, total_size: u64,
+) -> (result: Vec<bool>)
+    requires
+        tile_size > 0,
+        tile_size <= u64::MAX as nat,
+        tile_idx as nat * tile_size as nat + tile_size as nat <= u64::MAX as nat,
+    ensures
+        result.len() == tile_size as nat,
+        forall|i: nat| i < tile_size as nat ==>
+            result@[i as int] == tile_predicate_mask(
+                tile_idx as nat, tile_size as nat, total_size as nat)[i as int],
+{
+    let mut mask: Vec<bool> = Vec::new();
+    let mut idx: u64 = 0;
+    while idx < tile_size
+        invariant
+            tile_size > 0,
+            tile_idx as nat * tile_size as nat + tile_size as nat <= u64::MAX as nat,
+            0 <= idx <= tile_size,
+            mask.len() == idx as nat,
+            forall|i: nat| i < idx as nat ==>
+                mask@[i as int] == tile_predicate_mask(
+                    tile_idx as nat, tile_size as nat, total_size as nat)[i as int],
+        decreases tile_size - idx,
+    {
+        let valid = tile_element_valid_exec(tile_idx, tile_size, idx, total_size);
+        mask.push(valid);
+        idx = idx + 1;
+    }
+    mask
+}
+
+/// Count valid elements in a mask at runtime.
+pub fn mask_popcount_exec(mask: &Vec<bool>) -> (result: u64)
+    requires mask.len() <= u64::MAX as nat,
+    ensures result as nat == mask_popcount(mask@),
+{
+    let mut count: u64 = 0;
+    let mut idx: u64 = 0;
+    let len = mask.len() as u64;
+    proof {
+        lemma_mask_popcount_zero_prefix(mask@, 0);
+    }
+    while idx < len
+        invariant
+            len == mask.len(),
+            0 <= idx <= len,
+            mask.len() <= u64::MAX as nat,
+            count as nat == mask_popcount(mask@.take(idx as int)),
+            count <= idx,
+        decreases len - idx,
+    {
+        proof {
+            lemma_mask_popcount_step(mask@, idx as nat);
+        }
+        if mask[idx as usize] {
+            count = count + 1;
+        }
+        idx = idx + 1;
+    }
+    proof {
+        assert(mask@.take(len as int) =~= mask@);
+    }
+    count
+}
+
+/// Check if a write index is safe under predication.
+pub fn store_predication_safe_exec(
+    tile_idx: u64, tile_size: u64, total_size: u64, write_idx: u64,
+) -> (result: bool)
+    requires
+        tile_size > 0,
+        tile_idx as nat * tile_size as nat + tile_size as nat <= u64::MAX as nat,
+    ensures
+        result == store_predication_safe(
+            tile_idx as nat, tile_size as nat, total_size as nat, write_idx as nat),
+{
+    if write_idx < tile_size {
+        tile_element_valid_exec(tile_idx, tile_size, write_idx, total_size)
+    } else {
+        false
+    }
+}
+
+/// Compute the global index for a tile element (for bounds-checked store).
+pub fn tile_global_index_exec(
+    tile_idx: u64, tile_size: u64, elem_idx: u64,
+) -> (result: u64)
+    requires
+        tile_size > 0,
+        elem_idx < tile_size,
+        tile_idx as nat * tile_size as nat + elem_idx as nat <= u64::MAX as nat,
+    ensures
+        result as nat == tile_idx as nat * tile_size as nat + elem_idx as nat,
+{
+    proof {
+        vstd::arithmetic::mul::lemma_mul_is_commutative(tile_idx as int, tile_size as int);
+    }
+    tile_idx * tile_size + elem_idx
+}
+
+/// Helper: mask_popcount of an empty prefix is 0.
+proof fn lemma_mask_popcount_zero_prefix(s: Seq<bool>, n: nat)
+    requires n == 0,
+    ensures mask_popcount(s.take(n as int)) == 0,
+{
+    assert(s.take(0) =~= Seq::<bool>::empty());
+    assert(Seq::<bool>::empty().len() == 0);
+}
+
+/// Helper: mask_popcount step — extending by one element.
+proof fn lemma_mask_popcount_step(s: Seq<bool>, k: nat)
+    requires k < s.len(),
+    ensures
+        mask_popcount(s.take(k as int + 1)) ==
+            mask_popcount(s.take(k as int)) + (if s[k as int] { 1nat } else { 0nat }),
+    decreases k,
+{
+    let prefix = s.take(k as int + 1);
+    assert(prefix.len() == k + 1);
+    assert(prefix.last() == s[k as int]) by {
+        assert(prefix[k as int] == s[k as int]);
+    };
+    assert(prefix.drop_last() =~= s.take(k as int));
+}
+
 } // verus!

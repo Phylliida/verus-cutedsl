@@ -893,4 +893,147 @@ pub proof fn lemma_tiled_mac_consistent(
     };
 }
 
+// ══════════════════════════════════════════════════════════════
+// Epilogue store proofs (Feature 4 Round 3)
+// ══════════════════════════════════════════════════════════════
+
+/// Epilogue store in-bounds when C tensor is valid and indices in range.
+pub proof fn lemma_epilogue_store_in_bounds(
+    c_layout: &LayoutSpec, c_data_size: nat, i: nat, j: nat,
+)
+    requires
+        tensor_valid(&TensorSpec { layout: *c_layout, data_size: c_data_size }),
+        c_layout.rank() == 2,
+        i < c_layout.shape[0],
+        j < c_layout.shape[1],
+    ensures
+        epilogue_store_in_bounds(c_layout, c_data_size, i, j),
+{
+    let s0 = c_layout.shape[0];
+    let s1 = c_layout.shape[1];
+    assert(c_layout.shape =~= seq![s0, s1]) by {
+        assert(c_layout.shape.len() == 2);
+    };
+    lemma_shape_size_2(s0, s1);
+    let x = i + j * s0;
+    assert(x < s0 * s1) by (nonlinear_arith)
+        requires i < s0, j < s1, x == i + j * s0, s0 > 0, s1 > 0;
+
+    // Bridge x to (i,j) via div/mod
+    vstd::arithmetic::mul::lemma_mul_is_commutative(j as int, s0 as int);
+    assert(x == i + s0 * j);
+    crate::proof::integer_helpers::lemma_div_mod_decompose(i, j, s0);
+    assert(x % s0 == i);
+    assert(x / s0 == j);
+
+    // offset(x) = coords[0]*stride[0] + coords[1]*stride[1]
+    lemma_offset_rank2(c_layout, x);
+    let coords = delinearize(x, c_layout.shape);
+    // coords[0] = x % s0 = i
+    assert(coords[0] == i);
+    // coords[1]: delinearize second level
+    assert(c_layout.shape.first() == s0);
+    assert(c_layout.shape.skip(1) =~= seq![s1]);
+    assert(seq![s1].first() == s1);
+    assert(seq![s1].skip(1) =~= Seq::<nat>::empty());
+    let inner = delinearize(x / s0, seq![s1]);
+    assert(x / s0 == j);
+    assert(j % s1 == j) by {
+        vstd::arithmetic::div_mod::lemma_small_mod(j, s1);
+    };
+    assert(inner =~= seq![j % s1].add(delinearize(j / s1, Seq::<nat>::empty())));
+    assert(coords =~= seq![i].add(inner));
+    assert(coords[1] == j);
+
+    // Now: offset(x) = i*stride[0] + j*stride[1] = gemm_c_offset(c_layout, i, j)
+    assert(c_layout.offset(x) == gemm_c_offset(c_layout, i, j));
+
+    // offset bounds
+    crate::proof::offset_lemmas::lemma_offset_nonneg(*c_layout, x);
+    crate::proof::offset_lemmas::lemma_offset_upper_bound(*c_layout, x);
+}
+
+/// Predicated epilogue is correct: safe iff global indices are within bounds.
+pub proof fn lemma_epilogue_predication_correct(
+    m: nat, n: nat,
+    ti: nat, tj: nat, ei: nat, ej: nat,
+    bm: nat, bn: nat,
+)
+    requires bm > 0, bn > 0,
+    ensures
+        epilogue_predicated_store_safe(m, n, ti, tj, ei, ej, bm, bn)
+        <==> (ti * bm + ei < m && tj * bn + ej < n),
+{
+    // Direct from definition
+}
+
+/// CTA epilogue correctness: all valid stores in a CTA are in-bounds.
+pub proof fn lemma_epilogue_cta_correct(
+    c_layout: &LayoutSpec, c_data_size: nat,
+    m: nat, n: nat, bm: nat, bn: nat,
+    ti: nat, tj: nat,
+)
+    requires
+        tensor_valid(&TensorSpec { layout: *c_layout, data_size: c_data_size }),
+        c_layout.rank() == 2,
+        m <= c_layout.shape[0],
+        n <= c_layout.shape[1],
+        bm > 0, bn > 0,
+    ensures
+        epilogue_cta_correct(c_layout, c_data_size, m, n, bm, bn, ti, tj),
+{
+    assert forall|ei: nat, ej: nat|
+        ei < bm && ej < bn
+        && epilogue_predicated_store_safe(m, n, ti, tj, ei, ej, bm, bn)
+    implies
+        epilogue_store_in_bounds(c_layout, c_data_size, ti * bm + ei, tj * bn + ej)
+    by {
+        let gi = ti * bm + ei;
+        let gj = tj * bn + ej;
+        // predication safe → gi < m <= shape[0] and gj < n <= shape[1]
+        lemma_epilogue_predication_correct(m, n, ti, tj, ei, ej, bm, bn);
+        assert(gi < m);
+        assert(gj < n);
+        assert(gi < c_layout.shape[0]);
+        assert(gj < c_layout.shape[1]);
+        lemma_epilogue_store_in_bounds(c_layout, c_data_size, gi, gj);
+    };
+}
+
+/// Cross-CTA epilogue disjointness: different CTAs write different C elements.
+pub proof fn lemma_epilogue_cross_cta_disjoint(
+    c_layout: &LayoutSpec, m: nat, n: nat, bm: nat, bn: nat,
+)
+    requires
+        c_layout.valid(),
+        c_layout.rank() == 2,
+        c_layout.is_injective(),
+        m <= c_layout.shape[0],
+        n <= c_layout.shape[1],
+        bm > 0, bn > 0,
+    ensures
+        epilogue_cross_cta_disjoint(c_layout, m, n, bm, bn),
+{
+    assert forall|ti1: nat, tj1: nat, ei1: nat, ej1: nat,
+                 ti2: nat, tj2: nat, ei2: nat, ej2: nat|
+        ei1 < bm && ej1 < bn && ei2 < bm && ej2 < bn
+        && (ti1 != ti2 || tj1 != tj2)
+        && epilogue_predicated_store_safe(m, n, ti1, tj1, ei1, ej1, bm, bn)
+        && epilogue_predicated_store_safe(m, n, ti2, tj2, ei2, ej2, bm, bn)
+    implies
+        #[trigger] gemm_c_tile_offset(c_layout, ti1, tj1, ei1, ej1, bm, bn)
+        != #[trigger] gemm_c_tile_offset(c_layout, ti2, tj2, ei2, ej2, bm, bn)
+    by {
+        let gi1 = ti1 * bm + ei1;
+        let gj1 = tj1 * bn + ej1;
+        let gi2 = ti2 * bm + ei2;
+        let gj2 = tj2 * bn + ej2;
+        lemma_epilogue_predication_correct(m, n, ti1, tj1, ei1, ej1, bm, bn);
+        lemma_epilogue_predication_correct(m, n, ti2, tj2, ei2, ej2, bm, bn);
+        // gi1 < m, gj1 < n, gi2 < m, gj2 < n
+        lemma_gemm_tiled_c_disjoint(c_layout, m, n, bm, bn,
+            ti1, tj1, ei1, ej1, ti2, tj2, ei2, ej2);
+    };
+}
+
 } // verus!

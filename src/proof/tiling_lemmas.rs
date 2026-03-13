@@ -1702,6 +1702,102 @@ pub proof fn lemma_warp_partition_valid(
     lemma_divide_rank(&cta_tile.layout, warp_layout);
 }
 
+/// Warp partition preserves total size: wp.layout.size() == cta_tile.layout.size().
+pub proof fn lemma_warp_partition_size(
+    cta_tile: &DividedLayout,
+    warp_layout: &LayoutSpec,
+)
+    requires
+        divided_layout_valid(cta_tile),
+        divide_admissible(&cta_tile.layout, warp_layout),
+    ensures
+        warp_partition(cta_tile, warp_layout).layout.size() == cta_tile.layout.size(),
+{
+    crate::proof::divide_lemmas::lemma_divide_size(&cta_tile.layout, warp_layout);
+}
+
+/// Elements per warp * num warps == CTA tile total size.
+/// tile_size(wp) * num_tiles_divided(wp) == wp.layout.size() == cta.layout.size().
+pub proof fn lemma_warp_elements_times_warps(
+    cta_tile: &DividedLayout,
+    warp_layout: &LayoutSpec,
+)
+    requires
+        divided_layout_valid(cta_tile),
+        divide_admissible(&cta_tile.layout, warp_layout),
+    ensures ({
+        let wp = warp_partition(cta_tile, warp_layout);
+        tile_size(&wp) * num_tiles_divided(&wp) == cta_tile.layout.size()
+    }),
+{
+    let wp = warp_partition(cta_tile, warp_layout);
+    lemma_warp_partition_valid(cta_tile, warp_layout);
+    lemma_warp_partition_size(cta_tile, warp_layout);
+    // wp.layout.size() == size(tile_shape ++ rest_shape) == size(tile_shape) * size(rest_shape)
+    // = tile_size(wp) * num_tiles_divided(wp)
+    let s = wp.layout.shape;
+    let k = wp.tile_rank;
+    assert(tile_shape(&wp) =~= s.take(k as int));
+    assert(rest_shape(&wp) =~= s.skip(k as int));
+    // Need shape_valid for shape_size_split
+    assert(wp.layout.valid());
+    crate::runtime::shape_helpers::lemma_shape_size_split(s, k);
+}
+
+/// Nested partition produces a valid residual layout.
+pub proof fn lemma_nested_partition_valid(
+    tensor: &LayoutSpec,
+    id1: nat, id2: nat,
+)
+    requires
+        tensor.valid(),
+        tensor.rank() >= 2,
+        id1 < tensor.shape[0],
+        id2 < slice_layout(tensor, 0, id1).shape[0],
+    ensures
+        nested_local_partition(tensor, id1, id2).0.valid(),
+{
+    crate::proof::slice_lemmas::lemma_slice_valid(tensor, 0, id1);
+    let r = slice_layout(tensor, 0, id1);
+    crate::proof::slice_lemmas::lemma_slice_mode0(tensor, id1);
+    assert(r.shape =~= tensor.shape.skip(1));
+    assert(r.rank() >= 1);
+    crate::proof::slice_lemmas::lemma_slice_valid(&r, 0, id2);
+}
+
+/// Nested partition offset is non-negative (when strides are non-negative).
+pub proof fn lemma_nested_partition_offset_nonneg(
+    tensor: &LayoutSpec,
+    id1: nat, id2: nat,
+)
+    requires
+        tensor.valid(),
+        tensor.non_negative_strides(),
+        tensor.rank() >= 2,
+        id1 < tensor.shape[0],
+        id2 < slice_layout(tensor, 0, id1).shape[0],
+    ensures
+        nested_local_partition(tensor, id1, id2).1 >= 0,
+{
+    // off1 = slice_offset(tensor, 0, id1) = id1 * stride[0] >= 0
+    crate::proof::slice_lemmas::lemma_slice_mode0(tensor, id1);
+    let off1 = slice_offset(tensor, 0, id1);
+    assert(off1 == (id1 as int) * tensor.stride[0]);
+    assert(tensor.stride[0] >= 0);
+    assert(off1 >= 0) by (nonlinear_arith)
+        requires id1 >= 0nat, tensor.stride[0] >= 0int, off1 == (id1 as int) * tensor.stride[0];
+
+    // off2 = slice_offset(r, 0, id2) = id2 * r.stride[0] >= 0
+    let r = slice_layout(tensor, 0, id1);
+    crate::proof::slice_lemmas::lemma_slice_mode0(&r, id2);
+    lemma_slice_non_negative_strides(tensor, id1);
+    let off2 = slice_offset(&r, 0, id2);
+    assert(off2 == (id2 as int) * r.stride[0]);
+    assert(r.stride[0] >= 0);
+    assert(off2 >= 0) by (nonlinear_arith)
+        requires id2 >= 0nat, r.stride[0] >= 0int, off2 == (id2 as int) * r.stride[0];
+}
+
 /// Register partition produces a valid DividedLayout.
 pub proof fn lemma_register_partition_valid(
     warp_tile: &DividedLayout,

@@ -356,4 +356,59 @@ pub open spec fn gemm_c_tile_offset(
     gemm_c_offset(c_layout, ti * bm + ei, tj * bn + ej)
 }
 
+// ══════════════════════════════════════════════════════════════
+// Epilogue store specs
+// ══════════════════════════════════════════════════════════════
+
+/// Epilogue store is in-bounds: the C offset for (i,j) is within data_size.
+pub open spec fn epilogue_store_in_bounds(
+    c_layout: &LayoutSpec, c_data_size: nat,
+    i: nat, j: nat,
+) -> bool
+    recommends c_layout.rank() == 2,
+{
+    let off = gemm_c_offset(c_layout, i, j);
+    off >= 0 && off < c_data_size as int
+}
+
+/// Predicated epilogue: only store if (i,j) is within (m,n).
+pub open spec fn epilogue_predicated_store_safe(
+    m: nat, n: nat,
+    ti: nat, tj: nat, ei: nat, ej: nat,
+    bm: nat, bn: nat,
+) -> bool {
+    let gi = ti * bm + ei;
+    let gj = tj * bn + ej;
+    gi < m && gj < n
+}
+
+/// Full epilogue correctness: for all valid elements in a CTA tile,
+/// stores are in-bounds and write distinct locations.
+pub open spec fn epilogue_cta_correct(
+    c_layout: &LayoutSpec, c_data_size: nat,
+    m: nat, n: nat, bm: nat, bn: nat,
+    ti: nat, tj: nat,
+) -> bool
+    recommends c_layout.rank() == 2, bm > 0, bn > 0,
+{
+    forall|ei: nat, ej: nat| ei < bm && ej < bn
+        && epilogue_predicated_store_safe(m, n, ti, tj, ei, ej, bm, bn)
+        ==> epilogue_store_in_bounds(c_layout, c_data_size,
+                ti * bm + ei, tj * bn + ej)
+}
+
+/// Cross-CTA epilogue disjointness: stores from different CTAs don't conflict.
+pub open spec fn epilogue_cross_cta_disjoint(
+    c_layout: &LayoutSpec, m: nat, n: nat, bm: nat, bn: nat,
+) -> bool {
+    forall|ti1: nat, tj1: nat, ei1: nat, ej1: nat,
+           ti2: nat, tj2: nat, ei2: nat, ej2: nat|
+        ei1 < bm && ej1 < bn && ei2 < bm && ej2 < bn
+        && (ti1 != ti2 || tj1 != tj2)
+        && epilogue_predicated_store_safe(m, n, ti1, tj1, ei1, ej1, bm, bn)
+        && epilogue_predicated_store_safe(m, n, ti2, tj2, ei2, ej2, bm, bn)
+        ==> #[trigger] gemm_c_tile_offset(c_layout, ti1, tj1, ei1, ej1, bm, bn)
+            != #[trigger] gemm_c_tile_offset(c_layout, ti2, tj2, ei2, ej2, bm, bn)
+}
+
 } // verus!
