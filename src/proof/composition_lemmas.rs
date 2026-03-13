@@ -565,4 +565,60 @@ pub proof fn lemma_compose_associative(a: LayoutSpec, b: LayoutSpec, c: LayoutSp
     };
 }
 
+// ══════════════════════════════════════════════════════════════
+// Composition identity laws
+// ══════════════════════════════════════════════════════════════
+
+/// Composing A with the identity layout on A's first mode yields a rank-1 projection.
+/// compose(A, make_identity(A.shape[0])).shape =~= seq![A.shape[0]]
+/// compose(A, make_identity(A.shape[0])).stride =~= seq![A.stride[0]]
+pub proof fn lemma_compose_identity_right(a: LayoutSpec)
+    requires
+        a.valid(),
+        a.shape.len() > 0,
+    ensures
+        compose(a, make_identity(a.shape.first())).shape =~= seq![a.shape.first()],
+        compose(a, make_identity(a.shape.first())).stride =~= seq![a.stride.first()],
+{
+    let m = a.shape.first();
+    let id = make_identity(m);
+    // id = { shape: seq![m], stride: seq![1] }
+    // compose(a, id) with id.shape.len() == 1 → compose_single_mode(a, m, 1)
+    // Since b_stride == 1 && b_shape (m) <= a.shape.first() (m): result = (m):(a.stride[0])
+    assert(id.shape.len() == 1);
+    assert(id.shape.first() == m);
+    assert(id.stride.first() == 1);
+}
+
+/// Composing the identity layout with A preserves offsets.
+/// For all x < a.size(), compose(make_identity(M), a).offset(x) == a.offset(x),
+/// provided a's image fits within [0, M).
+pub proof fn lemma_compose_identity_left(a: LayoutSpec, m: nat)
+    requires
+        a.valid(),
+        a.shape.len() > 0,
+        a.non_negative_strides(),
+        m > 0,
+        // a's image fits within identity's domain
+        forall|x: nat| x < a.size() ==> a.offset(x) >= 0 && a.offset(x) < m as int,
+    ensures
+        forall|x: nat| x < a.size() ==>
+            compose(make_identity(m), a).offset(x) == a.offset(x),
+{
+    let id = make_identity(m);
+    // id.valid() with shape seq![m], stride seq![1]
+    assert(id.valid());
+    assert(id.shape.len() > 0);
+
+    assert forall|x: nat| x < a.size()
+    implies compose(id, a).offset(x) == a.offset(x)
+    by {
+        // lemma_compose_correct: compose(id, a).offset(x) == id.offset(a.offset(x))
+        // Requires: a.offset(x) >= 0 and a.offset(x) < id.shape.first() = m
+        lemma_compose_correct(id, a, x);
+        // id.offset(k) == k for k < m
+        crate::proof::injectivity_lemmas::lemma_column_major_offset_is_identity(id.shape, a.offset(x) as nat);
+    };
+}
+
 } // verus!

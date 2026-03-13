@@ -1018,4 +1018,150 @@ pub proof fn lemma_product_cosize(a: &LayoutSpec, b: &LayoutSpec)
     {};
 }
 
+// ══════════════════════════════════════════════════════════════
+// Algebra laws: scalar identity, nonneg strides
+// ══════════════════════════════════════════════════════════════
+
+/// scalar_layout() is valid with size 1 and cosize 1.
+pub proof fn lemma_scalar_layout_valid()
+    ensures
+        scalar_layout().valid(),
+        scalar_layout().non_negative_strides(),
+        scalar_layout().cosize_nonneg() == 1,
+        scalar_layout().size() == 1,
+{
+    let s = scalar_layout();
+    crate::proof::shape_lemmas::lemma_shape_size_single(1);
+    assert(s.shape.len() == 1);
+    assert(s.stride.len() == 1);
+    assert(s.shape[0] > 0);
+    assert(s.stride[0] >= 0);
+    // cosize = dot(shape_minus_one, stride) + 1
+    // shape_minus_one(seq![1]) = seq![0], stride = seq![0]
+    // dot(seq![0], seq![0]) = 0, cosize = 1
+    crate::proof::offset_lemmas::lemma_cosize_equals_dot_plus_one(s);
+    crate::runtime::layout::lemma_shape_minus_one_len(s.shape);
+    crate::runtime::layout::lemma_shape_minus_one_index(s.shape, 0);
+    let smo = shape_minus_one(s.shape);
+    assert(smo.len() == 1);
+    assert(smo[0] == 0nat);
+    assert(smo =~= seq![0nat]);
+    // dot(seq![0], seq![0]) = 0*0 + dot(empty, empty) = 0
+    assert(smo.first() == 0nat);
+    assert(s.stride.first() == 0int);
+    assert(smo.skip(1) =~= Seq::<nat>::empty());
+    assert(s.stride.skip(1) =~= Seq::<int>::empty());
+    assert(dot_product_nat_int(Seq::<nat>::empty(), Seq::<int>::empty()) == 0);
+    assert((0nat as int) * 0int == 0int);
+    assert(dot_product_nat_int(smo, s.stride)
+        == (smo.first() as int) * s.stride.first()
+           + dot_product_nat_int(smo.skip(1), s.stride.skip(1)));
+    assert(dot_product_nat_int(smo, s.stride) == 0);
+}
+
+/// scalar_layout() is injective and bijective onto [0,1).
+pub proof fn lemma_scalar_layout_identity()
+    ensures
+        scalar_layout().is_injective(),
+        scalar_layout().is_bijective_upto(1),
+{
+    lemma_scalar_layout_valid();
+    let s = scalar_layout();
+    // Injective: vacuously true (only 1 element, size == 1)
+    assert(s.is_injective()) by {
+        assert forall|i: nat, j: nat|
+            i < s.size() && j < s.size() && i != j
+        implies s.offset(i) != s.offset(j)
+        by {
+            // size == 1, so can't have i != j with both < 1
+        };
+    };
+    // Surjective: offset(0) == 0
+    crate::proof::offset_lemmas::lemma_offset_zero(s);
+    assert(s.is_surjective_upto(1)) by {
+        assert(0nat < s.size() && s.offset(0) == 0int);
+    };
+}
+
+/// Product with scalar_layout on the right preserves size and offsets.
+pub proof fn lemma_product_identity_right(a: &LayoutSpec)
+    requires
+        a.valid(),
+        a.non_negative_strides(),
+        a.shape.len() > 0,
+    ensures
+        logical_product(a, &scalar_layout()).size() == a.size(),
+        forall|x: nat| x < a.size() ==>
+            logical_product(a, &scalar_layout()).offset(x) == a.offset(x),
+{
+    let s = scalar_layout();
+    lemma_scalar_layout_valid();
+    lemma_product_size(a, &s);
+    // size = a.size() * 1 = a.size()
+    vstd::arithmetic::mul::lemma_mul_basics(a.size() as int);
+
+    let p = logical_product(a, &s);
+    lemma_product_valid(a, &s);
+
+    assert forall|x: nat| x < a.size()
+    implies p.offset(x) == a.offset(x)
+    by {
+        lemma_product_offset(a, &s, x);
+        // offset(x) = a.offset(x % sa) + cosize(a) * s.offset(x / sa)
+        // sa = a.size(), so x % sa = x, x / sa = 0
+        assert(x % a.size() == x) by {
+            vstd::arithmetic::div_mod::lemma_small_mod(x, a.size());
+        };
+        assert(x / a.size() == 0) by {
+            // x < a.size(), x + a.size() * 0 == x, so x / a.size() == 0
+            crate::proof::integer_helpers::lemma_div_mod_decompose(x, 0, a.size());
+            vstd::arithmetic::mul::lemma_mul_basics(a.size() as int);
+        };
+        crate::proof::offset_lemmas::lemma_offset_zero(s);
+        vstd::arithmetic::mul::lemma_mul_basics(a.cosize_nonneg() as int);
+    };
+}
+
+/// Product of nonneg-stride layouts has nonneg strides.
+pub proof fn lemma_product_nonneg_strides(a: &LayoutSpec, b: &LayoutSpec)
+    requires
+        product_admissible(a, b),
+        a.non_negative_strides(),
+        b.non_negative_strides(),
+    ensures
+        logical_product(a, b).non_negative_strides(),
+{
+    lemma_product_cosize(a, b);
+}
+
+/// Raked product of nonneg-stride layouts has nonneg strides.
+pub proof fn lemma_raked_product_nonneg_strides(a: &LayoutSpec, b: &LayoutSpec)
+    requires
+        raked_product_admissible(a, b),
+        a.non_negative_strides(),
+        b.non_negative_strides(),
+    ensures
+        raked_product(a, b).non_negative_strides(),
+{
+    let cb = b.cosize_nonneg();
+    let r = raked_product(a, b);
+    assert forall|i: int| 0 <= i < r.stride.len()
+    implies #[trigger] r.stride[i] >= 0
+    by {
+        if i < a.stride.len() as int {
+            // scaled A stride: a.stride[i] * cb
+            assert(r.stride[i] == a.stride[i] * (cb as int));
+            assert(a.stride[i] >= 0);
+            assert(cb as int >= 0);
+            assert(a.stride[i] * (cb as int) >= 0) by (nonlinear_arith)
+                requires a.stride[i] >= 0, cb as int >= 0;
+        } else {
+            // B stride unchanged
+            let j = i - a.stride.len() as int;
+            assert(r.stride[i] == b.stride[j]);
+            assert(b.stride[j] >= 0);
+        }
+    };
+}
+
 } // verus!

@@ -66,4 +66,10 @@ pub open spec fn raked_product_admissible(a: &LayoutSpec, b: &LayoutSpec) -> boo
     &&& b.shape.len() > 0
 }
 
+/// Scalar layout: the multiplicative identity for product.
+/// A single element at stride 0. logical_product(a, scalar_layout()) ≈ a.
+pub open spec fn scalar_layout() -> LayoutSpec {
+    LayoutSpec { shape: seq![1nat], stride: seq![0int] }
+}
+
 } // verus!
