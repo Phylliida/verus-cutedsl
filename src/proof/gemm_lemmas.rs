@@ -8,6 +8,8 @@ use crate::swizzle::*;
 use crate::contraction::*;
 use crate::proof::shape_lemmas::*;
 use crate::proof::tiling_lemmas::*;
+use verus_algebra::traits::*;
+use verus_algebra::summation::sum;
 
 verus! {
 
@@ -891,6 +893,187 @@ pub proof fn lemma_tiled_mac_consistent(
         // RHS = (gemm_a_offset(a, i, 0 + (k_start + idx)), gemm_b_offset(b, 0 + (k_start + idx), j))
         // These are identical.
     };
+}
+
+// ══════════════════════════════════════════════════════════════
+// Data-level MAC correctness proofs (Feature 1 Round 3)
+// ══════════════════════════════════════════════════════════════
+
+/// MAC value is zero for empty range.
+pub proof fn lemma_mac_empty<R: Ring>(
+    a_val: spec_fn(nat, nat) -> R,
+    b_val: spec_fn(nat, nat) -> R,
+    i: nat, j: nat, k: nat,
+)
+    ensures
+        gemm_tiled_mac_value::<R>(a_val, b_val, i, j, k, k).eqv(R::zero()),
+{
+    verus_algebra::summation::lemma_sum_empty::<R>(
+        |ki: int| a_val(i, ki as nat).mul(b_val(ki as nat, j)),
+        k as int, k as int,
+    );
+}
+
+/// MAC single element: sum over [k, k+1) equals a_val(i,k) * b_val(k,j).
+pub proof fn lemma_mac_single<R: Ring>(
+    a_val: spec_fn(nat, nat) -> R,
+    b_val: spec_fn(nat, nat) -> R,
+    i: nat, j: nat, k: nat,
+)
+    ensures
+        gemm_tiled_mac_value::<R>(a_val, b_val, i, j, k, k + 1)
+            .eqv(a_val(i, k).mul(b_val(k, j))),
+{
+    verus_algebra::summation::lemma_sum_single::<R>(
+        |ki: int| a_val(i, ki as nat).mul(b_val(ki as nat, j)),
+        k as int,
+    );
+}
+
+/// MAC split: full MAC splits at any k_mid.
+/// gemm_mac_value(0, k_size) ≡ tiled_mac(0, k_mid) + tiled_mac(k_mid, k_size).
+pub proof fn lemma_mac_split<R: Ring>(
+    a_val: spec_fn(nat, nat) -> R,
+    b_val: spec_fn(nat, nat) -> R,
+    i: nat, j: nat, k_size: nat, k_mid: nat,
+)
+    requires
+        k_mid <= k_size,
+    ensures
+        gemm_mac_value::<R>(a_val, b_val, i, j, k_size).eqv(
+            gemm_tiled_mac_value::<R>(a_val, b_val, i, j, 0, k_mid).add(
+                gemm_tiled_mac_value::<R>(a_val, b_val, i, j, k_mid, k_size))),
+{
+    verus_algebra::summation::lemma_sum_split::<R>(
+        |ki: int| a_val(i, ki as nat).mul(b_val(ki as nat, j)),
+        0int, k_mid as int, k_size as int,
+    );
+}
+
+/// Predicated MAC equals real MAC when k_end <= k_size (all valid).
+/// When every element in [k_start, k_end) is valid (k < k_size), the predicated
+/// MAC equals the tiled MAC (the conditional is always true).
+pub proof fn lemma_predicated_mac_all_valid<R: Ring>(
+    a_val: spec_fn(nat, nat) -> R,
+    b_val: spec_fn(nat, nat) -> R,
+    i: nat, j: nat, k_start: nat, k_end: nat, k_size: nat,
+)
+    requires
+        k_start <= k_end,
+        k_end <= k_size,
+    ensures
+        gemm_predicated_mac_value::<R>(a_val, b_val, i, j, k_start, k_end, k_size).eqv(
+            gemm_tiled_mac_value::<R>(a_val, b_val, i, j, k_start, k_end)),
+{
+    // All elements in [k_start, k_end) have k < k_size, so predicate is always true.
+    // The two summands are pointwise eqv → sum congruence.
+    let f = |k: int|
+        if (k as nat) < k_size {
+            a_val(i, k as nat).mul(b_val(k as nat, j))
+        } else {
+            R::zero()
+        };
+    let g = |k: int| a_val(i, k as nat).mul(b_val(k as nat, j));
+
+    assert forall|k: int| k_start as int <= k < k_end as int
+    implies (#[trigger] f(k)).eqv(g(k))
+    by {
+        // k >= k_start >= 0 and k < k_end <= k_size, so (k as nat) < k_size
+        assert((k as nat) < k_size);
+        // f(k) == g(k) definitionally, so eqv by reflexivity
+        R::axiom_eqv_reflexive(g(k));
+    };
+    verus_algebra::summation::lemma_sum_congruence::<R>(
+        f, g, k_start as int, k_end as int,
+    );
+}
+
+/// Predicated MAC for tail beyond k_size: all terms are zero.
+pub proof fn lemma_predicated_mac_tail_zero<R: Ring>(
+    a_val: spec_fn(nat, nat) -> R,
+    b_val: spec_fn(nat, nat) -> R,
+    i: nat, j: nat, k_start: nat, k_end: nat, k_size: nat,
+)
+    requires
+        k_size <= k_start,
+        k_start <= k_end,
+    ensures
+        gemm_predicated_mac_value::<R>(a_val, b_val, i, j, k_start, k_end, k_size)
+            .eqv(R::zero()),
+{
+    // All elements have k >= k_start >= k_size, so predicate is always false → zero terms.
+    let f = |k: int|
+        if (k as nat) < k_size {
+            a_val(i, k as nat).mul(b_val(k as nat, j))
+        } else {
+            R::zero()
+        };
+    let z = |k: int| R::zero();
+
+    assert forall|k: int| k_start as int <= k < k_end as int
+    implies (#[trigger] f(k)).eqv(z(k))
+    by {
+        assert(!((k as nat) < k_size));
+        R::axiom_eqv_reflexive(R::zero());
+    };
+    verus_algebra::summation::lemma_sum_congruence::<R>(
+        f, z, k_start as int, k_end as int,
+    );
+    // sum(f) ≡ sum(z). Now show sum(z) ≡ zero.
+    if k_start < k_end {
+        lemma_sum_of_zeros::<R>(z, k_start as int, k_end as int);
+        R::axiom_eqv_transitive(
+            sum::<R>(f, k_start as int, k_end as int),
+            sum::<R>(z, k_start as int, k_end as int),
+            R::zero(),
+        );
+    } else {
+        // k_start == k_end, sum over empty range is zero by definition
+        verus_algebra::summation::lemma_sum_empty::<R>(f, k_start as int, k_end as int);
+    }
+}
+
+/// Helper: sum of constant zero is zero.
+proof fn lemma_sum_of_zeros<R: Ring>(
+    z: spec_fn(int) -> R,
+    lo: int, hi: int,
+)
+    requires
+        lo <= hi,
+        forall|k: int| lo <= k < hi ==> (#[trigger] z(k)).eqv(R::zero()),
+    ensures
+        sum::<R>(z, lo, hi).eqv(R::zero()),
+    decreases hi - lo,
+{
+    if lo == hi {
+        verus_algebra::summation::lemma_sum_empty::<R>(z, lo, hi);
+    } else {
+        verus_algebra::summation::lemma_sum_peel_last::<R>(z, lo, hi);
+        // sum(z, lo, hi) ≡ sum(z, lo, hi-1) + z(hi-1)
+        lemma_sum_of_zeros::<R>(z, lo, hi - 1);
+        // sum(z, lo, hi-1) ≡ zero
+        // z(hi-1) ≡ zero
+        assert(z(hi - 1).eqv(R::zero()));
+        // zero + zero ≡ zero
+        R::axiom_add_zero_right(R::zero());
+        // sum(z, lo, hi) ≡ sum(z, lo, hi-1) + z(hi-1) ≡ zero + zero ≡ zero
+        // Need: sum(z, lo, hi-1).add(z(hi-1)) ≡ zero.add(zero) ≡ zero
+        verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence::<R>(
+            sum::<R>(z, lo, hi - 1), R::zero(),
+            z(hi - 1), R::zero(),
+        );
+        // sum(z, lo, hi-1).add(z(hi-1)) ≡ zero.add(zero)
+        R::axiom_eqv_transitive(
+            sum::<R>(z, lo, hi),
+            sum::<R>(z, lo, hi - 1).add(z(hi - 1)),
+            R::zero().add(R::zero()),
+        );
+        R::axiom_eqv_transitive(
+            sum::<R>(z, lo, hi),
+            R::zero().add(R::zero()),
+            R::zero(),
+        );
+    }
 }
 
 // ══════════════════════════════════════════════════════════════

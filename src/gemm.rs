@@ -3,6 +3,8 @@ use crate::layout::*;
 use crate::predication::*;
 use crate::tiling::*;
 use crate::swizzle::*;
+use verus_algebra::traits::*;
+use verus_algebra::summation::sum;
 
 verus! {
 
@@ -354,6 +356,44 @@ pub open spec fn gemm_c_tile_offset(
     recommends c_layout.rank() == 2,
 {
     gemm_c_offset(c_layout, ti * bm + ei, tj * bn + ej)
+}
+
+// ══════════════════════════════════════════════════════════════
+// Data-level MAC value specs
+// ══════════════════════════════════════════════════════════════
+
+/// Abstract GEMM element: C[i,j] = sum_k (a_val(i,k) * b_val(k,j)).
+/// a_val and b_val are abstract data accessors.
+pub open spec fn gemm_mac_value<R: Ring>(
+    a_val: spec_fn(nat, nat) -> R,
+    b_val: spec_fn(nat, nat) -> R,
+    i: nat, j: nat, k_size: nat,
+) -> R {
+    sum::<R>(|k: int| a_val(i, k as nat).mul(b_val(k as nat, j)), 0, k_size as int)
+}
+
+/// Tiled MAC value: sum over one K-tile [k_start, k_end).
+pub open spec fn gemm_tiled_mac_value<R: Ring>(
+    a_val: spec_fn(nat, nat) -> R,
+    b_val: spec_fn(nat, nat) -> R,
+    i: nat, j: nat, k_start: nat, k_end: nat,
+) -> R {
+    sum::<R>(|k: int| a_val(i, k as nat).mul(b_val(k as nat, j)), k_start as int, k_end as int)
+}
+
+/// Predicated MAC: masked elements contribute zero.
+pub open spec fn gemm_predicated_mac_value<R: Ring>(
+    a_val: spec_fn(nat, nat) -> R,
+    b_val: spec_fn(nat, nat) -> R,
+    i: nat, j: nat, k_start: nat, k_end: nat, k_size: nat,
+) -> R {
+    sum::<R>(|k: int|
+        if (k as nat) < k_size {
+            a_val(i, k as nat).mul(b_val(k as nat, j))
+        } else {
+            R::zero()
+        },
+        k_start as int, k_end as int)
 }
 
 // ══════════════════════════════════════════════════════════════

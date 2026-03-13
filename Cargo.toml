@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 vstd = { path = "../verus/source/vstd" }
+verus-algebra = { path = "../verus-algebra" }
 
 [package.metadata.verus]
 verify = true
