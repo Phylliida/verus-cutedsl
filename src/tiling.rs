@@ -292,6 +292,40 @@ pub open spec fn sm80_m16n8k16_val_d() -> LayoutSpec {
 }
 
 // ══════════════════════════════════════════════════════════════
+// SM80 MMA Atom Instances (m16n8k8) — half-K variant
+// ══════════════════════════════════════════════════════════════
+
+/// SM80 m16n8k8 A-fragment thread layout: 32 threads in 4×8 grid (same as m16n8k16).
+pub open spec fn sm80_m16n8k8_thr_a() -> LayoutSpec {
+    LayoutSpec { shape: seq![4nat, 8nat], stride: seq![2int, 16int] }
+}
+
+/// SM80 m16n8k8 A-fragment value layout: 4 values per thread in 2×2 grid (K halved).
+pub open spec fn sm80_m16n8k8_val_a() -> LayoutSpec {
+    LayoutSpec { shape: seq![2nat, 2nat], stride: seq![1int, 4int] }
+}
+
+/// SM80 m16n8k8 B-fragment thread layout: 32 threads in 4×8 grid (same as m16n8k16).
+pub open spec fn sm80_m16n8k8_thr_b() -> LayoutSpec {
+    LayoutSpec { shape: seq![4nat, 8nat], stride: seq![2int, 16int] }
+}
+
+/// SM80 m16n8k8 B-fragment value layout: 2 values per thread, rank-1 (K halved).
+pub open spec fn sm80_m16n8k8_val_b() -> LayoutSpec {
+    LayoutSpec { shape: seq![2nat], stride: seq![1int] }
+}
+
+/// SM80 m16n8k8 D-fragment thread layout: 32 threads in 4×8 grid (same as m16n8k16).
+pub open spec fn sm80_m16n8k8_thr_d() -> LayoutSpec {
+    LayoutSpec { shape: seq![4nat, 8nat], stride: seq![2int, 16int] }
+}
+
+/// SM80 m16n8k8 D-fragment value layout: 4 values per thread in 2×2 grid (same as m16n8k16).
+pub open spec fn sm80_m16n8k8_val_d() -> LayoutSpec {
+    LayoutSpec { shape: seq![2nat, 2nat], stride: seq![1int, 8int] }
+}
+
+// ══════════════════════════════════════════════════════════════
 // Deeper GEMM Pipeline: warp/register partitioning
 // ══════════════════════════════════════════════════════════════
 
