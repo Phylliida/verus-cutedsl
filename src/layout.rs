@@ -156,6 +156,23 @@ pub open spec fn make_row_major(shape: Seq<nat>) -> LayoutSpec {
     LayoutSpec { shape, stride: row_major_strides(shape) }
 }
 
+// ══════════════════════════════════════════════════════════════
+// Layout compatibility and offset equivalence
+// ══════════════════════════════════════════════════════════════
+
+/// Two layouts are compatible if they both address the same number of elements.
+pub open spec fn layout_compatible(a: &LayoutSpec, b: &LayoutSpec) -> bool {
+    &&& a.valid()
+    &&& b.valid()
+    &&& a.size() == b.size()
+}
+
+/// Two layouts are offset-equivalent if they have the same size AND identical offset function.
+pub open spec fn layout_offset_equivalent(a: &LayoutSpec, b: &LayoutSpec) -> bool {
+    &&& layout_compatible(a, b)
+    &&& forall|x: nat| x < a.size() ==> a.offset(x) == b.offset(x)
+}
+
 /// Swap adjacent elements at positions i and i+1 in a sequence.
 pub open spec fn seq_swap<A>(s: Seq<A>, i: int) -> Seq<A>
     recommends 0 <= i, i + 1 < s.len(),

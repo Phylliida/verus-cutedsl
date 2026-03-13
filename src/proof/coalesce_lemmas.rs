@@ -1042,4 +1042,91 @@ pub proof fn lemma_coalesce_idempotent(layout: LayoutSpec)
     crate::proof::inverse_lemmas::lemma_fully_coalesced_identity(&coalesce(layout));
 }
 
+// ══════════════════════════════════════════════════════════════
+// Layout compatibility and offset equivalence lemmas
+// ══════════════════════════════════════════════════════════════
+
+/// layout_compatible is reflexive.
+pub proof fn lemma_compatible_reflexive(a: &LayoutSpec)
+    requires a.valid(),
+    ensures crate::layout::layout_compatible(a, a),
+{
+}
+
+/// layout_compatible is symmetric.
+pub proof fn lemma_compatible_symmetric(a: &LayoutSpec, b: &LayoutSpec)
+    requires crate::layout::layout_compatible(a, b),
+    ensures crate::layout::layout_compatible(b, a),
+{
+}
+
+/// layout_offset_equivalent is transitive.
+pub proof fn lemma_offset_equivalent_transitive(a: &LayoutSpec, b: &LayoutSpec, c: &LayoutSpec)
+    requires
+        crate::layout::layout_offset_equivalent(a, b),
+        crate::layout::layout_offset_equivalent(b, c),
+    ensures
+        crate::layout::layout_offset_equivalent(a, c),
+{
+    assert forall|x: nat| x < a.size() implies a.offset(x) == c.offset(x)
+    by {
+        assert(a.offset(x) == b.offset(x));
+        assert(b.offset(x) == c.offset(x));
+    };
+}
+
+/// Coalescing a single pair preserves offset equivalence (wrapper around existing lemma).
+pub proof fn lemma_coalesce_pair_preserves_offset(layout: LayoutSpec, i: nat, x: nat)
+    requires
+        layout.valid(),
+        (i as int) < layout.shape.len() as int - 1,
+        modes_coalesceable(&layout, i as int),
+        x < layout.size(),
+    ensures
+        coalesce_pair(layout, i).offset(x) == layout.offset(x),
+{
+    lemma_coalesce_pair_offset_general(layout, i, x);
+}
+
+/// Full coalesce is offset-equivalent to the original layout.
+pub proof fn lemma_coalesce_offset_equivalent(layout: LayoutSpec)
+    requires layout.valid(),
+    ensures crate::layout::layout_offset_equivalent(&layout, &coalesce(layout)),
+{
+    lemma_shape_size_positive(layout.shape);
+    lemma_coalesce(layout, 0);
+    assert forall|x: nat| x < layout.size() implies layout.offset(x) == coalesce(layout).offset(x)
+    by {
+        lemma_coalesce(layout, x);
+    };
+}
+
+/// Flatten is offset-equivalent to the original layout.
+pub proof fn lemma_flatten_offset_equivalent(layout: LayoutSpec)
+    requires layout.valid(),
+    ensures crate::layout::layout_offset_equivalent(&layout, &flatten(layout)),
+{
+    lemma_shape_size_positive(layout.shape);
+    lemma_flatten_valid(layout);
+    lemma_flatten_size(layout);
+    assert forall|x: nat| x < layout.size() implies layout.offset(x) == flatten(layout).offset(x)
+    by {
+        lemma_flatten_offset(layout, x);
+    };
+}
+
+/// Group modes is offset-equivalent to the original layout.
+pub proof fn lemma_group_modes_offset_equivalent(layout: LayoutSpec, lo: nat, hi: nat)
+    requires group_modes_admissible(&layout, lo, hi),
+    ensures crate::layout::layout_offset_equivalent(&layout, &group_modes(layout, lo, hi)),
+{
+    lemma_shape_size_positive(layout.shape);
+    lemma_group_modes_valid(layout, lo, hi);
+    lemma_group_modes_size(layout, lo, hi);
+    assert forall|x: nat| x < layout.size() implies layout.offset(x) == group_modes(layout, lo, hi).offset(x)
+    by {
+        lemma_group_modes_offset(layout, lo, hi, x);
+    };
+}
+
 } // verus!

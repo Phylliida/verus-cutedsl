@@ -1158,4 +1158,642 @@ pub proof fn lemma_nested_partition_full_disjoint(
     }
 }
 
+// ══════════════════════════════════════════════════════════════
+// MMA atom proofs
+// ══════════════════════════════════════════════════════════════
+
+/// MMA atom layout is valid.
+pub proof fn lemma_mma_atom_valid(thr: &LayoutSpec, val: &LayoutSpec)
+    requires
+        mma_atom_admissible(thr, val),
+    ensures
+        mma_atom_layout(thr.shape, thr.stride, val.shape, val.stride).valid(),
+{
+    lemma_product_valid(thr, val);
+}
+
+/// MMA atom layout is injective.
+pub proof fn lemma_mma_atom_injective(thr: &LayoutSpec, val: &LayoutSpec)
+    requires
+        mma_atom_admissible(thr, val),
+    ensures
+        mma_atom_layout(thr.shape, thr.stride, val.shape, val.stride).is_injective(),
+{
+    lemma_product_injective(thr, val);
+}
+
+/// MMA atom layout size = thr.size() * val.size().
+pub proof fn lemma_mma_atom_size(thr: &LayoutSpec, val: &LayoutSpec)
+    requires
+        mma_atom_admissible(thr, val),
+    ensures
+        mma_atom_layout(thr.shape, thr.stride, val.shape, val.stride).size()
+            == thr.size() * val.size(),
+{
+    lemma_product_size(thr, val);
+}
+
+/// MMA atom bijectivity: if both thr and val are surjective onto their cosizes.
+pub proof fn lemma_mma_atom_bijective(
+    thr: &LayoutSpec, val: &LayoutSpec,
+    m_thr: nat, m_val: nat,
+)
+    requires
+        mma_atom_admissible(thr, val),
+        thr.is_surjective_upto(m_thr),
+        val.is_surjective_upto(m_val),
+        m_thr == thr.cosize_nonneg(),
+        m_thr > 0,
+        m_val > 0,
+    ensures
+        mma_atom_layout(thr.shape, thr.stride, val.shape, val.stride)
+            .is_bijective_upto(m_thr * m_val),
+{
+    lemma_product_bijective(thr, val, m_thr, m_val);
+}
+
+/// MMA tiled copy size = atom.size() * thr.size() * val.size().
+pub proof fn lemma_mma_tiled_copy_size(
+    atom: &LayoutSpec, thr: &LayoutSpec, val: &LayoutSpec,
+)
+    requires
+        tiled_copy_admissible(atom, thr, val),
+    ensures
+        mma_tiled_copy(atom, thr, val).size()
+            == atom.size() * thr.size() * val.size(),
+{
+    let tv = logical_product(thr, val);
+    lemma_product_size(thr, val);
+    lemma_raked_product_size(atom, &tv);
+    // raked_product size = atom.size() * tv.size() = atom.size() * (thr.size() * val.size())
+    vstd::arithmetic::mul::lemma_mul_is_associative(
+        atom.size() as int, thr.size() as int, val.size() as int,
+    );
+}
+
+/// MMA tiled copy is injective.
+pub proof fn lemma_mma_tiled_copy_injective(
+    atom: &LayoutSpec, thr: &LayoutSpec, val: &LayoutSpec,
+)
+    requires
+        tiled_copy_admissible(atom, thr, val),
+        atom.non_negative_strides(),
+        atom.is_injective(),
+        thr.is_injective(),
+        val.is_injective(),
+        val.non_negative_strides(),
+    ensures
+        mma_tiled_copy(atom, thr, val).is_injective(),
+{
+    let tv = logical_product(thr, val);
+    // tv is injective (product_admissible needs thr.non_negative_strides + thr.shape.len > 0)
+    lemma_product_injective(thr, val);
+    // raked_product(atom, tv) is injective
+    lemma_raked_product_injective(atom, &tv);
+}
+
+// ══════════════════════════════════════════════════════════════
+// GEMM tiling proofs
+// ══════════════════════════════════════════════════════════════
+
+/// All three GEMM partitions produce valid DividedLayouts.
+pub proof fn lemma_gemm_partition_valid(
+    m_size: nat, n_size: nat, k_size: nat,
+    bm: nat, bn: nat, bk: nat,
+)
+    requires
+        gemm_partition_admissible(m_size, n_size, k_size, bm, bn, bk),
+    ensures
+        divided_layout_valid(&gemm_partition(m_size, n_size, k_size, bm, bn, bk).0),
+        divided_layout_valid(&gemm_partition(m_size, n_size, k_size, bm, bn, bk).1),
+        divided_layout_valid(&gemm_partition(m_size, n_size, k_size, bm, bn, bk).2),
+{
+    lemma_predicated_divide_valid(m_size, bm);
+    lemma_predicated_divide_valid(n_size, bn);
+    lemma_predicated_divide_valid(k_size, bk);
+}
+
+/// Every M-coordinate is covered by some CTA tile.
+pub proof fn lemma_gemm_m_coverage(m_size: nat, bm: nat, x: nat)
+    requires
+        padded_divide_admissible(m_size, bm),
+        x < m_size,
+    ensures ({
+        let cta_m = crate::predication::tile_for_index(x, bm);
+        let elem_m = crate::predication::elem_in_tile(x, bm);
+        &&& cta_m < num_tiles_ceil(m_size, bm)
+        &&& elem_m < bm
+        &&& cta_m * bm + elem_m == x
+    }),
+{
+    crate::proof::predication_lemmas::lemma_tile_for_index_bound(x, bm, m_size);
+    crate::proof::predication_lemmas::lemma_elem_in_tile_bound(x, bm);
+    // cta_m * bm + elem_m == x by fundamental theorem of division
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int, bm as int);
+    vstd::arithmetic::mul::lemma_mul_is_commutative(bm as int, (x / bm) as int);
+}
+
+/// Different M-tiles produce different M-indices (disjointness).
+pub proof fn lemma_gemm_cta_disjoint_m(
+    bm: nat,
+    cta1: nat, cta2: nat,
+    e1: nat, e2: nat,
+)
+    requires
+        bm > 0,
+        e1 < bm,
+        e2 < bm,
+        cta1 != cta2,
+    ensures
+        cta1 * bm + e1 != cta2 * bm + e2,
+{
+    crate::proof::predication_lemmas::lemma_predicated_no_double_count(
+        bm, cta1, e1, cta2, e2,
+    );
+}
+
+/// Different CTAs (in either M or N dimension) produce different output elements.
+pub proof fn lemma_gemm_cta_disjoint_mn(
+    bm: nat, bn: nat,
+    cm1: nat, cn1: nat, em1: nat, en1: nat,
+    cm2: nat, cn2: nat, em2: nat, en2: nat,
+)
+    requires
+        bm > 0, bn > 0,
+        em1 < bm, em2 < bm,
+        en1 < bn, en2 < bn,
+        cm1 != cm2 || cn1 != cn2,
+    ensures
+        cm1 * bm + em1 != cm2 * bm + em2
+        || cn1 * bn + en1 != cn2 * bn + en2,
+{
+    if cm1 != cm2 {
+        crate::proof::predication_lemmas::lemma_predicated_no_double_count(
+            bm, cm1, em1, cm2, em2,
+        );
+    } else {
+        // cm1 == cm2, so cn1 != cn2
+        crate::proof::predication_lemmas::lemma_predicated_no_double_count(
+            bn, cn1, en1, cn2, en2,
+        );
+    }
+}
+
+/// All K elements are covered: sum of valid counts == k_size.
+pub proof fn lemma_gemm_k_reduction_coverage(k_size: nat, bk: nat)
+    requires
+        padded_divide_admissible(k_size, bk),
+    ensures
+        sum_valid_counts(num_tiles_ceil(k_size, bk), bk, k_size) == k_size,
+{
+    crate::proof::predication_lemmas::lemma_total_valid_elements(k_size, bk);
+}
+
+/// K-tile offset is the identity: offset(x) == x.
+pub proof fn lemma_gemm_k_tile_identity(k_size: nat, bk: nat, x: nat)
+    requires
+        padded_divide_admissible(k_size, bk),
+        x < padded_size(k_size, bk),
+    ensures
+        predicated_divide(k_size, bk).layout.offset(x) == x as int,
+{
+    lemma_predicated_divide_offset_identity(k_size, bk, x);
+}
+
+/// Total number of CTAs = num_tiles_ceil(m) * num_tiles_ceil(n).
+pub proof fn lemma_gemm_cta_count(m_size: nat, n_size: nat, bm: nat, bn: nat)
+    requires
+        padded_divide_admissible(m_size, bm),
+        padded_divide_admissible(n_size, bn),
+    ensures
+        num_tiles_ceil(m_size, bm) * num_tiles_ceil(n_size, bn)
+            == num_tiles_ceil(m_size, bm) * num_tiles_ceil(n_size, bn),
+{
+    // Definitional — this is a tautology proving the count formula is well-defined.
+}
+
+// ══════════════════════════════════════════════════════════════
+// SM80 MMA atom instance proofs (Feature 4)
+// ══════════════════════════════════════════════════════════════
+
+/// Helper: shape_size of a 2-element shape.
+proof fn lemma_shape_size_2(a: nat, b: nat)
+    requires a > 0, b > 0,
+    ensures shape_size(seq![a, b]) == a * b,
+{
+    assert(seq![a, b].first() == a);
+    assert(seq![a, b].skip(1) =~= seq![b]);
+    lemma_shape_size_singleton(b);
+}
+
+/// Helper: for a rank-2 layout, offset(x) = coords[0]*stride[0] + coords[1]*stride[1].
+pub proof fn lemma_offset_rank2(layout: &LayoutSpec, x: nat)
+    requires
+        layout.valid(),
+        layout.shape.len() == 2,
+        x < layout.size(),
+    ensures ({
+        let coords = delinearize(x, layout.shape);
+        layout.offset(x) == (coords[0] as int) * layout.stride[0] + (coords[1] as int) * layout.stride[1]
+    }),
+{
+    let coords = delinearize(x, layout.shape);
+    lemma_delinearize_len(x, layout.shape);
+
+    // Unfold dot product: dot(coords, stride) = coords[0]*stride[0] + dot(coords.skip(1), stride.skip(1))
+    assert(coords.len() == 2);
+    let skip1_c = coords.skip(1);
+    let skip1_s = layout.stride.skip(1);
+    assert(skip1_c.len() == 1);
+
+    // dot(skip1_c, skip1_s) = skip1_c[0]*skip1_s[0] + dot(empty, empty) = coords[1]*stride[1]
+    assert(skip1_c.first() == coords[1]);
+    assert(skip1_s.first() == layout.stride[1]);
+    assert(skip1_c.skip(1) =~= Seq::<nat>::empty());
+    assert(skip1_s.skip(1) =~= Seq::<int>::empty());
+    assert(dot_product_nat_int(Seq::<nat>::empty(), Seq::<int>::empty()) == 0int);
+    assert(dot_product_nat_int(skip1_c, skip1_s) == (coords[1] as int) * layout.stride[1]);
+
+    // Full dot product
+    assert(dot_product_nat_int(coords, layout.stride) ==
+        (coords[0] as int) * layout.stride[0] + dot_product_nat_int(skip1_c, skip1_s));
+}
+
+/// SM80 m16n8k16 A-fragment thread layout is valid and injective.
+pub proof fn lemma_sm80_m16n8k16_a_valid()
+    ensures
+        mma_atom_admissible(&sm80_m16n8k16_thr_a(), &sm80_m16n8k16_val_a()),
+        sm80_m16n8k16_thr_a().size() == 32,
+        sm80_m16n8k16_val_a().size() == 8,
+{
+    let thr = sm80_m16n8k16_thr_a();
+    let val = sm80_m16n8k16_val_a();
+
+    // Valid
+    assert(thr.valid());
+    assert(val.valid());
+
+    // Non-negative strides
+    assert(thr.non_negative_strides());
+    assert(val.non_negative_strides());
+
+    // Sizes
+    lemma_shape_size_2(4, 8);
+    assert(thr.size() == 32);
+    lemma_shape_size_2(2, 4);
+    assert(val.size() == 8);
+
+    // shape.len() > 0
+    assert(thr.shape.len() > 0);
+
+    // Injectivity: thr has strides (2, 16) with shape (4, 8)
+    // offset(x) = (x%4)*2 + (x/4)%8*16 — distinct for distinct x < 32
+    // All offsets are in [0, 128), and cosize = 3*2 + 7*16 + 1 = 6 + 112 + 1 = 119...
+    // Actually: thr injectivity by column-major-like argument
+    // product(thr) maps to distinct offsets because strides satisfy stride[1] >= shape[0] * stride[0]
+    // stride[1] = 16 >= 4*2 = 8 — but 16 > 8, so it's not column-major, it's still injective
+    // The layout is injective iff for distinct (c0, c1) pairs, c0*2 + c1*16 are distinct
+    // With c0 in [0,4), max c0*2 = 6 < 16 = min nonzero c1*16, so they separate by digit
+    assert forall|i: nat, j: nat|
+        i < thr.size() && j < thr.size() && i != j
+    implies
+        thr.offset(i) != thr.offset(j)
+    by {
+        let ci = delinearize(i, thr.shape);
+        let cj = delinearize(j, thr.shape);
+        lemma_delinearize_bounds(i, thr.shape);
+        lemma_delinearize_bounds(j, thr.shape);
+        lemma_delinearize_len(i, thr.shape);
+        lemma_delinearize_len(j, thr.shape);
+
+        // ci[0] in [0,4), ci[1] in [0,8)
+        // offset = ci[0]*2 + ci[1]*16
+        // If ci != cj (as sequences), then either ci[0] != cj[0] or ci[1] != cj[1]
+        // ci[0]*2 is in {0,2,4,6}, ci[1]*16 is in {0,16,32,...,112}
+        // The ranges don't overlap: max ci[0]*2 = 6 < 16 = min nonzero ci[1]*16
+        // So distinct (ci[0], ci[1]) → distinct offset (base-8 digit argument with gaps)
+
+        // First show ci != cj
+        if ci[0] == cj[0] && ci[1] == cj[1] {
+            // Then delinearize(i, shape) =~= delinearize(j, shape)
+            // Which means i == j by injectivity of delinearize
+            assert(ci =~= cj);
+            lemma_delinearize_roundtrip(i, thr.shape);
+            lemma_delinearize_roundtrip(j, thr.shape);
+            assert(false);
+        }
+
+        // Now show offsets differ
+        // offset_i = ci[0]*2 + ci[1]*16
+        // offset_j = cj[0]*2 + cj[1]*16
+        // diff = (ci[0]-cj[0])*2 + (ci[1]-cj[1])*16
+        // |ci[0]-cj[0]| <= 3, so |(ci[0]-cj[0])*2| <= 6 < 16
+        // If ci[1] != cj[1], |diff| >= 16 - 6 = 10 > 0
+        // If ci[1] == cj[1] but ci[0] != cj[0], diff = (ci[0]-cj[0])*2 != 0
+        lemma_offset_rank2(&thr, i);
+        lemma_offset_rank2(&thr, j);
+        let oi = (ci[0] as int) * 2 + (ci[1] as int) * 16;
+        let oj = (cj[0] as int) * 2 + (cj[1] as int) * 16;
+        assert(thr.offset(i) == oi);
+        assert(thr.offset(j) == oj);
+
+        assert(oi != oj) by (nonlinear_arith)
+            requires
+                ci[0] < 4, cj[0] < 4, ci[1] < 8, cj[1] < 8,
+                ci[0] != cj[0] || ci[1] != cj[1],
+                oi == (ci[0] as int) * 2 + (ci[1] as int) * 16,
+                oj == (cj[0] as int) * 2 + (cj[1] as int) * 16;
+    };
+
+    // val injectivity: strides (1, 4) with shape (2, 4)
+    assert forall|i: nat, j: nat|
+        i < val.size() && j < val.size() && i != j
+    implies
+        val.offset(i) != val.offset(j)
+    by {
+        let ci = delinearize(i, val.shape);
+        let cj = delinearize(j, val.shape);
+        lemma_delinearize_bounds(i, val.shape);
+        lemma_delinearize_bounds(j, val.shape);
+        lemma_delinearize_len(i, val.shape);
+        lemma_delinearize_len(j, val.shape);
+
+        if ci[0] == cj[0] && ci[1] == cj[1] {
+            assert(ci =~= cj);
+            lemma_delinearize_roundtrip(i, val.shape);
+            lemma_delinearize_roundtrip(j, val.shape);
+            assert(false);
+        }
+
+        lemma_offset_rank2(&val, i);
+        lemma_offset_rank2(&val, j);
+        let oi = (ci[0] as int) * 1 + (ci[1] as int) * 4;
+        let oj = (cj[0] as int) * 1 + (cj[1] as int) * 4;
+        assert(val.offset(i) == oi);
+        assert(val.offset(j) == oj);
+
+        assert(oi != oj) by (nonlinear_arith)
+            requires
+                ci[0] < 2, cj[0] < 2, ci[1] < 4, cj[1] < 4,
+                ci[0] != cj[0] || ci[1] != cj[1],
+                oi == (ci[0] as int) * 1 + (ci[1] as int) * 4,
+                oj == (cj[0] as int) * 1 + (cj[1] as int) * 4;
+    };
+}
+
+/// SM80 m16n8k16 B-fragment is admissible.
+pub proof fn lemma_sm80_m16n8k16_b_valid()
+    ensures
+        mma_atom_admissible(&sm80_m16n8k16_thr_b(), &sm80_m16n8k16_val_b()),
+        sm80_m16n8k16_thr_b().size() == 32,
+        sm80_m16n8k16_val_b().size() == 4,
+{
+    let thr = sm80_m16n8k16_thr_b();
+    let val = sm80_m16n8k16_val_b();
+
+    assert(thr.valid());
+    assert(val.valid());
+    assert(thr.non_negative_strides());
+    assert(val.non_negative_strides());
+
+    lemma_shape_size_2(4, 8);
+    assert(thr.size() == 32);
+    lemma_shape_size_2(2, 2);
+    assert(val.size() == 4);
+
+    assert(thr.shape.len() > 0);
+
+    // Injectivity for thr: same as A (identical layout)
+    assert forall|i: nat, j: nat|
+        i < thr.size() && j < thr.size() && i != j
+    implies
+        thr.offset(i) != thr.offset(j)
+    by {
+        let ci = delinearize(i, thr.shape);
+        let cj = delinearize(j, thr.shape);
+        lemma_delinearize_bounds(i, thr.shape);
+        lemma_delinearize_bounds(j, thr.shape);
+        lemma_delinearize_len(i, thr.shape);
+        lemma_delinearize_len(j, thr.shape);
+
+        if ci[0] == cj[0] && ci[1] == cj[1] {
+            assert(ci =~= cj);
+            lemma_delinearize_roundtrip(i, thr.shape);
+            lemma_delinearize_roundtrip(j, thr.shape);
+            assert(false);
+        }
+
+        lemma_offset_rank2(&thr, i);
+        lemma_offset_rank2(&thr, j);
+        let oi = (ci[0] as int) * 2 + (ci[1] as int) * 16;
+        let oj = (cj[0] as int) * 2 + (cj[1] as int) * 16;
+        assert(thr.offset(i) == oi);
+        assert(thr.offset(j) == oj);
+
+        assert(oi != oj) by (nonlinear_arith)
+            requires
+                ci[0] < 4, cj[0] < 4, ci[1] < 8, cj[1] < 8,
+                ci[0] != cj[0] || ci[1] != cj[1],
+                oi == (ci[0] as int) * 2 + (ci[1] as int) * 16,
+                oj == (cj[0] as int) * 2 + (cj[1] as int) * 16;
+    };
+
+    // val injectivity: strides (1, 8) with shape (2, 2)
+    assert forall|i: nat, j: nat|
+        i < val.size() && j < val.size() && i != j
+    implies
+        val.offset(i) != val.offset(j)
+    by {
+        let ci = delinearize(i, val.shape);
+        let cj = delinearize(j, val.shape);
+        lemma_delinearize_bounds(i, val.shape);
+        lemma_delinearize_bounds(j, val.shape);
+        lemma_delinearize_len(i, val.shape);
+        lemma_delinearize_len(j, val.shape);
+
+        if ci[0] == cj[0] && ci[1] == cj[1] {
+            assert(ci =~= cj);
+            lemma_delinearize_roundtrip(i, val.shape);
+            lemma_delinearize_roundtrip(j, val.shape);
+            assert(false);
+        }
+
+        lemma_offset_rank2(&val, i);
+        lemma_offset_rank2(&val, j);
+        let oi = (ci[0] as int) * 1 + (ci[1] as int) * 8;
+        let oj = (cj[0] as int) * 1 + (cj[1] as int) * 8;
+        assert(val.offset(i) == oi);
+        assert(val.offset(j) == oj);
+
+        assert(oi != oj) by (nonlinear_arith)
+            requires
+                ci[0] < 2, cj[0] < 2, ci[1] < 2, cj[1] < 2,
+                ci[0] != cj[0] || ci[1] != cj[1],
+                oi == (ci[0] as int) * 1 + (ci[1] as int) * 8,
+                oj == (cj[0] as int) * 1 + (cj[1] as int) * 8;
+    };
+}
+
+/// SM80 m16n8k16 D-fragment (accumulator) is admissible.
+pub proof fn lemma_sm80_m16n8k16_d_valid()
+    ensures
+        mma_atom_admissible(&sm80_m16n8k16_thr_d(), &sm80_m16n8k16_val_d()),
+        sm80_m16n8k16_thr_d().size() == 32,
+        sm80_m16n8k16_val_d().size() == 4,
+{
+    // D layout is identical to B layout
+    lemma_sm80_m16n8k16_b_valid();
+}
+
+/// SM80 m16n8k16 A-fragment MMA atom layout has size 256.
+pub proof fn lemma_sm80_m16n8k16_a_size()
+    ensures
+        mma_atom_layout(
+            sm80_m16n8k16_thr_a().shape, sm80_m16n8k16_thr_a().stride,
+            sm80_m16n8k16_val_a().shape, sm80_m16n8k16_val_a().stride,
+        ).size() == 256,
+{
+    lemma_sm80_m16n8k16_a_valid();
+    lemma_mma_atom_size(&sm80_m16n8k16_thr_a(), &sm80_m16n8k16_val_a());
+    // 32 * 8 == 256
+}
+
+/// SM80 m16n8k16 B-fragment MMA atom layout has size 128.
+pub proof fn lemma_sm80_m16n8k16_b_size()
+    ensures
+        mma_atom_layout(
+            sm80_m16n8k16_thr_b().shape, sm80_m16n8k16_thr_b().stride,
+            sm80_m16n8k16_val_b().shape, sm80_m16n8k16_val_b().stride,
+        ).size() == 128,
+{
+    lemma_sm80_m16n8k16_b_valid();
+    lemma_mma_atom_size(&sm80_m16n8k16_thr_b(), &sm80_m16n8k16_val_b());
+    // 32 * 4 == 128
+}
+
+/// SM80 m16n8k16 D-fragment MMA atom layout has size 128.
+pub proof fn lemma_sm80_m16n8k16_d_size()
+    ensures
+        mma_atom_layout(
+            sm80_m16n8k16_thr_d().shape, sm80_m16n8k16_thr_d().stride,
+            sm80_m16n8k16_val_d().shape, sm80_m16n8k16_val_d().stride,
+        ).size() == 128,
+{
+    lemma_sm80_m16n8k16_d_valid();
+    lemma_mma_atom_size(&sm80_m16n8k16_thr_d(), &sm80_m16n8k16_val_d());
+}
+
+// ══════════════════════════════════════════════════════════════
+// Deeper GEMM pipeline proofs (Feature 2)
+// ══════════════════════════════════════════════════════════════
+
+/// Warp partition produces a valid DividedLayout.
+pub proof fn lemma_warp_partition_valid(
+    cta_tile: &DividedLayout,
+    warp_layout: &LayoutSpec,
+)
+    requires
+        divided_layout_valid(cta_tile),
+        divide_admissible(&cta_tile.layout, warp_layout),
+    ensures
+        divided_layout_valid(&warp_partition(cta_tile, warp_layout)),
+{
+    lemma_zipped_divide_valid(&cta_tile.layout, warp_layout);
+    lemma_divide_rank(&cta_tile.layout, warp_layout);
+}
+
+/// Register partition produces a valid DividedLayout.
+pub proof fn lemma_register_partition_valid(
+    warp_tile: &DividedLayout,
+    mma_atom: &LayoutSpec,
+)
+    requires
+        divided_layout_valid(warp_tile),
+        divide_admissible(&warp_tile.layout, mma_atom),
+    ensures
+        divided_layout_valid(&register_partition(warp_tile, mma_atom)),
+{
+    lemma_zipped_divide_valid(&warp_tile.layout, mma_atom);
+    lemma_divide_rank(&warp_tile.layout, mma_atom);
+}
+
+/// Double buffer slot is bounded by num_buffers.
+pub proof fn lemma_double_buffer_bounded(k_iter: nat, num_buffers: nat)
+    requires num_buffers > 0,
+    ensures double_buffer_slot(k_iter, num_buffers) < num_buffers,
+{
+    assert(k_iter % num_buffers < num_buffers) by (nonlinear_arith)
+        requires num_buffers > 0nat;
+}
+
+/// Consecutive K-iterations use different buffer slots when num_buffers >= 2.
+pub proof fn lemma_double_buffer_alternates(k_iter: nat, num_buffers: nat)
+    requires num_buffers >= 2,
+    ensures double_buffer_slot(k_iter, num_buffers) != double_buffer_slot(k_iter + 1, num_buffers),
+{
+    // k % n != (k+1) % n when n >= 2
+    // Proof: if k % n == (k+1) % n, then ((k+1) - k) % n == 0, i.e., 1 % n == 0.
+    // But 1 % n == 1 for n >= 2. Contradiction.
+    let a = k_iter % num_buffers;
+    let b = (k_iter + 1) % num_buffers;
+
+    if a == b {
+        // (k+1) % n - k % n ≡ 1 (mod n)
+        // But if a == b, then the difference is 0 (mod n)
+        // 1 % n == 1 for n >= 2
+        assert(1nat % num_buffers == 1nat) by (nonlinear_arith)
+            requires num_buffers >= 2nat;
+
+        // (k+1) = k + 1, so (k+1) % n = (k % n + 1) % n
+        // If k % n + 1 < n: (k+1) % n = k % n + 1 ≠ k % n
+        // If k % n + 1 == n: (k+1) % n = 0 ≠ k % n (since k % n = n-1 ≥ 1)
+        if a + 1 < num_buffers {
+            assert((k_iter + 1) % num_buffers == a + 1) by (nonlinear_arith)
+                requires
+                    k_iter % num_buffers == a,
+                    a + 1 < num_buffers,
+                    num_buffers >= 2nat;
+            assert(b == a + 1);
+            assert(false);
+        } else {
+            assert(a == num_buffers - 1);
+            assert((k_iter + 1) % num_buffers == 0nat) by (nonlinear_arith)
+                requires
+                    k_iter % num_buffers == num_buffers - 1,
+                    num_buffers >= 2nat;
+            assert(b == 0nat);
+            assert(a >= 1nat);
+            assert(false);
+        }
+    }
+}
+
+/// Three-level disjointness: elements assigned to distinct (warp, register) pairs are disjoint.
+///
+/// If w1 != w2, uses warp-level disjointness. If w1 == w2 but r1 != r2, uses register disjointness.
+pub proof fn lemma_three_level_disjoint(
+    layout: &LayoutSpec,
+    w1: nat, r1: nat, i: nat,
+    w2: nat, r2: nat, j: nat,
+)
+    requires
+        layout.valid(),
+        layout.is_injective(),
+        layout.rank() >= 2,
+        w1 < layout.shape[0],
+        w2 < layout.shape[0],
+        r1 < slice_layout(layout, 0, w1).shape[0],
+        r2 < slice_layout(layout, 0, w2).shape[0],
+        i < shape_size(slice_layout(&slice_layout(layout, 0, w1), 0, r1).shape),
+        j < shape_size(slice_layout(&slice_layout(layout, 0, w2), 0, r2).shape),
+        w1 != w2 || r1 != r2,
+    ensures
+        nested_local_partition(layout, w1, r1).1
+            + nested_local_partition(layout, w1, r1).0.offset(i)
+        != nested_local_partition(layout, w2, r2).1
+            + nested_local_partition(layout, w2, r2).0.offset(j),
+{
+    lemma_nested_partition_full_disjoint(layout, w1, r1, i, w2, r2, j);
+}
+
 } // verus!

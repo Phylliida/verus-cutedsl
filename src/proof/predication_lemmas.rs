@@ -1,5 +1,6 @@
 use vstd::prelude::*;
 use crate::predication::*;
+use crate::tiling::*;
 use crate::proof::integer_helpers::*;
 
 verus! {
@@ -249,6 +250,149 @@ pub proof fn lemma_padded_size_exact(total_size: nat, tile_size: nat)
     lemma_ceil_div_exact(total_size, tile_size);
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(total_size as int, tile_size as int);
     vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, (total_size / tile_size) as int);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Predicated copy correctness
+// ══════════════════════════════════════════════════════════════
+
+/// tile_for_index(idx) < num_tiles_ceil when idx < original_size.
+pub proof fn lemma_tile_for_index_bound(idx: nat, tile_size: nat, original_size: nat)
+    requires
+        tile_size > 0,
+        idx < original_size,
+    ensures
+        tile_for_index(idx, tile_size) < num_tiles_ceil(original_size, tile_size),
+{
+    // idx < original_size <= padded_size = ntiles * tile_size
+    lemma_padded_size_ge(original_size, tile_size);
+    let ntiles = num_tiles_ceil(original_size, tile_size);
+    let ps = padded_size(original_size, tile_size);
+    assert(ps == ntiles * tile_size);
+    assert(idx < ps);
+    // idx / tile_size < ntiles because idx < ntiles * tile_size
+    // Use: a < b * c ==> a / c < b (when c > 0)
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(idx as int, tile_size as int);
+    vstd::arithmetic::div_mod::lemma_mod_pos_bound(idx as int, tile_size as int);
+    // idx = tile_size * (idx / tile_size) + (idx % tile_size)
+    // idx < ntiles * tile_size
+    // tile_size * (idx / tile_size) <= idx < ntiles * tile_size
+    // So idx / tile_size < ntiles
+    let q = idx / tile_size;
+    vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, q as int);
+    assert(q * tile_size <= idx) by {
+        vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, q as int);
+    };
+    assert(q < ntiles) by (nonlinear_arith)
+        requires
+            q * tile_size <= idx,
+            idx < ntiles * tile_size,
+            tile_size > 0,
+    {};
+}
+
+/// elem_in_tile(idx) < tile_size.
+pub proof fn lemma_elem_in_tile_bound(idx: nat, tile_size: nat)
+    requires
+        tile_size > 0,
+    ensures
+        elem_in_tile(idx, tile_size) < tile_size,
+{
+    vstd::arithmetic::div_mod::lemma_mod_pos_bound(idx as int, tile_size as int);
+}
+
+/// Every valid element is covered: tile * tile_size + elem == x < original_size.
+pub proof fn lemma_predicated_coverage_unique(original_size: nat, tile_size: nat)
+    requires
+        padded_divide_admissible(original_size, tile_size),
+    ensures
+        predicated_coverage_unique(original_size, tile_size),
+{
+    assert forall|x: nat| x < original_size
+    implies tile_element_valid(
+        tile_for_index(x, tile_size),
+        tile_size,
+        elem_in_tile(x, tile_size),
+        original_size,
+    ) by {
+        // tile_for_index(x) * tile_size + elem_in_tile(x) == x
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int, tile_size as int);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, (x / tile_size) as int);
+        // x = tile_size * (x / tile_size) + x % tile_size
+        //   = (x / tile_size) * tile_size + x % tile_size
+        // So (x / tile_size) * tile_size + (x % tile_size) == x < original_size
+    };
+}
+
+/// Distinct tile-element pairs map to distinct global indices (no double counting).
+pub proof fn lemma_predicated_no_double_count(
+    tile_size: nat,
+    t1: nat, e1: nat,
+    t2: nat, e2: nat,
+)
+    requires
+        tile_size > 0,
+        e1 < tile_size,
+        e2 < tile_size,
+        t1 != t2 || e1 != e2,
+    ensures
+        t1 * tile_size + e1 != t2 * tile_size + e2,
+{
+    if t1 == t2 {
+        // e1 != e2, same tile, so sums differ
+    } else {
+        // WLOG t1 != t2. If t1 < t2:
+        //   t1 * tile_size + e1 < (t1 + 1) * tile_size <= t2 * tile_size <= t2 * tile_size + e2
+        // Symmetric for t2 < t1.
+        if t1 < t2 {
+            vstd::arithmetic::mul::lemma_mul_is_distributive_add(tile_size as int, t1 as int, 1int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, t1 as int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, (t1 + 1) as int);
+            vstd::arithmetic::mul::lemma_mul_inequality((t1 + 1) as int, t2 as int, tile_size as int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative((t1 + 1) as int, tile_size as int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(t2 as int, tile_size as int);
+        } else {
+            vstd::arithmetic::mul::lemma_mul_is_distributive_add(tile_size as int, t2 as int, 1int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, t2 as int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, (t2 + 1) as int);
+            vstd::arithmetic::mul::lemma_mul_inequality((t2 + 1) as int, t1 as int, tile_size as int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative((t2 + 1) as int, tile_size as int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(t1 as int, tile_size as int);
+        }
+    }
+}
+
+/// Predicated divide is injective on valid elements: distinct valid indices
+/// have distinct offsets.
+pub proof fn lemma_predicated_divide_injective_on_valid(
+    original_size: nat, tile_size: nat,
+)
+    requires
+        padded_divide_admissible(original_size, tile_size),
+    ensures
+        forall|x: nat, y: nat|
+            x < original_size && y < original_size && x != y ==>
+            predicated_divide(original_size, tile_size).layout.offset(x)
+                != predicated_divide(original_size, tile_size).layout.offset(y),
+{
+    lemma_padded_size_ge(original_size, tile_size);
+    assert forall|x: nat, y: nat|
+        x < original_size && y < original_size && x != y
+    implies predicated_divide(original_size, tile_size).layout.offset(x)
+        != predicated_divide(original_size, tile_size).layout.offset(y)
+    by {
+        // offset(x) == x and offset(y) == y by identity
+        let ps = padded_size(original_size, tile_size);
+        assert(x < ps);
+        assert(y < ps);
+        crate::proof::tiling_lemmas::lemma_predicated_divide_offset_identity(
+            original_size, tile_size, x,
+        );
+        crate::proof::tiling_lemmas::lemma_predicated_divide_offset_identity(
+            original_size, tile_size, y,
+        );
+        // offset(x) == x, offset(y) == y, x != y
+    };
 }
 
 } // verus!

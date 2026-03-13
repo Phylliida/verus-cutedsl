@@ -41,6 +41,9 @@ pub mod compatibility;
 pub mod permutation;
 
 #[cfg(verus_keep_ghost)]
+pub mod gemm;
+
+#[cfg(verus_keep_ghost)]
 pub mod proof;
 
 #[cfg(verus_keep_ghost)]

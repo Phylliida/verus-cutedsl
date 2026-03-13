@@ -606,18 +606,49 @@ pub proof fn lemma_compose_identity_left(a: LayoutSpec, m: nat)
             compose(make_identity(m), a).offset(x) == a.offset(x),
 {
     let id = make_identity(m);
-    // id.valid() with shape seq![m], stride seq![1]
     assert(id.valid());
     assert(id.shape.len() > 0);
 
+    // shape_size(seq![m]) == m
+    crate::proof::shape_lemmas::lemma_shape_size_single(m);
+
+    // compose(id, a) has shape =~= a.shape, so compose(id, a).size() == a.size()
+    let c = compose(id, a);
+    lemma_compose_shape(id, a);
+    crate::proof::divide_lemmas::lemma_compose_rank(id, a);
+    // c is valid
+    assert(c.valid()) by {
+        assert(c.shape.len() == a.shape.len());
+        assert(c.stride.len() == a.shape.len());
+        assert forall|i: int| 0 <= i < c.shape.len()
+        implies #[trigger] c.shape[i] > 0 by {
+            lemma_compose_element(id, a, i);
+        };
+    };
+    assert(c.shape =~= a.shape);
+
     assert forall|x: nat| x < a.size()
-    implies compose(id, a).offset(x) == a.offset(x)
+    implies c.offset(x) == a.offset(x)
     by {
-        // lemma_compose_correct: compose(id, a).offset(x) == id.offset(a.offset(x))
-        // Requires: a.offset(x) >= 0 and a.offset(x) < id.shape.first() = m
+        // compose(id, a).offset(x) == id.offset(a.offset(x))
         lemma_compose_correct(id, a, x);
-        // id.offset(k) == k for k < m
-        crate::proof::injectivity_lemmas::lemma_column_major_offset_is_identity(id.shape, a.offset(x) as nat);
+        let ax = a.offset(x);
+        assert(c.offset(x) == id.offset(ax as nat));
+        // id.offset(k) == k for k < m, since make_identity is column-major
+        // Need: ax as nat < shape_size(id.shape) == m
+        assert((ax as nat) < shape_size(id.shape));
+        crate::proof::injectivity_lemmas::lemma_column_major_offset_is_identity(id.shape, ax as nat);
+        // make_column_major(seq![m]).stride == seq![1] == id.stride
+        // Unfold: column_major_strides(seq![m]) = seq![1].add(scale(cms(empty), m))
+        //       = seq![1].add(empty) = seq![1]
+        let cm = make_column_major(id.shape);
+        assert(cm.shape =~= id.shape);
+        assert(id.shape.skip(1) =~= Seq::<nat>::empty());
+        assert(column_major_strides(id.shape.skip(1)) =~= Seq::<int>::empty());
+        assert(scale_strides_spec(Seq::<int>::empty(), m as int) =~= Seq::<int>::empty());
+        assert(cm.stride =~= seq![1int]);
+        assert(cm.stride =~= id.stride);
+        lemma_offset_eq_layout(cm.shape, cm.stride, id.shape, id.stride, ax as nat);
     };
 }
 

@@ -456,6 +456,7 @@ pub proof fn lemma_product_injective(a: &LayoutSpec, b: &LayoutSpec)
             } else if ob2 - ob1 < 0 {
                 vstd::arithmetic::mul::lemma_mul_inequality(1, ob1 - ob2, cs);
                 vstd::arithmetic::mul::lemma_mul_basics(cs);
+                vstd::arithmetic::mul::lemma_mul_is_commutative(ob1 - ob2, cs);
                 assert(cs * (ob1 - ob2) >= cs);
                 assert(cs * (ob2 - ob1) == -(cs * (ob1 - ob2))) by (nonlinear_arith)
                     requires cs > 0, ob1 - ob2 > 0;

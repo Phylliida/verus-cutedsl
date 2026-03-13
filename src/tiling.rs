@@ -189,4 +189,169 @@ pub open spec fn nested_local_partition(
     (inner, off1 + off2)
 }
 
+// ══════════════════════════════════════════════════════════════
+// MMA atom layouts
+// ══════════════════════════════════════════════════════════════
+
+/// Thread-value layout for an MMA atom: logical_product(thr, val).
+pub open spec fn mma_atom_layout(
+    thr_shape: Seq<nat>, thr_stride: Seq<int>,
+    val_shape: Seq<nat>, val_stride: Seq<int>,
+) -> LayoutSpec {
+    let thr = LayoutSpec { shape: thr_shape, stride: thr_stride };
+    let val = LayoutSpec { shape: val_shape, stride: val_stride };
+    logical_product(&thr, &val)
+}
+
+/// Admissibility for MMA atom TV layout.
+pub open spec fn mma_atom_admissible(thr: &LayoutSpec, val: &LayoutSpec) -> bool {
+    &&& thr.valid()
+    &&& val.valid()
+    &&& thr.non_negative_strides()
+    &&& val.non_negative_strides()
+    &&& thr.is_injective()
+    &&& val.is_injective()
+    &&& thr.shape.len() > 0
+}
+
+/// MMA-specific alias for make_tiled_copy.
+pub open spec fn mma_tiled_copy(
+    atom: &LayoutSpec, thr: &LayoutSpec, val: &LayoutSpec,
+) -> LayoutSpec
+    recommends tiled_copy_admissible(atom, thr, val),
+{
+    make_tiled_copy(atom, thr, val)
+}
+
+// ══════════════════════════════════════════════════════════════
+// GEMM partition specs
+// ══════════════════════════════════════════════════════════════
+
+/// CTA-level tiling for GEMM: tile each dimension independently.
+pub open spec fn gemm_partition(
+    m_size: nat, n_size: nat, k_size: nat,
+    bm: nat, bn: nat, bk: nat,
+) -> (DividedLayout, DividedLayout, DividedLayout)
+    recommends
+        padded_divide_admissible(m_size, bm),
+        padded_divide_admissible(n_size, bn),
+        padded_divide_admissible(k_size, bk),
+{
+    (predicated_divide(m_size, bm),
+     predicated_divide(n_size, bn),
+     predicated_divide(k_size, bk))
+}
+
+/// Admissibility for GEMM partition.
+pub open spec fn gemm_partition_admissible(
+    m_size: nat, n_size: nat, k_size: nat,
+    bm: nat, bn: nat, bk: nat,
+) -> bool {
+    &&& padded_divide_admissible(m_size, bm)
+    &&& padded_divide_admissible(n_size, bn)
+    &&& padded_divide_admissible(k_size, bk)
+}
+
+/// Linearize CTA block ID from (cta_m, cta_n) coordinates.
+pub open spec fn gemm_cta_index(cta_m: nat, cta_n: nat, num_m_tiles: nat) -> nat {
+    cta_m + cta_n * num_m_tiles
+}
+
+// ══════════════════════════════════════════════════════════════
+// SM80 MMA Atom Instances (m16n8k16)
+// ══════════════════════════════════════════════════════════════
+
+/// SM80 m16n8k16 A-fragment thread layout: 32 threads in 4×8 grid.
+pub open spec fn sm80_m16n8k16_thr_a() -> LayoutSpec {
+    LayoutSpec { shape: seq![4nat, 8nat], stride: seq![2int, 16int] }
+}
+
+/// SM80 m16n8k16 A-fragment value layout: 8 values per thread in 2×4 grid.
+pub open spec fn sm80_m16n8k16_val_a() -> LayoutSpec {
+    LayoutSpec { shape: seq![2nat, 4nat], stride: seq![1int, 4int] }
+}
+
+/// SM80 m16n8k16 B-fragment thread layout: 32 threads in 4×8 grid.
+pub open spec fn sm80_m16n8k16_thr_b() -> LayoutSpec {
+    LayoutSpec { shape: seq![4nat, 8nat], stride: seq![2int, 16int] }
+}
+
+/// SM80 m16n8k16 B-fragment value layout: 4 values per thread in 2×2 grid.
+pub open spec fn sm80_m16n8k16_val_b() -> LayoutSpec {
+    LayoutSpec { shape: seq![2nat, 2nat], stride: seq![1int, 8int] }
+}
+
+/// SM80 m16n8k16 D-fragment (accumulator) thread layout: 32 threads in 4×8 grid.
+pub open spec fn sm80_m16n8k16_thr_d() -> LayoutSpec {
+    LayoutSpec { shape: seq![4nat, 8nat], stride: seq![2int, 16int] }
+}
+
+/// SM80 m16n8k16 D-fragment (accumulator) value layout: 4 values per thread in 2×2 grid.
+pub open spec fn sm80_m16n8k16_val_d() -> LayoutSpec {
+    LayoutSpec { shape: seq![2nat, 2nat], stride: seq![1int, 8int] }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Deeper GEMM Pipeline: warp/register partitioning
+// ══════════════════════════════════════════════════════════════
+
+/// Partition a CTA tile into warp tiles. warp_count warps each handle a sub-tile.
+pub open spec fn warp_partition(
+    cta_tile: &DividedLayout,
+    warp_layout: &LayoutSpec,
+) -> DividedLayout
+    recommends
+        divided_layout_valid(cta_tile),
+        warp_layout.valid(),
+        warp_layout.shape.len() > 0,
+{
+    let divided = zipped_divide(&cta_tile.layout, warp_layout);
+    DividedLayout {
+        layout: divided.layout,
+        tile_rank: warp_layout.shape.len(),
+    }
+}
+
+/// Partition a warp tile into MMA-atom-sized register tiles.
+pub open spec fn register_partition(
+    warp_tile: &DividedLayout,
+    mma_atom: &LayoutSpec,
+) -> DividedLayout
+    recommends
+        divided_layout_valid(warp_tile),
+        mma_atom.valid(),
+        mma_atom.shape.len() > 0,
+{
+    let divided = zipped_divide(&warp_tile.layout, mma_atom);
+    DividedLayout {
+        layout: divided.layout,
+        tile_rank: mma_atom.shape.len(),
+    }
+}
+
+/// Which buffer slot to use at K-iteration k_iter.
+pub open spec fn double_buffer_slot(k_iter: nat, num_buffers: nat) -> nat
+    recommends num_buffers > 0,
+{
+    k_iter % num_buffers
+}
+
+/// Admissibility for double buffering.
+pub open spec fn double_buffer_admissible(num_k_tiles: nat, num_buffers: nat) -> bool {
+    &&& num_buffers > 0
+    &&& num_k_tiles > 0
+}
+
+/// Partition the output C-tile for epilogue: each thread writes its accumulator.
+pub open spec fn epilogue_partition(
+    c_tile: &DividedLayout,
+    thread_layout: &LayoutSpec,
+) -> (LayoutSpec, int)
+    recommends
+        divided_layout_valid(c_tile),
+        thread_layout.valid(),
+{
+    local_partition(c_tile, thread_layout, 0)
+}
+
 } // verus!

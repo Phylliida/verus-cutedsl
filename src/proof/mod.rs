@@ -14,3 +14,4 @@ pub mod tiling_lemmas;
 pub mod predication_lemmas;
 pub mod compatibility_lemmas;
 pub mod permutation_lemmas;
+pub mod gemm_lemmas;

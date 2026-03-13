@@ -70,4 +70,35 @@ pub open spec fn padded_divide_admissible(total_size: nat, tile_size: nat) -> bo
     &&& total_size > 0
 }
 
+// ══════════════════════════════════════════════════════════════
+// Predicated copy helpers
+// ══════════════════════════════════════════════════════════════
+
+/// Which tile contains linear index idx.
+pub open spec fn tile_for_index(idx: nat, tile_size: nat) -> nat
+    recommends tile_size > 0,
+{
+    idx / tile_size
+}
+
+/// Position within tile for linear index idx.
+pub open spec fn elem_in_tile(idx: nat, tile_size: nat) -> nat
+    recommends tile_size > 0,
+{
+    idx % tile_size
+}
+
+/// Each valid element is covered by exactly one tile-element pair.
+pub open spec fn predicated_coverage_unique(original_size: nat, tile_size: nat) -> bool
+    recommends padded_divide_admissible(original_size, tile_size),
+{
+    forall|x: nat| x < original_size ==>
+        tile_element_valid(
+            tile_for_index(x, tile_size),
+            tile_size,
+            elem_in_tile(x, tile_size),
+            original_size,
+        )
+}
+
 } // verus!
