@@ -295,4 +295,272 @@ pub fn contraction_output_shape_exec(
     result
 }
 
+/// Helper: compare two Vec<u64> for element-wise equality.
+fn vec_eq(a: &Vec<u64>, b: &Vec<u64>) -> (result: bool)
+    ensures
+        result == (a@ =~= b@),
+{
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < a.len()
+        invariant
+            0 <= i <= a.len(),
+            a.len() == b.len(),
+            forall|j: nat| j < i ==> a@[j as int] == b@[j as int],
+        decreases a.len() - i,
+    {
+        if a[i] != b[i] {
+            assert(a@[i as int] != b@[i as int]);
+            return false;
+        }
+        i = i + 1;
+    }
+    assert(a@ =~= b@);
+    true
+}
+
+/// Compute gathered_product at runtime.
+///
+/// gathered_product(shape, modes) is the product of shape[modes[i]] for all i.
+pub fn gathered_product_exec(
+    shape: &Vec<u64>, modes: &Vec<u64>,
+) -> (result: u64)
+    requires
+        forall|i: nat| i < modes.len() ==> (#[trigger] modes@[i as int] as nat) < shape.len(),
+        forall|i: nat| i < shape.len() ==> (#[trigger] shape@[i as int]) > 0u64,
+        gathered_product(&shape_to_nat_seq(shape@), &shape_to_nat_seq(modes@)) <= u64::MAX as nat,
+    ensures
+        result as nat == gathered_product(&shape_to_nat_seq(shape@), &shape_to_nat_seq(modes@)),
+{
+    let sn = Ghost(shape_to_nat_seq(shape@));
+    let mn = Ghost(shape_to_nat_seq(modes@));
+    let mut acc: u64 = 1;
+    let mut i: usize = 0;
+    while i < modes.len()
+        invariant
+            0 <= i <= modes.len(),
+            sn@ == shape_to_nat_seq(shape@),
+            mn@ == shape_to_nat_seq(modes@),
+            acc as nat == gathered_product(&sn@, &mn@.take(i as int)),
+            gathered_product(&sn@, &mn@) <= u64::MAX as nat,
+            forall|k: nat| k < modes.len() ==> (#[trigger] modes@[k as int] as nat) < shape.len(),
+            forall|k: nat| k < shape.len() ==> (#[trigger] shape@[k as int]) > 0u64,
+        decreases modes.len() - i,
+    {
+        let mode_idx = modes[i] as usize;
+        let val = shape[mode_idx];
+        proof {
+            let ti = mn@.take(i as int);
+            let ti1 = mn@.take((i + 1) as int);
+            assert(ti1.len() > 0);
+            assert(ti1.last() == mn@[i as int]);
+            assert(ti1.drop_last() =~= ti);
+
+            // Bridge val to spec level
+            assert(mn@[i as int] == modes@[i as int] as nat);
+            assert(sn@[mn@[i as int] as int] == shape@[modes@[i as int] as int] as nat);
+            assert(val as nat == sn@[mn@[i as int] as int]);
+
+            // Prove shapes positive at nat level for monotonicity
+            assert forall|k: nat| k < sn@.len()
+            implies (#[trigger] sn@[k as int]) > 0nat
+            by {
+                assert(shape@[k as int] > 0u64);
+            };
+            lemma_gathered_product_monotone(&sn@, &mn@, i as nat);
+            // gp(modes.take(i+1)) <= gp(modes) <= u64::MAX
+            let gp_i1 = gathered_product(&sn@, &ti1);
+            assert(gp_i1 == sn@[mn@[i as int] as int] * gathered_product(&sn@, &ti));
+            assert(gp_i1 == (val as nat) * (acc as nat));
+            assert(gp_i1 <= u64::MAX as nat);
+        }
+        acc = acc * val;
+        i = i + 1;
+    }
+    proof {
+        assert(mn@.take(modes@.len() as int) =~= mn@);
+    }
+    acc
+}
+
+/// gathered_product of a prefix is <= gathered_product of the whole.
+proof fn lemma_gathered_product_monotone(
+    shape: &Seq<nat>, modes: &Seq<nat>, k: nat,
+)
+    requires
+        k < modes.len(),
+        forall|i: nat| i < modes.len() ==> (#[trigger] modes[i as int]) < shape.len(),
+        forall|i: nat| i < shape.len() ==> (#[trigger] shape[i as int]) > 0nat,
+    ensures
+        gathered_product(shape, &modes.take((k + 1) as int))
+        <= gathered_product(shape, modes),
+    decreases modes.len() - k,
+{
+    if k + 1 == modes.len() {
+        assert(modes.take((k + 1) as int) =~= *modes);
+    } else {
+        assert(modes.drop_last().take((k + 1) as int)
+            =~= modes.take((k + 1) as int));
+        // Modes in range for drop_last
+        assert forall|j: nat| j < modes.drop_last().len()
+        implies (#[trigger] modes.drop_last()[j as int]) < shape.len()
+        by {
+            assert(modes[j as int] < shape.len());
+            assert(modes.drop_last()[j as int] == modes[j as int]);
+        };
+        lemma_gathered_product_monotone(shape, &modes.drop_last(), k);
+        let last_val = shape[modes.last() as int];
+        assert(last_val >= 1nat);
+        let gp_dl = gathered_product(shape, &modes.drop_last());
+        assert(gathered_product(shape, modes) == last_val * gp_dl);
+        assert(gp_dl <= last_val * gp_dl) by (nonlinear_arith)
+            requires last_val >= 1nat, gp_dl >= 0nat;
+    }
+}
+
+/// Compute contraction_reduction_size at runtime.
+pub fn contraction_reduction_size_exec(
+    spec: &RuntimeContractionSpec,
+    a_shape: &Vec<u64>,
+) -> (result: u64)
+    requires
+        forall|i: nat| i < spec.contraction_modes_a.len()
+            ==> (#[trigger] spec.contraction_modes_a@[i as int] as nat) < a_shape.len(),
+        forall|i: nat| i < a_shape.len() ==> (#[trigger] a_shape@[i as int]) > 0u64,
+        gathered_product(
+            &shape_to_nat_seq(a_shape@),
+            &shape_to_nat_seq(spec.contraction_modes_a@),
+        ) <= u64::MAX as nat,
+    ensures
+        result as nat == contraction_reduction_size(&spec@, &shape_to_nat_seq(a_shape@)),
+{
+    gathered_product_exec(a_shape, &spec.contraction_modes_a)
+}
+
+/// Check contraction_shapes_match at runtime.
+fn check_shapes_match(
+    spec: &RuntimeContractionSpec,
+    a_shape: &Vec<u64>, b_shape: &Vec<u64>,
+) -> (result: bool)
+    requires
+        contraction_mode_sets_valid(&spec@, a_shape.len() as nat, b_shape.len() as nat),
+        spec.wf_spec(),
+    ensures
+        result == contraction_shapes_match(&spec@, &shape_to_nat_seq(a_shape@), &shape_to_nat_seq(b_shape@)),
+{
+    proof {
+        let sv = spec@;
+        let as_ = shape_to_nat_seq(a_shape@);
+        let bs_ = shape_to_nat_seq(b_shape@);
+        // batch modes in range
+        assert forall|i: nat| i < spec.batch_modes_a.len()
+        implies (#[trigger] spec.batch_modes_a@[i as int] as nat) < a_shape.len()
+        by { assert(sv.batch_modes_a[i as int] < as_.len()); };
+        assert forall|i: nat| i < spec.batch_modes_b.len()
+        implies (#[trigger] spec.batch_modes_b@[i as int] as nat) < b_shape.len()
+        by { assert(sv.batch_modes_b[i as int] < bs_.len()); };
+        // contraction modes in range
+        assert forall|i: nat| i < spec.contraction_modes_a.len()
+        implies (#[trigger] spec.contraction_modes_a@[i as int] as nat) < a_shape.len()
+        by { assert(sv.contraction_modes_a[i as int] < as_.len()); };
+        assert forall|i: nat| i < spec.contraction_modes_b.len()
+        implies (#[trigger] spec.contraction_modes_b@[i as int] as nat) < b_shape.len()
+        by { assert(sv.contraction_modes_b[i as int] < bs_.len()); };
+    }
+
+    let batch_a = gather_shape_exec(a_shape, &spec.batch_modes_a);
+    let batch_b = gather_shape_exec(b_shape, &spec.batch_modes_b);
+    let contr_a = gather_shape_exec(a_shape, &spec.contraction_modes_a);
+    let contr_b = gather_shape_exec(b_shape, &spec.contraction_modes_b);
+
+    let batch_match = vec_eq(&batch_a, &batch_b);
+    let contr_match = vec_eq(&contr_a, &contr_b);
+
+    proof {
+        let sv = spec@;
+        let as_ = shape_to_nat_seq(a_shape@);
+        let bs_ = shape_to_nat_seq(b_shape@);
+        let batch_a_spec = gather_shape(&as_, &sv.batch_modes_a);
+        let batch_b_spec = gather_shape(&bs_, &sv.batch_modes_b);
+        let contr_a_spec = gather_shape(&as_, &sv.contraction_modes_a);
+        let contr_b_spec = gather_shape(&bs_, &sv.contraction_modes_b);
+
+        // Bridge: batch_a@ =~= batch_b@ ↔ batch_a_spec =~= batch_b_spec
+        if batch_match {
+            assert(batch_a@ =~= batch_b@);
+            assert forall|j: int| 0 <= j < batch_a_spec.len()
+            implies batch_a_spec[j] == batch_b_spec[j]
+            by {
+                assert(batch_a@[j] as nat == batch_a_spec[j]);
+                assert(batch_b@[j] as nat == batch_b_spec[j]);
+                assert(batch_a@[j] == batch_b@[j]);
+            };
+            assert(batch_a_spec =~= batch_b_spec);
+        } else {
+            // batch_a@ !=~= batch_b@
+            // Need: batch_a_spec !=~= batch_b_spec
+            if batch_a.len() != batch_b.len() {
+                assert(batch_a_spec.len() != batch_b_spec.len());
+            } else {
+                // Same length, some element differs
+                // batch_a@ != batch_b@ and same len → exists witness
+                let wit = choose|j: int| 0 <= j < batch_a@.len() && batch_a@[j] != batch_b@[j];
+                assert(batch_a@[wit] != batch_b@[wit]);
+                assert(batch_a@[wit] as nat == batch_a_spec[wit]);
+                assert(batch_b@[wit] as nat == batch_b_spec[wit]);
+                assert(batch_a_spec[wit] != batch_b_spec[wit]);
+            }
+        }
+
+        if contr_match {
+            assert(contr_a@ =~= contr_b@);
+            assert forall|j: int| 0 <= j < contr_a_spec.len()
+            implies contr_a_spec[j] == contr_b_spec[j]
+            by {
+                assert(contr_a@[j] as nat == contr_a_spec[j]);
+                assert(contr_b@[j] as nat == contr_b_spec[j]);
+                assert(contr_a@[j] == contr_b@[j]);
+            };
+            assert(contr_a_spec =~= contr_b_spec);
+        } else {
+            if contr_a.len() != contr_b.len() {
+                assert(contr_a_spec.len() != contr_b_spec.len());
+            } else {
+                let wit = choose|j: int| 0 <= j < contr_a@.len() && contr_a@[j] != contr_b@[j];
+                assert(contr_a@[wit] != contr_b@[wit]);
+                assert(contr_a@[wit] as nat == contr_a_spec[wit]);
+                assert(contr_b@[wit] as nat == contr_b_spec[wit]);
+                assert(contr_a_spec[wit] != contr_b_spec[wit]);
+            }
+        }
+    }
+
+    batch_match && contr_match
+}
+
+/// Check contraction_admissible at runtime.
+pub fn contraction_admissible_exec(
+    spec: &RuntimeContractionSpec,
+    a_shape: &Vec<u64>, b_shape: &Vec<u64>,
+) -> (result: bool)
+    requires
+        spec.wf_spec(),
+        spec.batch_modes_a.len() + spec.contraction_modes_a.len() + spec.free_modes_a.len() <= u64::MAX as nat,
+        spec.batch_modes_b.len() + spec.contraction_modes_b.len() + spec.free_modes_b.len() <= u64::MAX as nat,
+    ensures
+        result == contraction_admissible(&spec@, &shape_to_nat_seq(a_shape@), &shape_to_nat_seq(b_shape@)),
+{
+    let a_rank = a_shape.len() as u64;
+    let b_rank = b_shape.len() as u64;
+
+    let valid = validate_contraction(spec, a_rank, b_rank);
+    if !valid {
+        return false;
+    }
+
+    check_shapes_match(spec, a_shape, b_shape)
+}
+
 } // verus!

@@ -335,11 +335,15 @@ pub proof fn lemma_predicated_divide_num_tiles(original_size: nat, tile_size: na
 
     lemma_zipped_divide_num_tiles(&a, &b);
     // num_tiles_divided == num_tiles(a, b) == padded / tile_size
+    assert(num_tiles_divided(&predicated_divide(original_size, tile_size))
+        == num_tiles(&a, &b));
+    assert(num_tiles(&a, &b) == padded / tile_size);
 
     crate::proof::predication_lemmas::lemma_num_tiles_is_padded(original_size, tile_size);
     let nt = num_tiles_ceil(original_size, tile_size);
     assert(nt * tile_size == padded);
     vstd::arithmetic::div_mod::lemma_div_multiples_vanish(nt as int, tile_size as int);
+    assert(padded / tile_size == nt);
 }
 
 /// Sum of valid element counts across all tiles equals original_size.
@@ -2372,6 +2376,41 @@ proof fn lemma_cosize_rank1(layout: LayoutSpec)
     assert(rest.cosize_nonneg() == 1nat);
 }
 
+/// Helper: for a rank-1 layout, offset(x) = x * stride[0].
+proof fn lemma_offset_rank1(layout: &LayoutSpec, x: nat)
+    requires
+        layout.valid(),
+        layout.shape.len() == 1,
+        x < layout.size(),
+    ensures
+        layout.offset(x) == (x as int) * layout.stride[0],
+{
+    let coords = delinearize(x, layout.shape);
+    lemma_delinearize_len(x, layout.shape);
+    assert(coords.len() == 1);
+
+    // shape_size([n]) == n for rank-1
+    assert(layout.shape.skip(1) =~= Seq::<nat>::empty());
+    assert(shape_size(layout.shape.skip(1)) == 1nat);
+    assert(shape_size(layout.shape) == layout.shape[0] * 1);
+    vstd::arithmetic::mul::lemma_mul_basics(layout.shape[0] as int);
+    assert(x < layout.shape[0]);
+
+    // delinearize: coords[0] = x % shape[0] = x (since x < shape[0])
+    assert(coords[0] == x % layout.shape[0]);
+    vstd::arithmetic::div_mod::lemma_small_mod(x as nat, layout.shape[0] as nat);
+    assert(coords[0] == x);
+
+    // dot_product([x], [stride[0]]) = x * stride[0]
+    let skip1_c = coords.skip(1);
+    let skip1_s = layout.stride.skip(1);
+    assert(skip1_c =~= Seq::<nat>::empty());
+    assert(skip1_s =~= Seq::<int>::empty());
+    assert(dot_product_nat_int(Seq::<nat>::empty(), Seq::<int>::empty()) == 0int);
+    assert(dot_product_nat_int(coords, layout.stride) ==
+        (coords[0] as int) * layout.stride[0] + dot_product_nat_int(skip1_c, skip1_s));
+}
+
 /// SM80 m16n8k8 A-fragment is valid MMA atom.
 pub proof fn lemma_sm80_m16n8k8_a_valid()
     ensures
@@ -2482,8 +2521,8 @@ pub proof fn lemma_sm80_m16n8k8_b_valid()
 
     lemma_shape_size_2(4, 8);
     assert(thr.size() == 32);
-    // val is rank-1: size = shape[0] = 2
-    assert(val.shape =~= seq![2nat]);
+    lemma_shape_size_singleton(2);
+    assert(val.size() == 2);
 
     assert(thr.shape.len() > 0);
 
@@ -2522,30 +2561,20 @@ pub proof fn lemma_sm80_m16n8k8_b_valid()
                 oj == (cj[0] as int) * 2 + (cj[1] as int) * 16;
     };
 
-    // val injectivity: rank-1, stride 1 — trivially injective
+    // val injectivity: rank-1, stride 1 — offset(x) = x
     assert forall|i: nat, j: nat|
         i < val.size() && j < val.size() && i != j
     implies
         val.offset(i) != val.offset(j)
     by {
-        // For rank-1 stride-1: offset(x) = x
-        let ci = delinearize(i, val.shape);
-        let cj = delinearize(j, val.shape);
-        lemma_delinearize_bounds(i, val.shape);
-        lemma_delinearize_bounds(j, val.shape);
-        lemma_delinearize_len(i, val.shape);
-        lemma_delinearize_len(j, val.shape);
-
-        if ci[0] == cj[0] {
-            assert(ci =~= cj);
-            lemma_delinearize_roundtrip(i, val.shape);
-            lemma_delinearize_roundtrip(j, val.shape);
-            assert(false);
-        }
-
-        // offset = ci[0] * 1
+        lemma_shape_size_singleton(2);
         lemma_offset_rank1(&val, i);
         lemma_offset_rank1(&val, j);
+        // offset(i) = i * 1 = i, offset(j) = j * 1 = j
+        vstd::arithmetic::mul::lemma_mul_basics(i as int);
+        vstd::arithmetic::mul::lemma_mul_basics(j as int);
+        assert(val.offset(i) == i as int);
+        assert(val.offset(j) == j as int);
     };
 }
 
@@ -2577,7 +2606,12 @@ pub proof fn lemma_sm80_m16n8k8_val_a_cosize()
     ensures sm80_m16n8k8_val_a().cosize_nonneg() == 6,
 {
     let val = sm80_m16n8k8_val_a();
+    // val = [2,2]:[1,4], cosize = (2-1)*1 + (2-1)*4 + 1 = 6
     lemma_cosize_rank2(val);
+    assert(val.shape[0] == 2nat);
+    assert(val.shape[1] == 2nat);
+    assert(val.stride[0] == 1int);
+    assert(val.stride[1] == 4int);
 }
 
 /// SM80 m16n8k8 val_b cosize = 2. (2-1)*1 + 1 = 2.
@@ -2585,7 +2619,16 @@ pub proof fn lemma_sm80_m16n8k8_val_b_cosize()
     ensures sm80_m16n8k8_val_b().cosize_nonneg() == 2,
 {
     let val = sm80_m16n8k8_val_b();
+    // val = [2]:[1], cosize = (2-1)*1 + 1 = 2
     lemma_cosize_rank1(val);
+    // lemma_cosize_rank1 ensures cosize == ((shape[0]-1) * (stride[0] as nat) + 1) as nat
+    assert(val.shape[0] == 2nat);
+    assert(val.stride[0] == 1int);
+    assert((val.stride[0] as nat) == 1nat);
+    assert((val.shape[0] - 1) == 1nat);
+    vstd::arithmetic::mul::lemma_mul_basics(1int);
+    assert(1nat * 1nat == 1nat);
+    assert((val.shape[0] - 1) * (val.stride[0] as nat) + 1 == 2nat);
 }
 
 /// SM80 m16n8k8 A-atom cosize = 119 * 6 = 714.
@@ -2599,7 +2642,6 @@ pub proof fn lemma_sm80_m16n8k8_a_atom_cosize()
     let thr = sm80_m16n8k8_thr_a();
     let val = sm80_m16n8k8_val_a();
     lemma_sm80_m16n8k8_a_valid();
-    // thr_a is same layout as m16n8k16 thr_a
     lemma_sm80_thr_cosize();
     assert(thr.cosize_nonneg() == sm80_m16n8k16_thr_a().cosize_nonneg()) by {
         assert(thr.shape =~= sm80_m16n8k16_thr_a().shape);
@@ -2607,7 +2649,6 @@ pub proof fn lemma_sm80_m16n8k8_a_atom_cosize()
     };
     lemma_sm80_m16n8k8_val_a_cosize();
     crate::proof::product_lemmas::lemma_product_cosize(&thr, &val);
-    // 119 * 6 == 714
 }
 
 /// SM80 m16n8k8 B-atom cosize = 119 * 2 = 238.
@@ -2628,7 +2669,6 @@ pub proof fn lemma_sm80_m16n8k8_b_atom_cosize()
     };
     lemma_sm80_m16n8k8_val_b_cosize();
     crate::proof::product_lemmas::lemma_product_cosize(&thr, &val);
-    // 119 * 2 == 238
 }
 
 /// All SM80 m16n8k8 A-fragment offsets are in [0, 714).
@@ -2642,13 +2682,10 @@ pub proof fn lemma_sm80_m16n8k8_a_offset_bounded()
     lemma_sm80_m16n8k8_a_atom_cosize();
     crate::proof::product_lemmas::lemma_product_valid(&thr, &val);
     crate::proof::product_lemmas::lemma_product_cosize(&thr, &val);
-
-    // Bridge thr cosize
     assert(thr.cosize_nonneg() == sm80_m16n8k16_thr_a().cosize_nonneg()) by {
         assert(thr.shape =~= sm80_m16n8k16_thr_a().shape);
         assert(thr.stride =~= sm80_m16n8k16_thr_a().stride);
     };
-
     lemma_mma_atom_size(&thr, &val);
     assert forall|x: nat|
         x < thr.size() * val.size()
@@ -2672,12 +2709,10 @@ pub proof fn lemma_sm80_m16n8k8_b_offset_bounded()
     lemma_sm80_m16n8k8_b_atom_cosize();
     crate::proof::product_lemmas::lemma_product_valid(&thr, &val);
     crate::proof::product_lemmas::lemma_product_cosize(&thr, &val);
-
     assert(thr.cosize_nonneg() == sm80_m16n8k16_thr_a().cosize_nonneg()) by {
         assert(thr.shape =~= sm80_m16n8k16_thr_a().shape);
         assert(thr.stride =~= sm80_m16n8k16_thr_a().stride);
     };
-
     lemma_mma_atom_size(&thr, &val);
     assert forall|x: nat|
         x < thr.size() * val.size()
@@ -2755,26 +2790,21 @@ pub proof fn lemma_warp_partition_element_count(
         * num_tiles_divided(&warp_partition(cta_tile, warp_layout))
         == shape_size(cta_tile.layout.shape),
 {
-    // Same pattern as lemma_register_partition_element_count
     let wp = warp_partition(cta_tile, warp_layout);
     let bs = shape_size(warp_layout.shape);
     let total = shape_size(cta_tile.layout.shape);
 
-    // tile_size(wp) == bs
     lemma_warp_partition_tile_size(cta_tile, warp_layout);
     assert(tile_size(&wp) == bs);
 
-    // num_tiles_divided(wp) == num_tiles
     lemma_warp_partition_num_tiles(cta_tile, warp_layout);
     lemma_zipped_divide_num_tiles(&cta_tile.layout, warp_layout);
     assert(num_tiles_divided(&wp) == num_tiles(&cta_tile.layout, warp_layout));
 
-    // complement_size * bs == total
     let comp_size = shape_size(complement(warp_layout, total).shape);
     crate::proof::complement_lemmas::lemma_complement_size(warp_layout, total);
     assert(comp_size * bs == total);
 
-    // num_tiles == total / bs == comp_size
     lemma_shape_size_positive(warp_layout.shape);
     crate::proof::complement_lemmas::lemma_complement_shape_valid(warp_layout, total);
     lemma_shape_size_positive(complement(warp_layout, total).shape);
@@ -2782,11 +2812,10 @@ pub proof fn lemma_warp_partition_element_count(
     vstd::arithmetic::div_mod::lemma_div_multiples_vanish(comp_size as int, bs as int);
     assert(total / bs == comp_size);
     assert(num_tiles_divided(&wp) == comp_size);
-    assert(tile_size(&wp) * num_tiles_divided(&wp) == bs * comp_size);
 }
 
-/// Three-level element factoring: atom_size × registers × warps == total.
-pub proof fn lemma_partition_chain_factoring(
+/// Three-level consistency: both partition element counts equal the total.
+pub proof fn lemma_partition_chain_consistency(
     cta_tile: &DividedLayout,
     warp_layout: &LayoutSpec,
     mma_atom: &LayoutSpec,
@@ -2798,157 +2827,19 @@ pub proof fn lemma_partition_chain_factoring(
     ensures ({
         let wp = warp_partition(cta_tile, warp_layout);
         let rp = register_partition(&wp, mma_atom);
-        tile_size(&rp) * num_tiles_divided(&rp) * num_tiles_divided(&wp)
-        == shape_size(cta_tile.layout.shape)
+        &&& tile_size(&rp) * num_tiles_divided(&rp) == shape_size(cta_tile.layout.shape)
+        &&& tile_size(&wp) * num_tiles_divided(&wp) == shape_size(cta_tile.layout.shape)
+        &&& tile_size(&rp) == shape_size(mma_atom.shape)
+        &&& tile_size(&wp) == shape_size(warp_layout.shape)
     }),
 {
     let wp = warp_partition(cta_tile, warp_layout);
-
-    // atom_size * regs_per_warp == warp_size
     lemma_warp_partition_valid(cta_tile, warp_layout);
-    lemma_register_partition_element_count(&wp, mma_atom);
-    // tile_size(rp) * num_tiles_divided(rp) == shape_size(wp.layout.shape)
-
-    // warp_size * num_warps == total
-    lemma_warp_partition_element_count(cta_tile, warp_layout);
-    // tile_size(wp) * num_tiles_divided(wp) == shape_size(cta_tile.layout.shape)
-
-    // tile_size(wp) == shape_size(wp.layout.shape) / num_tiles_divided(wp)
-    // But we need: tile_size(rp) * num_tiles_divided(rp) == tile_size(wp)
-    // From register: ts(rp) * nt(rp) == shape_size(wp.layout.shape)
-    // From warp: ts(wp) * nt(wp) == shape_size(cta_tile.layout.shape)
-    // And: shape_size(wp.layout.shape) == shape_size(cta_tile.layout.shape)
     lemma_warp_partition_size(cta_tile, warp_layout);
-    assert(shape_size(wp.layout.shape) == shape_size(cta_tile.layout.shape));
-
-    // So ts(rp) * nt(rp) == total, and ts(wp) * nt(wp) == total
-    // We need: ts(rp) * nt(rp) * nt(wp) == total
-    // From register element count in terms of wp tile size:
-    // ts(rp) * nt(rp) == wp.layout.size() == cta.layout.size()
-    // Hmm, that gives ts(rp) * nt(rp) == total already, not wp tile size.
-    // Actually shape_size(wp.layout.shape) == total (from warp_partition_size).
-    // So ts(rp) * nt(rp) == total.
-    // We want ts(rp) * nt(rp) * nt(wp) == total.
-    // That only works if nt(wp) == 1, which isn't always true.
-
-    // Rethink: register_partition operates on wp, and wp.layout.shape
-    // is the FULL divided layout shape (tile + rest modes).
-    // tile_size(wp) = shape_size(tile_shape(wp)) = shape_size of first tile_rank modes
-    // The register partition divides wp.layout, so it divides the full shape.
-    // ts(rp) * nt(rp) == shape_size(wp.layout.shape) == total
-
-    // What we really want: atom_size * regs_per_warp * num_warps == total
-    // where: atom_size = tile_size(rp), regs_per_warp = num_tiles_divided(rp)
-    // BUT num_tiles_divided(rp) counts ALL rest modes of rp, which includes
-    // wp's rest modes too. So nt(rp) already accounts for the warps!
-
-    // Actually let's re-examine. rp = register_partition(wp, mma_atom)
-    // = zipped_divide(wp.layout, mma_atom), tile_rank = mma_atom.shape.len()
-    // rp.layout = logical_divide(wp.layout, mma_atom)
-    // rp.layout.shape = mma_atom.shape ++ complement(mma_atom, wp.layout.size()).shape
-    // size = mma_atom_size * complement_size = wp.layout.size() = total
-    // So nt(rp) = complement_size = total / mma_atom_size
-    // And ts(rp) * nt(rp) = atom_size * (total/atom_size) = total
-
-    // The factoring the plan wants is really:
-    // atom_size * (regs_per_warp * num_warps) == total
-    // where regs_per_warp * num_warps == nt(rp)
-    // This is just ts(rp) * nt(rp) == total, with nt(rp) == total/atom_size.
-
-    // But the plan's ensures says:
-    // tile_size(rp) * num_tiles_divided(rp) * num_tiles_divided(wp) == total
-    // This is: (ts(rp) * nt(rp)) * nt(wp) == total
-    // = total * nt(wp) == total, which requires nt(wp) == 1. That's wrong.
-
-    // Actually re-read the ensures: it uses tile_size(rp) * nt(rp) * nt(wp).
-    // The factoring should be:
-    // tile_size(rp) = atom_size
-    // nt(rp) = registers per warp (NOT total/atom)
-    // nt(wp) = num warps
-
-    // register_partition divides wp.layout, which is already a divided layout.
-    // rp = zipped_divide(wp.layout, mma_atom)
-    // wp.layout = logical_divide(cta.layout, warp_layout)
-    // So rp.layout = logical_divide(wp.layout, mma_atom)
-    // rp.layout.size() = wp.layout.size() = cta.layout.size() = total
-
-    // tile_size(rp) = shape_size(rp.layout.shape.take(mma_atom.rank))
-    //              = shape_size(mma_atom.shape) = atom_size
-    // nt(rp) = shape_size(rp.layout.shape.skip(mma_atom.rank))
-    //        = total / atom_size
-    // nt(wp) = shape_size(wp.layout.shape.skip(warp_layout.rank))
-    //        = total / warp_size
-
-    // So the product ts(rp) * nt(rp) * nt(wp) would be
-    // atom_size * (total/atom_size) * (total/warp_size)
-    // = total * (total/warp_size) ≠ total in general
-
-    // I think the plan's ensures is wrong. The correct factoring should be:
-    // tile_size(rp) * num_tiles_within_warp * num_warps == total
-    // where num_tiles_within_warp would need us to count only the
-    // "register-level" rest modes, not including the warp rest modes.
-    // But nt(rp) counts all rest modes.
-
-    // Let me reconsider. Maybe the correct statement is simpler:
-    // ts(rp) * nt(rp) == total (already proved by register_element_count + warp_size)
-    // Let me just prove that directly.
-
-    let rp = register_partition(&wp, mma_atom);
-    assert(tile_size(&rp) * num_tiles_divided(&rp) == shape_size(wp.layout.shape));
-    assert(shape_size(wp.layout.shape) == shape_size(cta_tile.layout.shape));
-
-    // For the ensures clause, we have:
-    // ts(rp) * nt(rp) * nt(wp) = total * nt(wp)
-    // This equals total only if nt(wp) == 1.
-    // Since the ensures says it equals total, and nt(wp) may not be 1,
-    // we need to reconcile.
-
-    // Actually, wait. Let me re-read register_partition more carefully.
-    // register_partition(wp, mma_atom) divides wp.layout which has rank
-    // = warp_layout.rank + complement(warp_layout, cta.size()).rank
-    // The resulting rp.layout = logical_divide(wp.layout, mma_atom)
-    // rp.layout.shape = mma_atom.shape ++ complement(mma_atom, wp.layout.size()).shape
-    // rp.layout.size() = wp.layout.size() = cta.layout.size()
-    // nt(rp) = shape_size(complement(mma_atom, total).shape)
-    // ts(rp) = mma_atom.size()
-
-    // So indeed ts(rp) * nt(rp) = atom_size * (total/atom_size) = total
-    // nt(wp) = shape_size(complement(warp_layout, total).shape) = total/warp_size
-
-    // The claim ts(rp) * nt(rp) * nt(wp) == total needs nt(wp)==1.
-
-    // I think the plan intended a different formulation. Let me just prove
-    // what's true: ts(rp) * nt(rp) == total.
-    // And also: ts(wp) * nt(wp) == total.
-    // These already exist. So I'll modify the ensures to match reality.
-
-    // Actually, I think the useful factoring identity is:
-    // atom_size * regs_per_warp == warp_tile_size
-    // warp_tile_size * num_warps == total
-    // So: atom_size * regs_per_warp * num_warps == total
-    // where regs_per_warp != nt(rp) and warp_tile_size = ts(wp)
-
-    // Let me express it using ts and nt:
-    // ts(rp) * (ts(wp)/ts(rp)) * nt(wp) == total
-    // = ts(wp) * nt(wp) = total ✓
-
-    // The plan probably meant to use a notion of "registers per warp"
-    // that's ts(wp) / ts(rp) = warp_size / atom_size.
-    // Let me just prove ts(wp) * nt(wp) == total since that's the
-    // warp_partition_element_count lemma. And ts(rp) * X == ts(wp)
-    // where X = ts(wp)/ts(rp) = warp_size / atom_size.
-    // We need additional admissibility.
-
-    // For simplicity, let me just make this lemma a wrapper that proves
-    // the correct factoring, reusing what we have.
-    // From above: ts(rp) * nt(rp) == total, ts(wp) * nt(wp) == total
-
-    // The ensures in the plan says: ts(rp) * nt(rp) * nt(wp) == total
-    // This is wrong unless nt(wp)==1. Let me fix the ensures to state
-    // what IS provably true. I'll have it ensure both identities.
-
-    assert(tile_size(&rp) * num_tiles_divided(&rp) * num_tiles_divided(&wp)
-        == shape_size(cta_tile.layout.shape) * num_tiles_divided(&wp));
+    lemma_warp_partition_element_count(cta_tile, warp_layout);
+    lemma_warp_partition_tile_size(cta_tile, warp_layout);
+    lemma_register_partition_element_count(&wp, mma_atom);
+    lemma_register_partition_tile_size(&wp, mma_atom);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -2965,7 +2856,6 @@ pub proof fn lemma_zipped_divide_injective(a: &LayoutSpec, b: &LayoutSpec)
     ensures
         zipped_divide(a, b).layout.is_injective(),
 {
-    // zipped_divide(a,b).layout == logical_divide(a,b)
     crate::proof::divide_lemmas::lemma_divide_injective(a, b);
 }
 
@@ -2980,37 +2870,45 @@ pub proof fn lemma_predicated_divide_layout_injective(original_size: nat, tile_s
     let a = make_identity(padded);
     let b = make_identity(tile_size);
 
-    // a = (padded):(1), rank-1, stride-1, injective
+    // Prove divide_admissible(a, b) from padded_divide_admissible
+    lemma_predicated_divide_admissible(original_size, tile_size);
+    // divide_admissible implies a.valid() and b.valid()
+    assert(a.valid());
     assert(a.shape =~= seq![padded]);
     assert(a.stride =~= seq![1int]);
     assert(a.shape.len() == 1);
+    lemma_shape_size_singleton(padded);
 
-    // a is injective: offset(x) = x for identity layout
+    // a is injective: offset(x) = x * 1 = x
     assert forall|i: nat, j: nat|
         i < a.size() && j < a.size() && i != j
     implies
         a.offset(i) != a.offset(j)
     by {
+        lemma_shape_size_singleton(padded);
         lemma_offset_rank1(&a, i);
         lemma_offset_rank1(&a, j);
     };
 
-    // b = (tile_size):(1), column-major since rank-1 stride=[1]
+    // b = (tile_size):(1), column-major
     assert(b.shape =~= seq![tile_size]);
     assert(b.stride =~= seq![1int]);
-    // column_major_strides of a rank-1 shape is [1]
-    assert(column_major_strides(b.shape) =~= seq![1int]) by {
-        // column_major_strides([n]) = [1] for any n
-        assert(b.shape.len() == 1);
-    };
+    // Prove column_major_strides(seq![tile_size]) =~= seq![1int]
+    assert(b.shape.skip(1) =~= Seq::<nat>::empty());
+    assert(column_major_strides(Seq::<nat>::empty()) =~= Seq::<int>::empty());
+    assert(scale_strides_spec(Seq::<int>::empty(), tile_size as int) =~= Seq::<int>::empty());
+    assert(seq![1int].add(Seq::<int>::empty()) =~= seq![1int]);
+    assert(column_major_strides(b.shape) =~= seq![1int]);
     assert(b.stride =~= column_major_strides(b.shape));
 
-    // predicated_divide = zipped_divide(a, b)
     lemma_zipped_divide_injective(&a, &b);
 }
 
 /// Warp partition from predicated_divide is injective when warp_layout is column-major.
-/// This holds because predicated_divide.layout has identity offsets.
+///
+/// Strategy: pd.layout has stride[0] == 1, so compose(pd.layout, zipped2) has
+/// the same shape and stride as zipped2 (compose scales by stride[0] = 1).
+/// Since zipped2 = (wl ++ complement) is bijective, wp.layout is injective.
 pub proof fn lemma_warp_partition_injective_from_predicated(
     original_size: nat, tile_sz: nat, warp_layout: &LayoutSpec,
 )
@@ -3023,207 +2921,149 @@ pub proof fn lemma_warp_partition_injective_from_predicated(
         warp_partition(&predicated_divide(original_size, tile_sz), warp_layout).layout.is_injective(),
 {
     let pd = predicated_divide(original_size, tile_sz);
-
-    // pd.layout has identity offsets
-    // pd.layout is injective
-    lemma_predicated_divide_layout_injective(original_size, tile_sz);
-    assert(pd.layout.is_injective());
-
-    // pd.layout = logical_divide(identity(padded), identity(tile_sz))
-    // We need to show warp_partition(pd, warp_layout).layout is injective.
-    // warp_partition(pd, wl).layout = logical_divide(pd.layout, wl)
-    // pd.layout.offset(x) == x for all x < padded_size (identity offsets)
-    // So pd.layout is rank-1-equivalent in terms of offset behavior.
-    // But pd.layout has rank > 1 in general, so we can't directly use lemma_divide_injective.
-
-    // Alternative approach: show the full layout has identity offsets,
-    // which means it's trivially injective.
     let padded = padded_size(original_size, tile_sz);
     let wp = warp_partition(&pd, warp_layout);
+    let m = shape_size(pd.layout.shape);
 
-    // Show all offsets of wp.layout are distinct by chaining through pd's identity offset.
-    // wp.layout = logical_divide(pd.layout, warp_layout)
-    // For rank-1 warp_layout + column-major strides, divide_offset gives:
-    // logical_divide(A, B).offset(x) == A.offset(x) (when A is rank-1 + B column-major)
-    // But pd.layout is not rank-1!
+    // Prove divide_admissible for the underlying identity layouts
+    lemma_predicated_divide_admissible(original_size, tile_sz);
+    let id_padded = make_identity(padded);
+    let id_ts = make_identity(tile_sz);
 
-    // Let's try a different path: pd.layout.offset(x) == x,
-    // so pd.layout is bijective onto [0, padded).
-    // Any divide of a bijective layout should be bijective too.
-    // lemma_divide_bijective requires rank-1 A + column-major B.
+    // pd.layout is valid
+    lemma_zipped_divide_valid(&id_padded, &id_ts);
+    assert(pd.layout.valid());
+    assert(pd.layout.shape.len() > 0) by {
+        crate::proof::divide_lemmas::lemma_divide_rank(&id_padded, &id_ts);
+    };
 
-    // Since we can't directly use the rank-1 lemma here, let's use the
-    // offset identity property directly.
-    // We know: for all x < padded_size, pd.layout.offset(x) == x
-    // The warp partition just applies another divide on top.
-    // For rank-1 warp_layout with column-major strides applied to pd.layout:
-    // divide_offset: logical_divide(A, B).offset(x) == A.offset(x) [for rank-1 A]
-    // This doesn't apply since pd.layout isn't rank-1.
+    // pd.layout has stride[0] == 1
+    let c1 = complement(&id_ts, padded);
+    let z1 = LayoutSpec {
+        shape: id_ts.shape.add(c1.shape),
+        stride: id_ts.stride.add(c1.stride),
+    };
 
-    // Let's just prove injectivity directly using predicated_divide_offset_identity.
-    // wp.layout = logical_divide(pd.layout, warp_layout)
-    // wp.layout.size() == pd.layout.size() == padded_size (by divide preserves size)
-    // For distinct x, y < wp.layout.size():
-    //   wp.layout.offset(x) != wp.layout.offset(y)
-    // because logical_divide.offset goes through compose with (B, complement)
-    // which when composed with pd.layout gives identity offsets.
+    // complement_admissible(id_ts, padded) follows from divide_admissible
+    lemma_shape_size_singleton(padded);
+    assert(shape_size(id_padded.shape) == padded);
+    // z1 is valid + non-negative strides
+    crate::proof::complement_lemmas::lemma_complement_valid(&id_ts, padded);
+    crate::proof::complement_lemmas::lemma_complement_positive_strides(&id_ts, padded);
+    crate::proof::complement_lemmas::lemma_complement_shape_valid(&id_ts, padded);
+    assert(z1.valid()) by {
+        assert forall|i: int| 0 <= i < z1.shape.len()
+        implies #[trigger] z1.shape[i] > 0 by {
+            if i < id_ts.shape.len() as int {} else {
+                assert(z1.shape[i] == c1.shape[(i - id_ts.shape.len()) as int]);
+            }
+        };
+    };
+    assert(z1.non_negative_strides()) by {
+        assert forall|i: int| 0 <= i < z1.stride.len()
+        implies #[trigger] z1.stride[i] >= 0 by {
+            if i < id_ts.stride.len() as int {
+                assert(z1.stride[i] == id_ts.stride[i]);
+            } else {
+                assert(z1.stride[i] == c1.stride[(i - id_ts.stride.len()) as int]);
+            }
+        };
+    };
 
-    // Actually the cleanest path: pd.layout has identity offsets.
-    // compose(pd.layout, (B, complement(B, M))) also has identity offsets
-    // because compose(identity-offset, anything).offset(x) = identity.offset(anything.offset(x))
-    //   = anything.offset(x).
-    // And (B, complement) is bijective (from lemma_zipped_bijective),
-    // so anything.offset is injective, giving us distinct offsets.
+    // compose(identity(padded), z1).stride =~= scale(z1.stride, 1) =~= z1.stride
+    assert(id_padded.valid());
+    assert(id_padded.shape.len() > 0);
+    crate::proof::composition_lemmas::lemma_compose_stride_general(id_padded, z1);
+    assert(pd.layout.stride =~= scale_strides_spec(z1.stride, id_padded.stride.first()));
+    assert(id_padded.stride.first() == 1int);
+    // scale by 1 is identity
+    assert(scale_strides_spec(z1.stride, 1int) =~= z1.stride) by {
+        assert forall|i: int| 0 <= i < z1.stride.len()
+        implies scale_strides_spec(z1.stride, 1int)[i] == z1.stride[i]
+        by {
+            assert(scale_strides_spec(z1.stride, 1int)[i] == z1.stride[i] * 1int);
+            vstd::arithmetic::mul::lemma_mul_basics(z1.stride[i]);
+        };
+    };
+    assert(pd.layout.stride.first() == z1.stride.first());
+    assert(z1.stride.first() == id_ts.stride.first());
+    assert(id_ts.stride.first() == 1int);
+    assert(pd.layout.stride.first() == 1int);
 
-    // This is the lemma_divide_offset approach but for arbitrary rank A with identity offsets.
-    // Let's prove it using predicated_divide_offset_identity:
-    // pd.layout.offset(x) == x for x < padded
-    // divide(pd.layout, wl).offset(x) = compose(pd.layout, (wl, complement)).offset(x)
-    //   = pd.layout.offset((wl, complement).offset(x))
-    //   = (wl, complement).offset(x)
-    // Since (wl, complement) is bijective (rank-1 wl, column-major):
-    //   distinct x → distinct (wl, complement).offset(x) → distinct divide.offset(x)
+    // Build zipped2 = wl ++ complement(wl, m)
+    crate::proof::divide_lemmas::lemma_divide_size(&id_padded, &id_ts);
+    assert(m == padded);
+    let c2 = complement(warp_layout, m);
+    let z2 = LayoutSpec {
+        shape: warp_layout.shape.add(c2.shape),
+        stride: warp_layout.stride.add(c2.stride),
+    };
 
-    // But we need lemma_divide_offset for this, which requires rank-1 A.
-    // The identity-offset property lets us bypass that:
-    // divide(A, B).offset(x) = A.offset(concat_offset(B, comp, x))
-    //   where concat_offset is the offset of (B, complement(B, M)) at x.
-    // When A.offset = identity: divide.offset(x) = concat_offset(x).
-    // concat = (B ++ complement) layout is bijective → injective → done.
+    // z2 valid + non-negative strides
+    crate::proof::complement_lemmas::lemma_complement_valid(warp_layout, m);
+    crate::proof::complement_lemmas::lemma_complement_positive_strides(warp_layout, m);
+    crate::proof::complement_lemmas::lemma_complement_shape_valid(warp_layout, m);
+    assert(z2.valid()) by {
+        assert forall|i: int| 0 <= i < z2.shape.len()
+        implies #[trigger] z2.shape[i] > 0 by {
+            if i < warp_layout.shape.len() as int {} else {
+                assert(z2.shape[i] == c2.shape[(i - warp_layout.shape.len()) as int]);
+            }
+        };
+    };
+    assert(z2.non_negative_strides()) by {
+        crate::proof::injectivity_lemmas::lemma_column_major_strides_len(warp_layout.shape);
+        assert forall|i: int| 0 <= i < z2.stride.len()
+        implies #[trigger] z2.stride[i] >= 0 by {
+            if i < warp_layout.stride.len() as int {
+                assert(z2.stride[i] == warp_layout.stride[i]);
+            } else {
+                assert(z2.stride[i] == c2.stride[(i - warp_layout.stride.len()) as int]);
+            }
+        };
+    };
 
-    // Since we can't easily prove this without a new lemma about
-    // compose-with-identity, let me use a simpler approach: assert that
-    // wp.layout has identity offsets using predicated_divide_offset_identity
-    // composed with the divide structure.
+    // wp.layout = logical_divide(pd.layout, wl) = compose(pd.layout, z2)
+    // compose(pd.layout, z2).shape =~= z2.shape
+    crate::proof::composition_lemmas::lemma_compose_shape(pd.layout, z2);
+    // compose(pd.layout, z2).stride =~= scale(z2.stride, pd.layout.stride[0]) = scale(z2.stride, 1) =~= z2.stride
+    crate::proof::composition_lemmas::lemma_compose_stride_general(pd.layout, z2);
+    assert(compose(pd.layout, z2).stride =~= scale_strides_spec(z2.stride, 1int));
+    assert(scale_strides_spec(z2.stride, 1int) =~= z2.stride) by {
+        assert forall|i: int| 0 <= i < z2.stride.len()
+        implies scale_strides_spec(z2.stride, 1int)[i] == z2.stride[i]
+        by {
+            assert(scale_strides_spec(z2.stride, 1int)[i] == z2.stride[i] * 1int);
+            vstd::arithmetic::mul::lemma_mul_basics(z2.stride[i]);
+        };
+    };
 
-    // For now, use the fact that pd.layout is bijective and divide preserves bijectivity
-    // for rank-1 warp_layout + column-major strides.
-    // Actually pd.layout is NOT rank-1. It's rank = b.rank + complement.rank.
+    // So wp.layout has same shape and stride as z2
+    let wp_layout = wp.layout;
+    assert(wp_layout.shape =~= z2.shape);
+    assert(wp_layout.stride =~= z2.stride);
 
-    // Simplest correct approach: use lemma_divide_bijective on the identity layout
-    // BEFORE forming pd. predicated_divide = zipped_divide(identity(padded), identity(ts)).
-    // warp_partition(pd, wl).layout = logical_divide(pd.layout, wl)
-    //   = logical_divide(logical_divide(identity(padded), identity(ts)), wl)
+    // z2 is bijective onto [0, m) by lemma_zipped_bijective
+    crate::proof::complement_lemmas::lemma_zipped_bijective(warp_layout, m);
+    assert(z2.is_bijective_upto(m));
 
-    // We can instead view this as: divide(identity(padded), combined_tiler)
-    // where combined_tiler tiles at a finer granularity.
-    // But that's not how the specs are structured.
-
-    // Let me just directly prove injectivity using offset identity:
+    // Bijective → injective
+    // z2.is_injective() follows from is_bijective_upto
+    // Since wp_layout has same shape/stride, it has same offsets, hence also injective
     assert forall|i: nat, j: nat|
-        i < wp.layout.size() && j < wp.layout.size() && i != j
+        i < wp_layout.size() && j < wp_layout.size() && i != j
     implies
-        wp.layout.offset(i) != wp.layout.offset(j)
+        wp_layout.offset(i) != wp_layout.offset(j)
     by {
-        // wp.layout.size() == pd.layout.size() == padded
-        crate::proof::divide_lemmas::lemma_divide_size(&pd.layout, warp_layout);
-        assert(wp.layout.size() == pd.layout.size());
-
-        crate::proof::divide_lemmas::lemma_divide_size(
-            &make_identity(padded), &make_identity(tile_sz));
-        assert(pd.layout.size() == padded);
-
-        // pd has identity offsets
-        lemma_predicated_divide_offset_identity(original_size, tile_sz, i);
-        lemma_predicated_divide_offset_identity(original_size, tile_sz, j);
-        // pd.layout.offset(i) == i, pd.layout.offset(j) == j
-        // So pd.layout.offset(i) != pd.layout.offset(j) since i != j
-
-        // Now we need wp.layout.offset(i) != wp.layout.offset(j).
-        // wp.layout = logical_divide(pd.layout, warp_layout)
-        // logical_divide(A, B).offset(x) == A.offset(x) for rank-1 A + col-major B
-        // but pd.layout is NOT rank-1.
-
-        // Use the offset identity chain:
-        // pd.layout is bijective (injective + surjective onto [0, padded))
-        // So pd.layout acts as a permutation.
-        // divide(A, B).offset(x) = A.offset(zipped_index)
-        // where zipped_index = (B ++ complement(B, M)).offset(x)
-        // (B ++ comp) is bijective → zipped_index is a bijection on [0, M)
-        // A.offset is also a bijection (identity) on [0, M)
-        // So compose of two bijections is a bijection → injective.
-
-        // But we need to formalize this. The key insight is that
-        // logical_divide(A, B) = compose(A, (B, complement(B, size(A))))
-        // The concat layout (B, comp) is bijective by lemma_zipped_bijective.
-        // A.offset is injective (identity).
-        // compose(A, concat).offset(x) = A.offset(concat.offset(x))
-        //   = concat.offset(x) (since A.offset = identity)
-        // So divide.offset = concat.offset, which is bijective → injective. ✓
-
-        // We need: wp.layout.offset(i) != wp.layout.offset(j)
-        // wp.layout = logical_divide(pd.layout, warp_layout)
-        // = compose(pd.layout, (warp_layout, complement(warp_layout, pd.layout.size())))
-
-        // Let's use the fact that for the padded identity, we can just
-        // call lemma_divide_offset on a rank-1 identity.
-        // predicated_divide(os, ts) = zipped_divide(identity(padded), identity(ts))
-        // zipped_divide.layout = logical_divide(identity(padded), identity(ts))
-        // warp_partition = zipped_divide(pd.layout, wl)
-        // warp_partition.layout = logical_divide(pd.layout, wl)
-
-        // pd.layout = logical_divide(identity(padded), identity(ts))
-        // logical_divide(pd.layout, wl) -- this is the compose chain
-
-        // Alternative: show identity(padded) -divide-> pd -divide-> wp
-        // maps offset(x) to x, using two applications of divide_offset.
-
-        // For the first divide (identity → pd):
-        // pd.layout.offset(x) = identity(padded).offset(x) = x
-        // (already proved by predicated_divide_offset_identity)
-
-        // Actually, we can observe:
-        // warp_partition(pd, wl).layout = logical_divide(pd.layout, wl)
-        // = compose(pd.layout, (wl ++ complement(wl, pd_size)))
-        // For rank-1 wl + column-major strides:
-        //   lemma_divide_offset shows this equals pd.layout.offset(x)
-        //   but ONLY if pd.layout is rank-1!
-        // pd.layout is NOT rank-1 (it's rank = 1 + compl_rank from first divide).
-
-        // I think we need to just prove this with the identity offset + zipped bijective approach.
-        // The concat layout (wl ++ complement) is bijective by lemma_zipped_bijective.
-        // compose(pd.layout, concat).offset(x) = pd.layout.offset(concat.offset(x))
-        //   = concat.offset(x) (since pd.offset = identity)
-        // So wp.layout.offset(x) = concat.offset(x).
-        // Since concat is bijective, concat is injective, so distinct x → distinct offsets.
-
-        // But we don't have a general lemma_compose_offset that tells us
-        // compose(A, B).offset(x) == A.offset(B.offset(x)).
-        // The compose function is defined differently (distributes over B modes).
-        // Let's look at this differently.
-
-        // Actually, for rank-1 warp_layout, let's use a direct path.
-        // pd.layout has identity offsets: offset(x) = x.
-        // So pd.layout is the identity layout but with higher rank shape.
-        // But offset-wise it behaves like identity.
-
-        // For the divide to preserve identity offsets, we use the fact that
-        // divide_offset(A, B, x) == A.offset(x) for rank-1 B + col-major strides.
-        // WAIT - the lemma says rank-1 A, not rank-1 B!
-        // lemma_divide_offset requires a.shape.len() == 1, not b.
-
-        // So this approach fails. Let me think of another way.
-
-        // Actually pd.layout.offset(i) == i as int, pd.layout.offset(j) == j as int.
-        // pd.layout.is_injective() - already proved.
-        // We want wp.layout.is_injective() where wp.layout = logical_divide(pd.layout, wl).
-        // Since pd.layout is injective (identity offsets), and wl is rank-1 + col-major:
-        // Use lemma_divide_bijective? No, requires rank-1 A.
-
-        // Hmm. We have lemma_divide_injective requiring rank-1 A.
-        // pd.layout is NOT rank-1 (it's rank-2 from divide).
-
-        // I think we need to introduce assume(false) here for now,
-        // since proving divide_offset/injective for arbitrary rank A is deferred.
-        // OR we can just restrict the lemma to rank-1 warp_layout which is
-        // the common case for SM80.
-        // Actually let me check if there's a simpler path...
-
-        // The simplest approach: don't use this lemma at all for now.
-        // The plan says "This requires proving divide of an identity-offset layout
-        // preserves identity offsets. ... NOTE: deferred."
-        // So let me mark this with assume(false) as a proof debt.
-        assume(false);
+        // wp_layout and z2 have same shape/stride → same offsets
+        crate::proof::composition_lemmas::lemma_offset_eq_layout(
+            wp_layout.shape, wp_layout.stride, z2.shape, z2.stride, i);
+        crate::proof::composition_lemmas::lemma_offset_eq_layout(
+            wp_layout.shape, wp_layout.stride, z2.shape, z2.stride, j);
+        assert(wp_layout.offset(i) == z2.offset(i));
+        assert(wp_layout.offset(j) == z2.offset(j));
+        // z2 is bijective → injective: distinct inputs → distinct offsets
+        assert(z2.offset(i) != z2.offset(j));
     };
 }
 

@@ -291,7 +291,7 @@ proof fn lemma_compose_stride_1d(a: LayoutSpec, b: LayoutSpec)
 /// Helper: for a layout with shape s and stride t, the offset equals the dot product
 /// of the delinearized coordinates with the strides.
 /// If we substitute shape/stride with =~= equivalents, offset is preserved.
-proof fn lemma_offset_eq_layout(s1: Seq<nat>, t1: Seq<int>, s2: Seq<nat>, t2: Seq<int>, x: nat)
+pub proof fn lemma_offset_eq_layout(s1: Seq<nat>, t1: Seq<int>, s2: Seq<nat>, t2: Seq<int>, x: nat)
     requires
         s1 =~= s2,
         t1 =~= t2,
@@ -390,7 +390,7 @@ proof fn lemma_compose_single_mode_stride_value(a: LayoutSpec, s: nat, r: nat)
 }
 
 /// For arbitrary-rank A, compose(A, B).stride =~= scale(B.stride, A.stride[0]).
-proof fn lemma_compose_stride_general(a: LayoutSpec, b: LayoutSpec)
+pub proof fn lemma_compose_stride_general(a: LayoutSpec, b: LayoutSpec)
     requires a.valid(), b.valid(), a.shape.len() > 0, b.non_negative_strides(),
     ensures compose(a, b).stride =~= scale_strides_spec(b.stride, a.stride.first()),
 {
