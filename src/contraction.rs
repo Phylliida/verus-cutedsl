@@ -99,4 +99,29 @@ pub open spec fn batched_gemm_as_contraction() -> ContractionSpec {
     }
 }
 
+/// Contraction is fully admissible: mode sets valid + shapes match.
+pub open spec fn contraction_admissible(
+    spec: &ContractionSpec, a_shape: &Seq<nat>, b_shape: &Seq<nat>,
+) -> bool {
+    &&& contraction_mode_sets_valid(spec, a_shape.len(), b_shape.len())
+    &&& contraction_shapes_match(spec, a_shape, b_shape)
+}
+
+/// Product of gathered shapes (for computing contraction loop bounds).
+pub open spec fn gathered_product(shape: &Seq<nat>, modes: &Seq<nat>) -> nat
+    decreases modes.len(),
+{
+    if modes.len() == 0 { 1 }
+    else {
+        shape[modes.last() as int] * gathered_product(shape, &modes.drop_last())
+    }
+}
+
+/// The number of elements to sum over in a contraction.
+pub open spec fn contraction_reduction_size(
+    spec: &ContractionSpec, a_shape: &Seq<nat>,
+) -> nat {
+    gathered_product(a_shape, &spec.contraction_modes_a)
+}
+
 } // verus!

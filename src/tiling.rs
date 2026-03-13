@@ -342,6 +342,90 @@ pub open spec fn double_buffer_admissible(num_k_tiles: nat, num_buffers: nat) ->
     &&& num_k_tiles > 0
 }
 
+// ══════════════════════════════════════════════════════════════
+// SM80 MMA Atom Cosize specs
+// ══════════════════════════════════════════════════════════════
+
+/// SM80 m16n8k16 thr cosize = 119. max(3*2+7*16)+1 = 118+1.
+pub open spec fn sm80_m16n8k16_thr_cosize() -> nat { 119 }
+
+/// SM80 m16n8k16 val_a cosize = 14. max(1*1+3*4)+1 = 13+1.
+pub open spec fn sm80_m16n8k16_val_a_cosize() -> nat { 14 }
+
+/// SM80 m16n8k16 val_b cosize = 10. max(1*1+1*8)+1 = 9+1.
+pub open spec fn sm80_m16n8k16_val_b_cosize() -> nat { 10 }
+
+/// SM80 m16n8k16 val_d cosize = 10. Same layout as B.
+pub open spec fn sm80_m16n8k16_val_d_cosize() -> nat { 10 }
+
+/// MMA atom total storage: cosize(thr) * cosize(val).
+pub open spec fn sm80_m16n8k16_a_storage() -> nat { 119 * 14 }  // 1666
+pub open spec fn sm80_m16n8k16_b_storage() -> nat { 119 * 10 }  // 1190
+pub open spec fn sm80_m16n8k16_d_storage() -> nat { 119 * 10 }  // 1190
+
+/// Offset bound: every valid index maps to an offset in [0, cosize).
+pub open spec fn mma_offset_bounded(
+    thr: &LayoutSpec, val: &LayoutSpec, cosize: nat,
+) -> bool {
+    forall|x: nat| #![trigger mma_atom_layout(thr.shape, thr.stride, val.shape, val.stride).offset(x)]
+        x < thr.size() * val.size() ==> {
+        let layout = mma_atom_layout(thr.shape, thr.stride, val.shape, val.stride);
+        &&& layout.offset(x) >= 0
+        &&& layout.offset(x) < cosize as int
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Software pipelining specs
+// ══════════════════════════════════════════════════════════════
+
+/// Pipeline stage: which stage a K-iteration is in.
+pub open spec fn pipeline_stage(k_iter: nat, num_stages: nat) -> nat
+    recommends num_stages > 0,
+{
+    k_iter % num_stages
+}
+
+/// WAR hazard free: writer at k_w and reader at k_r use different buffer slots
+/// when they are different iterations.
+pub open spec fn war_hazard_free(
+    k_write: nat, k_read: nat, num_buffers: nat,
+) -> bool {
+    k_write != k_read ==>
+        double_buffer_slot(k_write, num_buffers) != double_buffer_slot(k_read, num_buffers)
+}
+
+/// RAW hazard free: data written at k_produce is consumed at k_consume
+/// from the same slot (same iteration) or from a different slot.
+pub open spec fn raw_hazard_free(
+    k_produce: nat, k_consume: nat, num_buffers: nat,
+) -> bool {
+    k_produce == k_consume
+    || double_buffer_slot(k_produce, num_buffers)
+       != double_buffer_slot(k_consume, num_buffers)
+}
+
+/// N-deep pipeline soundness: for any two K-iterations within the pipeline
+/// depth, their buffer slots don't collide.
+pub open spec fn pipeline_no_collision(
+    num_k_tiles: nat, num_buffers: nat,
+) -> bool {
+    forall|k1: nat, k2: nat|
+        k1 < num_k_tiles && k2 < num_k_tiles && k1 != k2
+        && ({
+            let diff = if k1 >= k2 { k1 - k2 } else { k2 - k1 };
+            diff < num_buffers
+        })
+        ==> double_buffer_slot(k1, num_buffers) != double_buffer_slot(k2, num_buffers)
+}
+
+/// Total SMEM storage for double buffering.
+pub open spec fn double_buffer_smem_size(
+    bm: nat, bk: nat, bn: nat, num_buffers: nat,
+) -> nat {
+    num_buffers * (bm * bk + bk * bn)
+}
+
 /// Partition the output C-tile for epilogue: each thread writes its accumulator.
 pub open spec fn epilogue_partition(
     c_tile: &DividedLayout,

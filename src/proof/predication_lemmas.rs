@@ -395,4 +395,202 @@ pub proof fn lemma_predicated_divide_injective_on_valid(
     };
 }
 
+// ══════════════════════════════════════════════════════════════
+// Predication boundary masking proofs (Feature 2 Round 2)
+// ══════════════════════════════════════════════════════════════
+
+/// Full tiles have all-true masks.
+pub proof fn lemma_full_tile_mask(tile_idx: nat, tile_size: nat, total_size: nat)
+    requires
+        tile_size > 0,
+        (tile_idx + 1) * tile_size <= total_size,
+    ensures
+        full_tile_mask_all_true(tile_idx, tile_size, total_size),
+{
+    lemma_full_tile_all_valid(tile_idx, tile_size, total_size);
+    assert forall|i: nat| i < tile_size implies
+        #[trigger] tile_predicate_mask(tile_idx, tile_size, total_size)[i as int] == true
+    by {
+        assert(tile_element_valid(tile_idx, tile_size, i, total_size));
+    };
+}
+
+/// Boundary tile mask is contiguous: first valid_count true, rest false.
+pub proof fn lemma_boundary_tile_mask_contiguous(
+    tile_idx: nat, tile_size: nat, total_size: nat,
+)
+    requires
+        tile_size > 0,
+        total_size > 0,
+        tile_idx * tile_size < total_size,
+        (tile_idx + 1) * tile_size > total_size,
+    ensures
+        mask_contiguous(
+            tile_predicate_mask(tile_idx, tile_size, total_size),
+            tile_valid_count(tile_idx, tile_size, total_size)),
+{
+    lemma_partial_tile_count(tile_idx, tile_size, total_size);
+    let vc = tile_valid_count(tile_idx, tile_size, total_size);
+    let mask = tile_predicate_mask(tile_idx, tile_size, total_size);
+
+    assert(mask.len() == tile_size);
+    assert(vc <= tile_size);
+
+    // For i < vc: tile_idx * tile_size + i < total_size → valid → true
+    assert forall|i: nat| i < vc implies #[trigger] mask[i as int] == true
+    by {
+        // vc == total_size - tile_idx * tile_size
+        // i < vc → tile_idx * tile_size + i < total_size
+        assert(tile_idx * tile_size + i < total_size);
+        assert(tile_element_valid(tile_idx, tile_size, i, total_size));
+    };
+
+    // For i >= vc: tile_idx * tile_size + i >= total_size → invalid → false
+    assert forall|i: nat| vc <= i && i < mask.len() implies #[trigger] mask[i as int] == false
+    by {
+        // i >= vc == total_size - tile_idx * tile_size
+        // tile_idx * tile_size + i >= total_size
+        assert(tile_idx * tile_size + i >= total_size);
+        assert(!tile_element_valid(tile_idx, tile_size, i, total_size));
+    };
+}
+
+/// Store predication implies in-bounds write.
+pub proof fn lemma_store_predication_in_bounds(
+    tile_idx: nat, tile_size: nat, total_size: nat, write_idx: nat,
+)
+    requires
+        tile_size > 0,
+        store_predication_safe(tile_idx, tile_size, total_size, write_idx),
+    ensures
+        tile_idx * tile_size + write_idx < total_size,
+{
+    // Unfold: store_predication_safe means mask[write_idx] == true
+    // mask[write_idx] == tile_element_valid(tile_idx, tile_size, write_idx, total_size)
+    // == tile_idx * tile_size + write_idx < total_size
+}
+
+/// Masked load preserves valid data, zeros padding.
+pub proof fn lemma_masked_load_correct(
+    tile_idx: nat, tile_size: nat, total_size: nat, elem_idx: nat,
+)
+    requires
+        tile_size > 0,
+        elem_idx < tile_size,
+    ensures
+        tile_element_valid(tile_idx, tile_size, elem_idx, total_size) ==>
+            tile_predicate_mask(tile_idx, tile_size, total_size)[elem_idx as int] == true,
+        !tile_element_valid(tile_idx, tile_size, elem_idx, total_size) ==>
+            tile_predicate_mask(tile_idx, tile_size, total_size)[elem_idx as int] == false,
+{
+    // Direct from tile_predicate_mask definition — mask[i] == tile_element_valid(...)
+}
+
+/// Mask popcount for full tiles equals tile_size.
+pub proof fn lemma_mask_popcount_full(tile_idx: nat, tile_size: nat, total_size: nat)
+    requires
+        tile_size > 0,
+        (tile_idx + 1) * tile_size <= total_size,
+    ensures
+        mask_count_consistent(tile_idx, tile_size, total_size),
+{
+    lemma_full_tile_all_valid(tile_idx, tile_size, total_size);
+    let mask = tile_predicate_mask(tile_idx, tile_size, total_size);
+    // All true → popcount == len == tile_size
+    lemma_mask_popcount_all_true(mask, tile_size);
+    // tile_valid_count == tile_size for full tiles
+}
+
+/// Helper: popcount of all-true mask of length n is n.
+proof fn lemma_mask_popcount_all_true(mask: Seq<bool>, n: nat)
+    requires
+        mask.len() == n,
+        forall|i: nat| i < n ==> #[trigger] mask[i as int] == true,
+    ensures
+        mask_popcount(mask) == n,
+    decreases n,
+{
+    if n == 0 {
+    } else {
+        assert(mask.last() == true) by {
+            assert(mask[(n - 1) as int] == true);
+        };
+        let prev = mask.drop_last();
+        assert(prev.len() == (n - 1) as nat);
+        assert forall|i: nat| i < (n - 1) as nat implies #[trigger] prev[i as int] == true
+        by {
+            assert(mask[i as int] == true);
+        };
+        lemma_mask_popcount_all_true(prev, (n - 1) as nat);
+    }
+}
+
+/// Mask popcount for boundary tiles.
+pub proof fn lemma_mask_popcount_boundary(tile_idx: nat, tile_size: nat, total_size: nat)
+    requires
+        tile_size > 0,
+        total_size > 0,
+        tile_idx * tile_size < total_size,
+        (tile_idx + 1) * tile_size > total_size,
+    ensures
+        mask_count_consistent(tile_idx, tile_size, total_size),
+{
+    lemma_boundary_tile_mask_contiguous(tile_idx, tile_size, total_size);
+    lemma_partial_tile_count(tile_idx, tile_size, total_size);
+    let vc = tile_valid_count(tile_idx, tile_size, total_size);
+    let mask = tile_predicate_mask(tile_idx, tile_size, total_size);
+    // mask is contiguous: first vc true, rest false
+    lemma_mask_popcount_contiguous(mask, vc);
+}
+
+/// Helper: popcount of a contiguous mask with vc true bits is vc.
+proof fn lemma_mask_popcount_contiguous(mask: Seq<bool>, vc: nat)
+    requires
+        mask_contiguous(mask, vc),
+    ensures
+        mask_popcount(mask) == vc,
+    decreases mask.len(),
+{
+    if mask.len() == 0 {
+        assert(vc == 0nat);
+    } else {
+        let n = mask.len() as nat;
+        if vc < n {
+            // Last element is false (n-1 >= vc)
+            assert(mask[(n - 1) as int] == false);
+            assert(mask.last() == false);
+            let prev = mask.drop_last();
+            // prev is contiguous with same vc
+            assert(prev.len() == (n - 1) as nat);
+            assert(mask_contiguous(prev, vc)) by {
+                assert(vc <= prev.len());
+                assert forall|i: nat| i < vc implies #[trigger] prev[i as int] == true
+                by {
+                    assert(mask[i as int] == true);
+                };
+                assert forall|i: nat| vc <= i && i < prev.len() implies #[trigger] prev[i as int] == false
+                by {
+                    assert(mask[i as int] == false);
+                };
+            };
+            lemma_mask_popcount_contiguous(prev, vc);
+        } else {
+            // vc == n, all true
+            assert(mask.last() == true) by {
+                assert(mask[(n - 1) as int] == true);
+            };
+            let prev = mask.drop_last();
+            assert(mask_contiguous(prev, (vc - 1) as nat)) by {
+                assert((vc - 1) as nat <= prev.len());
+                assert forall|i: nat| i < (vc - 1) as nat implies #[trigger] prev[i as int] == true
+                by {
+                    assert(mask[i as int] == true);
+                };
+                // No false range since vc-1 == prev.len()
+            };
+            lemma_mask_popcount_contiguous(prev, (vc - 1) as nat);
+        }
+    }
+}
+
 } // verus!

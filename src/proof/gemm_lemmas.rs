@@ -793,4 +793,63 @@ pub proof fn lemma_batched_gemm_contraction_valid()
     assert(spec.free_modes_b[0] < 3);
 }
 
+// ══════════════════════════════════════════════════════════════
+// Contraction proofs (Feature 5 Round 2)
+// ══════════════════════════════════════════════════════════════
+
+/// Contraction admissibility for GEMM case.
+pub proof fn lemma_gemm_contraction_admissible(a_shape: Seq<nat>, b_shape: Seq<nat>)
+    requires
+        a_shape.len() == 2,
+        b_shape.len() == 2,
+        a_shape[1] == b_shape[0],
+    ensures
+        contraction_admissible(&gemm_as_contraction(), &a_shape, &b_shape),
+{
+    lemma_gemm_contraction_valid();
+    lemma_gemm_contraction_shapes_match(a_shape, b_shape);
+}
+
+/// GEMM reduction size = K (a_shape[1]).
+pub proof fn lemma_gemm_reduction_size(a_shape: Seq<nat>)
+    requires a_shape.len() == 2,
+    ensures contraction_reduction_size(&gemm_as_contraction(), &a_shape) == a_shape[1],
+{
+    let spec = gemm_as_contraction();
+    assert(spec.contraction_modes_a =~= seq![1nat]);
+    let modes = spec.contraction_modes_a;
+    // gathered_product(a_shape, [1]) unfolds:
+    // modes.len() == 1, modes.last() == 1, modes.drop_last() == []
+    // = a_shape[1] * gathered_product(a_shape, [])
+    // = a_shape[1] * 1 = a_shape[1]
+    assert(modes.len() == 1);
+    assert(modes.last() == 1nat);
+    let dl = modes.drop_last();
+    assert(dl =~= Seq::<nat>::empty());
+    assert(dl.len() == 0);
+    // Force Z3 to see the base case
+    assert(gathered_product(&a_shape, &dl) == 1nat);
+    // Now the recursive step
+    assert(gathered_product(&a_shape, &modes) ==
+        a_shape[modes.last() as int] * gathered_product(&a_shape, &dl));
+    vstd::arithmetic::mul::lemma_mul_basics(a_shape[1] as int);
+}
+
+/// gathered_product of single mode = shape[mode].
+pub proof fn lemma_gathered_product_single(shape: &Seq<nat>, mode: nat)
+    requires mode < shape.len(),
+    ensures gathered_product(shape, &seq![mode]) == shape[mode as int],
+{
+    let modes = seq![mode];
+    assert(modes.len() == 1);
+    assert(modes.last() == mode);
+    let dl = modes.drop_last();
+    assert(dl =~= Seq::<nat>::empty());
+    assert(dl.len() == 0);
+    assert(gathered_product(shape, &dl) == 1nat);
+    assert(gathered_product(shape, &modes) ==
+        shape[modes.last() as int] * gathered_product(shape, &dl));
+    vstd::arithmetic::mul::lemma_mul_basics(shape[mode as int] as int);
+}
+
 } // verus!

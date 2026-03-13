@@ -1796,4 +1796,302 @@ pub proof fn lemma_three_level_disjoint(
     lemma_nested_partition_full_disjoint(layout, w1, r1, i, w2, r2, j);
 }
 
+// ══════════════════════════════════════════════════════════════
+// SM80 MMA Atom Cosize Proofs (Feature 1 Round 2)
+// ══════════════════════════════════════════════════════════════
+
+/// Helper: cosize of a rank-2 layout with non-negative strides.
+proof fn lemma_cosize_rank2(layout: LayoutSpec)
+    requires
+        layout.valid(),
+        layout.non_negative_strides(),
+        layout.shape.len() == 2,
+    ensures
+        layout.cosize_nonneg() ==
+            ((layout.shape[0] - 1) * (layout.stride[0] as nat)
+             + (layout.shape[1] - 1) * (layout.stride[1] as nat)
+             + 1) as nat,
+{
+    // Unfold cosize_nonneg for rank-2:
+    // cosize = (shape[0]-1)*stride[0] + rest.cosize_nonneg
+    // rest = {shape: [shape[1]], stride: [stride[1]]}
+    // rest.cosize_nonneg = (shape[1]-1)*stride[1] + 1
+    let rest = LayoutSpec {
+        shape: layout.shape.skip(1),
+        stride: layout.stride.skip(1),
+    };
+    assert(rest.shape =~= seq![layout.shape[1]]);
+    assert(rest.stride =~= seq![layout.stride[1]]);
+    assert(rest.shape.len() == 1);
+
+    // rest inner = {shape: [], stride: []}
+    let inner = LayoutSpec {
+        shape: rest.shape.skip(1),
+        stride: rest.stride.skip(1),
+    };
+    assert(inner.shape =~= Seq::<nat>::empty());
+    assert(inner.shape.len() == 0);
+    assert(inner.cosize_nonneg() == 1nat);
+
+    // rest.cosize = (shape[1]-1)*stride[1] + 1
+    assert(rest.cosize_nonneg() ==
+        ((rest.shape.first() - 1) * (rest.stride.first() as nat) + inner.cosize_nonneg()) as nat);
+}
+
+/// SM80 thr cosize = 119. (4-1)*2 + (8-1)*16 + 1 = 6+112+1.
+pub proof fn lemma_sm80_thr_cosize()
+    ensures sm80_m16n8k16_thr_a().cosize_nonneg() == 119,
+{
+    let thr = sm80_m16n8k16_thr_a();
+    lemma_cosize_rank2(thr);
+    assert(thr.shape[0] == 4nat);
+    assert(thr.shape[1] == 8nat);
+    assert(thr.stride[0] == 2int);
+    assert(thr.stride[1] == 16int);
+    assert(thr.stride[0] as nat == 2nat);
+    assert(thr.stride[1] as nat == 16nat);
+    // (4-1)*2 + (8-1)*16 + 1 = 6 + 112 + 1 = 119
+    assert(((4nat - 1) * 2nat + (8nat - 1) * 16nat + 1) as nat == 119nat);
+}
+
+/// SM80 val_a cosize = 14. (2-1)*1 + (4-1)*4 + 1 = 1+12+1.
+pub proof fn lemma_sm80_val_a_cosize()
+    ensures sm80_m16n8k16_val_a().cosize_nonneg() == 14,
+{
+    let val = sm80_m16n8k16_val_a();
+    lemma_cosize_rank2(val);
+    assert(val.shape[0] == 2nat);
+    assert(val.shape[1] == 4nat);
+    assert(val.stride[0] == 1int);
+    assert(val.stride[1] == 4int);
+    assert(val.stride[0] as nat == 1nat);
+    assert(val.stride[1] as nat == 4nat);
+}
+
+/// SM80 val_b cosize = 10. (2-1)*1 + (2-1)*8 + 1 = 1+8+1.
+pub proof fn lemma_sm80_val_b_cosize()
+    ensures sm80_m16n8k16_val_b().cosize_nonneg() == 10,
+{
+    let val = sm80_m16n8k16_val_b();
+    lemma_cosize_rank2(val);
+    assert(val.shape[0] == 2nat);
+    assert(val.shape[1] == 2nat);
+    assert(val.stride[0] == 1int);
+    assert(val.stride[1] == 8int);
+    assert(val.stride[0] as nat == 1nat);
+    assert(val.stride[1] as nat == 8nat);
+}
+
+/// SM80 val_d cosize = 10. Same layout as B.
+pub proof fn lemma_sm80_val_d_cosize()
+    ensures sm80_m16n8k16_val_d().cosize_nonneg() == 10,
+{
+    // D layout is identical to B layout
+    lemma_sm80_val_b_cosize();
+}
+
+/// MMA atom A cosize = thr_cosize * val_cosize = 119 * 14 = 1666.
+pub proof fn lemma_sm80_a_atom_cosize()
+    ensures
+        mma_atom_layout(
+            sm80_m16n8k16_thr_a().shape, sm80_m16n8k16_thr_a().stride,
+            sm80_m16n8k16_val_a().shape, sm80_m16n8k16_val_a().stride,
+        ).cosize_nonneg() == 1666,
+{
+    let thr = sm80_m16n8k16_thr_a();
+    let val = sm80_m16n8k16_val_a();
+    lemma_sm80_m16n8k16_a_valid();
+    lemma_sm80_thr_cosize();
+    lemma_sm80_val_a_cosize();
+    crate::proof::product_lemmas::lemma_product_cosize(&thr, &val);
+    // cosize(product(thr, val)) == cosize(thr) * cosize(val) == 119 * 14 == 1666
+}
+
+/// MMA atom B cosize = 119 * 10 = 1190.
+pub proof fn lemma_sm80_b_atom_cosize()
+    ensures
+        mma_atom_layout(
+            sm80_m16n8k16_thr_b().shape, sm80_m16n8k16_thr_b().stride,
+            sm80_m16n8k16_val_b().shape, sm80_m16n8k16_val_b().stride,
+        ).cosize_nonneg() == 1190,
+{
+    let thr = sm80_m16n8k16_thr_b();
+    let val = sm80_m16n8k16_val_b();
+    lemma_sm80_m16n8k16_b_valid();
+    // thr_b has same layout as thr_a
+    lemma_sm80_thr_cosize();
+    lemma_sm80_val_b_cosize();
+    // Need thr_b cosize == thr_a cosize since they have identical layouts
+    assert(thr.cosize_nonneg() == sm80_m16n8k16_thr_a().cosize_nonneg()) by {
+        assert(thr.shape =~= sm80_m16n8k16_thr_a().shape);
+        assert(thr.stride =~= sm80_m16n8k16_thr_a().stride);
+    };
+    crate::proof::product_lemmas::lemma_product_cosize(&thr, &val);
+}
+
+/// MMA atom D cosize = 119 * 10 = 1190.
+pub proof fn lemma_sm80_d_atom_cosize()
+    ensures
+        mma_atom_layout(
+            sm80_m16n8k16_thr_d().shape, sm80_m16n8k16_thr_d().stride,
+            sm80_m16n8k16_val_d().shape, sm80_m16n8k16_val_d().stride,
+        ).cosize_nonneg() == 1190,
+{
+    // D layout is identical to B layout
+    lemma_sm80_b_atom_cosize();
+    assert(sm80_m16n8k16_thr_d().shape =~= sm80_m16n8k16_thr_b().shape);
+    assert(sm80_m16n8k16_thr_d().stride =~= sm80_m16n8k16_thr_b().stride);
+    assert(sm80_m16n8k16_val_d().shape =~= sm80_m16n8k16_val_b().shape);
+    assert(sm80_m16n8k16_val_d().stride =~= sm80_m16n8k16_val_b().stride);
+}
+
+/// All SM80 A-fragment offsets are in [0, 1666).
+pub proof fn lemma_sm80_a_offset_bounded()
+    ensures mma_offset_bounded(&sm80_m16n8k16_thr_a(), &sm80_m16n8k16_val_a(), 1666),
+{
+    let thr = sm80_m16n8k16_thr_a();
+    let val = sm80_m16n8k16_val_a();
+    let layout = mma_atom_layout(thr.shape, thr.stride, val.shape, val.stride);
+    lemma_sm80_m16n8k16_a_valid();
+    lemma_sm80_a_atom_cosize();
+    // layout is product(thr, val), which has non-neg strides
+    crate::proof::product_lemmas::lemma_product_valid(&thr, &val);
+    crate::proof::product_lemmas::lemma_product_cosize(&thr, &val);
+
+    lemma_mma_atom_size(&thr, &val);
+    assert forall|x: nat|
+        x < thr.size() * val.size()
+    implies
+        #[trigger] layout.offset(x) >= 0
+        && layout.offset(x) < 1666int
+    by {
+        crate::proof::offset_lemmas::lemma_offset_nonneg(layout, x);
+        crate::proof::offset_lemmas::lemma_offset_upper_bound(layout, x);
+    };
+}
+
+/// All SM80 B-fragment offsets are in [0, 1190).
+pub proof fn lemma_sm80_b_offset_bounded()
+    ensures mma_offset_bounded(&sm80_m16n8k16_thr_b(), &sm80_m16n8k16_val_b(), 1190),
+{
+    let thr = sm80_m16n8k16_thr_b();
+    let val = sm80_m16n8k16_val_b();
+    let layout = mma_atom_layout(thr.shape, thr.stride, val.shape, val.stride);
+    lemma_sm80_m16n8k16_b_valid();
+    lemma_sm80_b_atom_cosize();
+    crate::proof::product_lemmas::lemma_product_valid(&thr, &val);
+    crate::proof::product_lemmas::lemma_product_cosize(&thr, &val);
+
+    assert(thr.cosize_nonneg() == sm80_m16n8k16_thr_a().cosize_nonneg()) by {
+        assert(thr.shape =~= sm80_m16n8k16_thr_a().shape);
+        assert(thr.stride =~= sm80_m16n8k16_thr_a().stride);
+    };
+
+    lemma_mma_atom_size(&thr, &val);
+    assert forall|x: nat|
+        x < thr.size() * val.size()
+    implies
+        #[trigger] layout.offset(x) >= 0
+        && layout.offset(x) < 1190int
+    by {
+        crate::proof::offset_lemmas::lemma_offset_nonneg(layout, x);
+        crate::proof::offset_lemmas::lemma_offset_upper_bound(layout, x);
+    };
+}
+
+/// All SM80 D-fragment offsets are in [0, 1190).
+pub proof fn lemma_sm80_d_offset_bounded()
+    ensures mma_offset_bounded(&sm80_m16n8k16_thr_d(), &sm80_m16n8k16_val_d(), 1190),
+{
+    lemma_sm80_b_offset_bounded();
+    // D and B have identical layouts
+    let thr_d = sm80_m16n8k16_thr_d();
+    let val_d = sm80_m16n8k16_val_d();
+    let thr_b = sm80_m16n8k16_thr_b();
+    let val_b = sm80_m16n8k16_val_b();
+    assert(thr_d.shape =~= thr_b.shape);
+    assert(thr_d.stride =~= thr_b.stride);
+    assert(val_d.shape =~= val_b.shape);
+    assert(val_d.stride =~= val_b.stride);
+    assert(thr_d.size() == thr_b.size());
+    assert(val_d.size() == val_b.size());
+}
+
+// ══════════════════════════════════════════════════════════════
+// Software Pipelining Hazard Freedom (Feature 4 Round 2)
+// ══════════════════════════════════════════════════════════════
+
+/// Consecutive iterations are WAR-hazard-free with >= 2 buffers.
+pub proof fn lemma_war_hazard_free_consecutive(k: nat, num_buffers: nat)
+    requires num_buffers >= 2,
+    ensures war_hazard_free(k, k + 1, num_buffers),
+{
+    lemma_double_buffer_alternates(k, num_buffers);
+}
+
+/// Pipeline no-collision for n-deep pipeline.
+pub proof fn lemma_pipeline_no_collision(num_k_tiles: nat, num_buffers: nat)
+    requires num_buffers >= 2,
+    ensures pipeline_no_collision(num_k_tiles, num_buffers),
+{
+    assert forall|k1: nat, k2: nat|
+        k1 < num_k_tiles && k2 < num_k_tiles && k1 != k2
+        && ({
+            let diff = if k1 >= k2 { k1 - k2 } else { k2 - k1 };
+            diff < num_buffers
+        })
+    implies
+        double_buffer_slot(k1, num_buffers) != double_buffer_slot(k2, num_buffers)
+    by {
+        // |k1 - k2| < num_buffers, k1 != k2 → 0 < |k1-k2| < num_buffers
+        // k1 % n != k2 % n when 0 < |k1-k2| < n
+        let diff = if k1 >= k2 { k1 - k2 } else { k2 - k1 };
+        assert(0 < diff && diff < num_buffers);
+        // WLOG k1 > k2 (symmetric)
+        if k1 > k2 {
+            // k1 = k2 + diff, 0 < diff < n
+            // k1 % n == (k2 + diff) % n
+            // If k1 % n == k2 % n, then diff % n == 0, but 0 < diff < n → contradiction
+            assert(k1 % num_buffers != k2 % num_buffers) by (nonlinear_arith)
+                requires
+                    k1 == k2 + diff,
+                    0 < diff,
+                    diff < num_buffers,
+                    num_buffers >= 2nat;
+        } else {
+            assert(k2 % num_buffers != k1 % num_buffers) by (nonlinear_arith)
+                requires
+                    k2 == k1 + diff,
+                    0 < diff,
+                    diff < num_buffers,
+                    num_buffers >= 2nat;
+        }
+    };
+}
+
+/// RAW-correct: producer at k, consumer at k use same slot.
+pub proof fn lemma_raw_same_iteration(k: nat, num_buffers: nat)
+    requires num_buffers > 0,
+    ensures raw_hazard_free(k, k, num_buffers),
+{
+    // Trivial — k_produce == k_consume
+}
+
+/// SMEM storage bound: double buffering with given tile sizes.
+pub proof fn lemma_double_buffer_smem_bound(bm: nat, bk: nat, bn: nat, num_buffers: nat)
+    requires bm > 0, bk > 0, bn > 0, num_buffers > 0,
+    ensures double_buffer_smem_size(bm, bk, bn, num_buffers) == num_buffers * (bm * bk + bk * bn),
+{
+    // Unfold definition — trivially true
+}
+
+/// Pipeline stage is bounded.
+pub proof fn lemma_pipeline_stage_bounded(k_iter: nat, num_stages: nat)
+    requires num_stages > 0,
+    ensures pipeline_stage(k_iter, num_stages) < num_stages,
+{
+    assert(k_iter % num_stages < num_stages) by (nonlinear_arith)
+        requires num_stages > 0nat;
+}
+
 } // verus!

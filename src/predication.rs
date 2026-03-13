@@ -101,4 +101,64 @@ pub open spec fn predicated_coverage_unique(original_size: nat, tile_size: nat) 
         )
 }
 
+// ══════════════════════════════════════════════════════════════
+// Predication boundary masking
+// ══════════════════════════════════════════════════════════════
+
+/// Predicate mask: a sequence of bools, true for valid elements.
+pub open spec fn tile_predicate_mask(
+    tile_idx: nat, tile_size: nat, total_size: nat,
+) -> Seq<bool> {
+    Seq::new(tile_size, |i: int|
+        tile_element_valid(tile_idx, tile_size, i as nat, total_size))
+}
+
+/// Masked value: returns val if mask is true, zero_val if masked out.
+pub open spec fn masked_value<T>(mask: bool, val: T, zero_val: T) -> T {
+    if mask { val } else { zero_val }
+}
+
+/// Count of true values in a bool mask.
+pub open spec fn mask_popcount(mask: Seq<bool>) -> nat
+    decreases mask.len(),
+{
+    if mask.len() == 0 { 0 }
+    else {
+        (if mask.last() { 1nat } else { 0nat })
+            + mask_popcount(mask.drop_last())
+    }
+}
+
+/// The mask popcount equals the tile valid count.
+pub open spec fn mask_count_consistent(
+    tile_idx: nat, tile_size: nat, total_size: nat,
+) -> bool {
+    mask_popcount(tile_predicate_mask(tile_idx, tile_size, total_size))
+        == tile_valid_count(tile_idx, tile_size, total_size)
+}
+
+/// Full tile: all mask bits are true.
+pub open spec fn full_tile_mask_all_true(
+    tile_idx: nat, tile_size: nat, total_size: nat,
+) -> bool {
+    forall|i: nat| i < tile_size ==>
+        #[trigger] tile_predicate_mask(tile_idx, tile_size, total_size)[i as int] == true
+}
+
+/// Boundary tile: mask is contiguous — first valid_count bits true, rest false.
+pub open spec fn mask_contiguous(mask: Seq<bool>, valid_count: nat) -> bool {
+    &&& valid_count <= mask.len()
+    &&& forall|i: nat| i < valid_count ==> #[trigger] mask[i as int] == true
+    &&& forall|i: nat| valid_count <= i && i < mask.len() ==> #[trigger] mask[i as int] == false
+}
+
+/// Store predication: only write to valid positions.
+pub open spec fn store_predication_safe(
+    tile_idx: nat, tile_size: nat, total_size: nat,
+    write_idx: nat,
+) -> bool {
+    write_idx < tile_size
+    && tile_predicate_mask(tile_idx, tile_size, total_size)[write_idx as int]
+}
+
 } // verus!
