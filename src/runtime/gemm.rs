@@ -247,4 +247,121 @@ pub fn gemm_mac_offsets(
     (a_offs, b_offs)
 }
 
+/// Compute MAC offset pairs for one (i,j) output element over k_start..k_end.
+/// Returns Vec of (a_offset, b_offset) pairs.
+pub fn mac_offset_pairs_exec(
+    a_layout: &RuntimeLayout, b_layout: &RuntimeLayout,
+    i: u64, j: u64, k_start: u64, k_end: u64,
+) -> (result: Vec<(i64, i64)>)
+    requires
+        a_layout.wf_spec(), b_layout.wf_spec(),
+        a_layout@.rank() == 2, b_layout@.rank() == 2,
+        k_start <= k_end,
+        (i as nat) < a_layout@.shape[0],
+        (k_end as nat) <= a_layout@.shape[1],
+        (k_end as nat) <= b_layout@.shape[0],
+        (j as nat) < b_layout@.shape[1],
+        i <= i64::MAX as u64, j <= i64::MAX as u64,
+        k_end <= i64::MAX as u64,
+        (i as int) * a_layout@.stride[0] >= i64::MIN as int,
+        (i as int) * a_layout@.stride[0] <= i64::MAX as int,
+        (j as int) * b_layout@.stride[1] >= i64::MIN as int,
+        (j as int) * b_layout@.stride[1] <= i64::MAX as int,
+        forall|kk: nat| kk < (k_end as nat) ==>
+            #[trigger] a_offset_overflow_ok(&a_layout@, i as nat, kk),
+        forall|kk: nat| kk < (k_end as nat) ==>
+            #[trigger] b_offset_overflow_ok(&b_layout@, j as nat, kk),
+    ensures
+        result.len() == (k_end - k_start) as nat,
+        forall|idx: nat| idx < (k_end - k_start) as nat ==>
+            (#[trigger] result@[idx as int]).0 as int
+            == gemm_a_offset(&a_layout@, i as nat, (k_start as nat + idx)),
+        forall|idx: nat| idx < (k_end - k_start) as nat ==>
+            (#[trigger] result@[idx as int]).1 as int
+            == gemm_b_offset(&b_layout@, (k_start as nat + idx), j as nat),
+{
+    let mut out: Vec<(i64, i64)> = Vec::new();
+    let mut kk = k_start;
+
+    while kk < k_end
+        invariant
+            k_start <= kk <= k_end,
+            a_layout.wf_spec(), b_layout.wf_spec(),
+            a_layout@.rank() == 2, b_layout@.rank() == 2,
+            (i as nat) < a_layout@.shape[0],
+            (k_end as nat) <= a_layout@.shape[1],
+            (k_end as nat) <= b_layout@.shape[0],
+            (j as nat) < b_layout@.shape[1],
+            out.len() == (kk - k_start) as nat,
+            forall|idx: nat| idx < (kk - k_start) as nat ==>
+                (#[trigger] out@[idx as int]).0 as int
+                == gemm_a_offset(&a_layout@, i as nat, (k_start as nat + idx)),
+            forall|idx: nat| idx < (kk - k_start) as nat ==>
+                (#[trigger] out@[idx as int]).1 as int
+                == gemm_b_offset(&b_layout@, (k_start as nat + idx), j as nat),
+            i <= i64::MAX as u64, j <= i64::MAX as u64,
+            k_end <= i64::MAX as u64,
+            (i as int) * a_layout@.stride[0] >= i64::MIN as int,
+            (i as int) * a_layout@.stride[0] <= i64::MAX as int,
+            (j as int) * b_layout@.stride[1] >= i64::MIN as int,
+            (j as int) * b_layout@.stride[1] <= i64::MAX as int,
+            forall|kk2: nat| kk2 < (k_end as nat) ==>
+                #[trigger] a_offset_overflow_ok(&a_layout@, i as nat, kk2),
+            forall|kk2: nat| kk2 < (k_end as nat) ==>
+                #[trigger] b_offset_overflow_ok(&b_layout@, j as nat, kk2),
+        decreases k_end - kk,
+    {
+        proof {
+            assert(a_offset_overflow_ok(&a_layout@, i as nat, kk as nat));
+            assert(b_offset_overflow_ok(&b_layout@, j as nat, kk as nat));
+        }
+        let a_off = gemm_a_offset_exec(a_layout, i, kk);
+        let b_off = gemm_b_offset_exec(b_layout, kk, j);
+        out.push((a_off, b_off));
+
+        proof {
+            let idx = (kk - k_start) as nat;
+            assert(out@[idx as int] == (a_off, b_off));
+            assert(k_start as nat + idx == kk as nat);
+        }
+
+        kk = kk + 1;
+    }
+
+    out
+}
+
+/// Compute C output offset for tile (ti, tj) at element (ei, ej).
+pub fn gemm_c_tile_offset_exec(
+    c_layout: &RuntimeLayout,
+    ti: u64, tj: u64, ei: u64, ej: u64,
+    bm: u64, bn: u64,
+) -> (result: i64)
+    requires
+        c_layout.wf_spec(), c_layout@.rank() == 2,
+        bm > 0, bn > 0,
+        (ti as nat) * (bm as nat) + (ei as nat) < c_layout@.shape[0],
+        (tj as nat) * (bn as nat) + (ej as nat) < c_layout@.shape[1],
+        (ti as nat) * (bm as nat) + (ei as nat) <= u64::MAX as nat,
+        (tj as nat) * (bn as nat) + (ej as nat) <= u64::MAX as nat,
+        (ti as nat) * (bm as nat) + (ei as nat) <= i64::MAX as nat,
+        (tj as nat) * (bn as nat) + (ej as nat) <= i64::MAX as nat,
+        (((ti as nat) * (bm as nat) + (ei as nat)) as int) * c_layout@.stride[0] >= i64::MIN as int,
+        (((ti as nat) * (bm as nat) + (ei as nat)) as int) * c_layout@.stride[0] <= i64::MAX as int,
+        (((tj as nat) * (bn as nat) + (ej as nat)) as int) * c_layout@.stride[1] >= i64::MIN as int,
+        (((tj as nat) * (bn as nat) + (ej as nat)) as int) * c_layout@.stride[1] <= i64::MAX as int,
+        (((ti as nat) * (bm as nat) + (ei as nat)) as int) * c_layout@.stride[0]
+            + (((tj as nat) * (bn as nat) + (ej as nat)) as int) * c_layout@.stride[1] >= i64::MIN as int,
+        (((ti as nat) * (bm as nat) + (ei as nat)) as int) * c_layout@.stride[0]
+            + (((tj as nat) * (bn as nat) + (ej as nat)) as int) * c_layout@.stride[1] <= i64::MAX as int,
+    ensures
+        result as int == gemm_c_tile_offset(&c_layout@,
+            ti as nat, tj as nat, ei as nat, ej as nat,
+            bm as nat, bn as nat),
+{
+    let gi = ti * bm + ei;
+    let gj = tj * bn + ej;
+    linearize_2d(c_layout, gi, gj)
+}
+
 } // verus!

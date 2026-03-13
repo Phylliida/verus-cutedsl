@@ -852,4 +852,45 @@ pub proof fn lemma_gathered_product_single(shape: &Seq<nat>, mode: nat)
     vstd::arithmetic::mul::lemma_mul_basics(shape[mode as int] as int);
 }
 
+// ══════════════════════════════════════════════════════════════
+// MAC correctness proofs (Feature 3 Round 2)
+// ══════════════════════════════════════════════════════════════
+
+/// MAC completeness: all K elements produce offset pairs.
+pub proof fn lemma_mac_complete(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    i: nat, j: nat, k_size: nat,
+)
+    requires a_layout.rank() == 2, b_layout.rank() == 2,
+    ensures mac_complete(a_layout, b_layout, i, j, k_size),
+{
+    // mac_offset_pairs(a, b, i, j, 0, k_size) = Seq::new(k_size, ...)
+    // len == k_size by definition of Seq::new
+}
+
+/// Tiled MAC consistency: K-tile pairs match global pairs.
+pub proof fn lemma_tiled_mac_consistent(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    i: nat, j: nat, k_tile: nat, bk: nat, k_size: nat,
+)
+    requires
+        a_layout.rank() == 2, b_layout.rank() == 2,
+        bk > 0,
+        k_tile * bk < k_size,
+    ensures
+        tiled_mac_consistent(a_layout, b_layout, i, j, k_tile, bk, k_size),
+{
+    let k_start = k_tile * bk;
+    let k_end = if (k_tile + 1) * bk <= k_size { (k_tile + 1) * bk } else { k_size };
+
+    assert forall|idx: nat| idx < k_end - k_start implies
+        #[trigger] mac_offset_pairs(a_layout, b_layout, i, j, k_start, k_end)[idx as int]
+        == mac_offset_pairs(a_layout, b_layout, i, j, 0, k_size)[(k_start + idx) as int]
+    by {
+        // LHS = (gemm_a_offset(a, i, k_start + idx), gemm_b_offset(b, k_start + idx, j))
+        // RHS = (gemm_a_offset(a, i, 0 + (k_start + idx)), gemm_b_offset(b, 0 + (k_start + idx), j))
+        // These are identical.
+    };
+}
+
 } // verus!

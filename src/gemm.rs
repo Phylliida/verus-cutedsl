@@ -306,4 +306,54 @@ pub open spec fn gemm_pipeline_admissible(
     &&& s2r_stage_valid(s2r_b, mma_thr, mma_val)
 }
 
+// ══════════════════════════════════════════════════════════════
+// MAC (Multiply-Accumulate) offset specs
+// ══════════════════════════════════════════════════════════════
+
+/// MAC offset pairs: the sequence of (a_offset, b_offset) pairs
+/// for computing C[i,j] += sum_k A[i,k]*B[k,j] over k in [k_start, k_end).
+pub open spec fn mac_offset_pairs(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    i: nat, j: nat, k_start: nat, k_end: nat,
+) -> Seq<(int, int)>
+    recommends a_layout.rank() == 2, b_layout.rank() == 2,
+{
+    Seq::new((k_end - k_start) as nat, |idx: int|
+        (gemm_a_offset(a_layout, i, k_start + idx as nat),
+         gemm_b_offset(b_layout, k_start + idx as nat, j)))
+}
+
+/// MAC completeness: all K elements contribute to the output.
+pub open spec fn mac_complete(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    i: nat, j: nat, k_size: nat,
+) -> bool {
+    mac_offset_pairs(a_layout, b_layout, i, j, 0, k_size).len() == k_size
+}
+
+/// Tiled MAC consistency: the offset pairs for a K-tile match the global offset pairs.
+pub open spec fn tiled_mac_consistent(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    i: nat, j: nat, k_tile: nat, bk: nat, k_size: nat,
+) -> bool
+    recommends bk > 0, k_tile * bk < k_size,
+{
+    let k_start = k_tile * bk;
+    let k_end = if (k_tile + 1) * bk <= k_size { (k_tile + 1) * bk } else { k_size };
+    forall|idx: nat| idx < k_end - k_start ==>
+        #[trigger] mac_offset_pairs(a_layout, b_layout, i, j, k_start, k_end)[idx as int]
+        == mac_offset_pairs(a_layout, b_layout, i, j, 0, k_size)[(k_start + idx) as int]
+}
+
+/// C output offset for tiled coordinates: tile (ti, tj) at element (ei, ej).
+pub open spec fn gemm_c_tile_offset(
+    c_layout: &LayoutSpec,
+    ti: nat, tj: nat, ei: nat, ej: nat,
+    bm: nat, bn: nat,
+) -> int
+    recommends c_layout.rank() == 2,
+{
+    gemm_c_offset(c_layout, ti * bm + ei, tj * bn + ej)
+}
+
 } // verus!
