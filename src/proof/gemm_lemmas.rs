@@ -1487,13 +1487,13 @@ pub proof fn lemma_gathered_product_empty(shape: &Seq<nat>)
 }
 
 /// gathered_product is positive when all gathered shapes are positive.
-pub proof fn lemma_gathered_product_positive(shape: &Seq<nat>, modes: &Seq<nat>)
+pub proof fn lemma_gathered_product_positive(shape: Seq<nat>, modes: Seq<nat>)
     requires
         forall|i: nat| i < modes.len() ==>
-            modes[i as int] < shape.len()
-            && #[trigger] shape[modes[i as int] as int] > 0,
+            (#[trigger] modes[i as int]) < shape.len()
+            && shape[modes[i as int] as int] > 0,
     ensures
-        gathered_product(shape, modes) > 0,
+        gathered_product(&shape, &modes) > 0,
     decreases modes.len(),
 {
     if modes.len() == 0 {
@@ -1502,23 +1502,19 @@ pub proof fn lemma_gathered_product_positive(shape: &Seq<nat>, modes: &Seq<nat>)
         let last = modes.last();
         let dl = modes.drop_last();
         // last mode has positive shape
-        assert(modes[(modes.len() - 1) as int] == last);
         assert(shape[last as int] > 0);
         // Induction: drop_last modes satisfy precondition
         assert forall|i: nat| i < dl.len() implies
-            dl[i as int] < shape.len()
-            && #[trigger] shape[dl[i as int] as int] > 0
+            (#[trigger] dl[i as int]) < shape.len()
+            && shape[dl[i as int] as int] > 0
         by {
             assert(dl[i as int] == modes[i as int]);
-            // Trigger the original precondition
-            assert(shape[modes[i as int] as int] > 0);
-            assert(modes[i as int] < shape.len());
         };
-        lemma_gathered_product_positive(shape, &dl);
+        lemma_gathered_product_positive(shape, dl);
         // shape[last] > 0 * rest > 0 > 0
         vstd::arithmetic::mul::lemma_mul_strictly_positive(
             shape[last as int] as int,
-            gathered_product(shape, &dl) as int,
+            gathered_product(&shape, &modes.drop_last()) as int,
         );
     }
 }

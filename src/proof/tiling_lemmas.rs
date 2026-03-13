@@ -2293,30 +2293,38 @@ pub proof fn lemma_register_partition_element_count(
         * num_tiles_divided(&register_partition(warp_tile, mma_atom))
         == shape_size(warp_tile.layout.shape),
 {
-    lemma_register_partition_size(warp_tile, mma_atom);
-    lemma_register_partition_tile_size(warp_tile, mma_atom);
-    lemma_register_partition_num_tiles(warp_tile, mma_atom);
-
-    // tile_size * num_tiles == shape_size(layout.shape)
-    // This follows from divide: shape_size(B.shape) * num_tiles(A, B) == shape_size(A.shape)
+    let rp = register_partition(warp_tile, mma_atom);
     let zd = zipped_divide(&warp_tile.layout, mma_atom);
-    lemma_zipped_divide_tile_size(&warp_tile.layout, mma_atom);
-    lemma_zipped_divide_num_tiles(&warp_tile.layout, mma_atom);
-    lemma_zipped_divide_size(&warp_tile.layout, mma_atom);
-
-    // num_tiles(A, B) = shape_size(A.shape) / shape_size(B.shape)
-    // tile_size(zd) = shape_size(B.shape)
-    // num_tiles_divided(zd) = shape_size(rest_shape(zd)) = num_tiles(A, B)
-    // tile_size * num_tiles = shape_size(B.shape) * (shape_size(A.shape) / shape_size(B.shape))
-    // = shape_size(A.shape) when B.shape divides A.shape evenly
     let bs = shape_size(mma_atom.shape);
     let total = shape_size(warp_tile.layout.shape);
-    let nt = num_tiles(&warp_tile.layout, mma_atom);
 
+    // tile_size(rp) == bs
+    lemma_register_partition_tile_size(warp_tile, mma_atom);
+    assert(tile_size(&rp) == bs);
+
+    // num_tiles_divided(rp) == num_tiles_divided(zd) == num_tiles(A, B) == total / bs
+    lemma_register_partition_num_tiles(warp_tile, mma_atom);
+    lemma_zipped_divide_num_tiles(&warp_tile.layout, mma_atom);
+    assert(num_tiles_divided(&rp) == num_tiles(&warp_tile.layout, mma_atom));
+
+    // complement_size * bs == total
+    let comp_size = shape_size(complement(mma_atom, total).shape);
     crate::proof::complement_lemmas::lemma_complement_size(mma_atom, total);
+    assert(comp_size * bs == total);
+
+    // num_tiles(A, B) == total / bs == comp_size
     lemma_shape_size_positive(mma_atom.shape);
-    vstd::arithmetic::div_mod::lemma_div_multiples_vanish(nt as int, bs as int);
-    vstd::arithmetic::mul::lemma_mul_is_commutative(bs as int, nt as int);
+    crate::proof::complement_lemmas::lemma_complement_shape_valid(mma_atom, total);
+    lemma_shape_size_positive(complement(mma_atom, total).shape);
+    vstd::arithmetic::mul::lemma_mul_is_commutative(comp_size as int, bs as int);
+    // bs * comp_size == total
+    vstd::arithmetic::div_mod::lemma_div_multiples_vanish(comp_size as int, bs as int);
+    // (bs * comp_size) / bs == comp_size, i.e., total / bs == comp_size
+    assert(total / bs == comp_size);
+    assert(num_tiles_divided(&rp) == comp_size);
+
+    // bs * comp_size == total
+    assert(tile_size(&rp) * num_tiles_divided(&rp) == bs * comp_size);
 }
 
 /// Warp→register two-level size identity.
