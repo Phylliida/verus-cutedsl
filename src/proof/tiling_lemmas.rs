@@ -2190,4 +2190,155 @@ pub proof fn lemma_pipeline_stage_bounded(k_iter: nat, num_stages: nat)
         requires num_stages > 0nat;
 }
 
+// ══════════════════════════════════════════════════════════════
+// Register partition properties (Feature 3 Round 4)
+// ══════════════════════════════════════════════════════════════
+
+/// Register partition preserves total size.
+pub proof fn lemma_register_partition_size(
+    warp_tile: &DividedLayout, mma_atom: &LayoutSpec,
+)
+    requires
+        divided_layout_valid(warp_tile),
+        divide_admissible(&warp_tile.layout, mma_atom),
+    ensures
+        shape_size(register_partition(warp_tile, mma_atom).layout.shape)
+        == shape_size(warp_tile.layout.shape),
+{
+    lemma_zipped_divide_size(&warp_tile.layout, mma_atom);
+}
+
+/// Register tile shape = mma_atom shape.
+pub proof fn lemma_register_partition_tile_shape(
+    warp_tile: &DividedLayout, mma_atom: &LayoutSpec,
+)
+    requires
+        divided_layout_valid(warp_tile),
+        divide_admissible(&warp_tile.layout, mma_atom),
+    ensures
+        tile_shape(&register_partition(warp_tile, mma_atom)) =~= mma_atom.shape,
+{
+    // register_partition.tile_rank = mma_atom.shape.len()
+    // register_partition.layout = zipped_divide.layout
+    // tile_shape = layout.shape.take(tile_rank)
+    // = zipped_divide.layout.shape.take(mma_atom.shape.len())
+    // By lemma_zipped_divide_tile_shape, this =~= mma_atom.shape
+    lemma_zipped_divide_tile_shape(&warp_tile.layout, mma_atom);
+    let zd = zipped_divide(&warp_tile.layout, mma_atom);
+    let rp = register_partition(warp_tile, mma_atom);
+    assert(rp.layout.shape =~= zd.layout.shape);
+    assert(rp.tile_rank == mma_atom.shape.len());
+    // tile_shape(rp) = rp.layout.shape.take(rp.tile_rank)
+    // tile_shape(zd) = zd.layout.shape.take(zd.tile_rank)
+    // zd.tile_rank = mma_atom.shape.len() = rp.tile_rank
+    assert(tile_shape(&rp) =~= tile_shape(&zd));
+}
+
+/// Register tile size = mma_atom size.
+pub proof fn lemma_register_partition_tile_size(
+    warp_tile: &DividedLayout, mma_atom: &LayoutSpec,
+)
+    requires
+        divided_layout_valid(warp_tile),
+        divide_admissible(&warp_tile.layout, mma_atom),
+    ensures
+        tile_size(&register_partition(warp_tile, mma_atom))
+        == shape_size(mma_atom.shape),
+{
+    lemma_register_partition_tile_shape(warp_tile, mma_atom);
+}
+
+/// Register partition rest shape = complement shape (same as zipped_divide).
+pub proof fn lemma_register_partition_rest_shape(
+    warp_tile: &DividedLayout, mma_atom: &LayoutSpec,
+)
+    requires
+        divided_layout_valid(warp_tile),
+        divide_admissible(&warp_tile.layout, mma_atom),
+    ensures
+        rest_shape(&register_partition(warp_tile, mma_atom))
+        =~= rest_shape(&zipped_divide(&warp_tile.layout, mma_atom)),
+{
+    let zd = zipped_divide(&warp_tile.layout, mma_atom);
+    let rp = register_partition(warp_tile, mma_atom);
+    assert(rp.layout.shape =~= zd.layout.shape);
+    assert(rp.tile_rank == mma_atom.shape.len());
+    // zd.tile_rank = mma_atom.shape.len() = rp.tile_rank
+    // rest_shape = layout.shape.skip(tile_rank) — same for both
+}
+
+/// Number of register tiles equals zipped_divide's num_tiles.
+pub proof fn lemma_register_partition_num_tiles(
+    warp_tile: &DividedLayout, mma_atom: &LayoutSpec,
+)
+    requires
+        divided_layout_valid(warp_tile),
+        divide_admissible(&warp_tile.layout, mma_atom),
+    ensures
+        num_tiles_divided(&register_partition(warp_tile, mma_atom))
+        == num_tiles_divided(&zipped_divide(&warp_tile.layout, mma_atom)),
+{
+    lemma_register_partition_rest_shape(warp_tile, mma_atom);
+}
+
+/// Element count identity: tile_size * num_tiles == total size.
+pub proof fn lemma_register_partition_element_count(
+    warp_tile: &DividedLayout, mma_atom: &LayoutSpec,
+)
+    requires
+        divided_layout_valid(warp_tile),
+        divide_admissible(&warp_tile.layout, mma_atom),
+    ensures
+        tile_size(&register_partition(warp_tile, mma_atom))
+        * num_tiles_divided(&register_partition(warp_tile, mma_atom))
+        == shape_size(warp_tile.layout.shape),
+{
+    lemma_register_partition_size(warp_tile, mma_atom);
+    lemma_register_partition_tile_size(warp_tile, mma_atom);
+    lemma_register_partition_num_tiles(warp_tile, mma_atom);
+
+    // tile_size * num_tiles == shape_size(layout.shape)
+    // This follows from divide: shape_size(B.shape) * num_tiles(A, B) == shape_size(A.shape)
+    let zd = zipped_divide(&warp_tile.layout, mma_atom);
+    lemma_zipped_divide_tile_size(&warp_tile.layout, mma_atom);
+    lemma_zipped_divide_num_tiles(&warp_tile.layout, mma_atom);
+    lemma_zipped_divide_size(&warp_tile.layout, mma_atom);
+
+    // num_tiles(A, B) = shape_size(A.shape) / shape_size(B.shape)
+    // tile_size(zd) = shape_size(B.shape)
+    // num_tiles_divided(zd) = shape_size(rest_shape(zd)) = num_tiles(A, B)
+    // tile_size * num_tiles = shape_size(B.shape) * (shape_size(A.shape) / shape_size(B.shape))
+    // = shape_size(A.shape) when B.shape divides A.shape evenly
+    let bs = shape_size(mma_atom.shape);
+    let total = shape_size(warp_tile.layout.shape);
+    let nt = num_tiles(&warp_tile.layout, mma_atom);
+
+    crate::proof::complement_lemmas::lemma_complement_size(mma_atom, total);
+    lemma_shape_size_positive(mma_atom.shape);
+    vstd::arithmetic::div_mod::lemma_div_multiples_vanish(nt as int, bs as int);
+    vstd::arithmetic::mul::lemma_mul_is_commutative(bs as int, nt as int);
+}
+
+/// Warp→register two-level size identity.
+pub proof fn lemma_warp_register_size_identity(
+    cta_tile: &DividedLayout,
+    warp_layout: &LayoutSpec,
+    mma_atom: &LayoutSpec,
+)
+    requires
+        divided_layout_valid(cta_tile),
+        divide_admissible(&cta_tile.layout, warp_layout),
+        divide_admissible(&warp_partition(cta_tile, warp_layout).layout, mma_atom),
+    ensures ({
+        let wp = warp_partition(cta_tile, warp_layout);
+        let rp = register_partition(&wp, mma_atom);
+        shape_size(rp.layout.shape) == shape_size(cta_tile.layout.shape)
+    }),
+{
+    let wp = warp_partition(cta_tile, warp_layout);
+    lemma_warp_partition_size(cta_tile, warp_layout);
+    lemma_warp_partition_valid(cta_tile, warp_layout);
+    lemma_register_partition_size(&wp, mma_atom);
+}
+
 } // verus!

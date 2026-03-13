@@ -6,6 +6,7 @@ use crate::predication::*;
 use crate::tiling::*;
 use crate::swizzle::*;
 use crate::contraction::*;
+use crate::slice::*;
 use crate::proof::shape_lemmas::*;
 use crate::proof::tiling_lemmas::*;
 use verus_algebra::traits::*;
@@ -1217,6 +1218,309 @@ pub proof fn lemma_epilogue_cross_cta_disjoint(
         lemma_gemm_tiled_c_disjoint(c_layout, m, n, bm, bn,
             ti1, tj1, ei1, ej1, ti2, tj2, ei2, ej2);
     };
+}
+
+// ══════════════════════════════════════════════════════════════
+// Batched GEMM contraction proofs (Feature 1 Round 4)
+// ══════════════════════════════════════════════════════════════
+
+/// Batched GEMM contraction shapes match when batch and K dims agree.
+pub proof fn lemma_batched_gemm_contraction_shapes_match(a_shape: Seq<nat>, b_shape: Seq<nat>)
+    requires
+        a_shape.len() == 3,
+        b_shape.len() == 3,
+        a_shape[0] == b_shape[0],  // batch dim
+        a_shape[2] == b_shape[1],  // K dim
+    ensures
+        contraction_shapes_match(&batched_gemm_as_contraction(), &a_shape, &b_shape),
+{
+    let spec = batched_gemm_as_contraction();
+    // Batch: gather_shape(a, [0]) = [a[0]], gather_shape(b, [0]) = [b[0]]
+    assert(gather_shape(&a_shape, &spec.batch_modes_a) =~=
+           gather_shape(&b_shape, &spec.batch_modes_b));
+    // Contraction: gather_shape(a, [2]) = [a[2]], gather_shape(b, [1]) = [b[1]]
+    assert(gather_shape(&a_shape, &spec.contraction_modes_a) =~=
+           gather_shape(&b_shape, &spec.contraction_modes_b));
+}
+
+/// Batched GEMM contraction output shape is (batch, M, N).
+pub proof fn lemma_batched_gemm_contraction_output_shape(a_shape: Seq<nat>, b_shape: Seq<nat>)
+    requires
+        a_shape.len() == 3,
+        b_shape.len() == 3,
+    ensures
+        contraction_output_shape(&batched_gemm_as_contraction(), &a_shape, &b_shape)
+        =~= seq![a_shape[0], a_shape[1], b_shape[2]],
+{
+    let spec = batched_gemm_as_contraction();
+    let batch = gather_shape(&a_shape, &spec.batch_modes_a);
+    let free_a = gather_shape(&a_shape, &spec.free_modes_a);
+    let free_b = gather_shape(&b_shape, &spec.free_modes_b);
+    assert(batch =~= seq![a_shape[0]]);
+    assert(free_a =~= seq![a_shape[1]]);
+    assert(free_b =~= seq![b_shape[2]]);
+    assert(batch.add(free_a).add(free_b) =~= seq![a_shape[0], a_shape[1], b_shape[2]]);
+}
+
+/// Batched GEMM contraction admissibility.
+pub proof fn lemma_batched_gemm_contraction_admissible(a_shape: Seq<nat>, b_shape: Seq<nat>)
+    requires
+        a_shape.len() == 3,
+        b_shape.len() == 3,
+        a_shape[0] == b_shape[0],
+        a_shape[2] == b_shape[1],
+    ensures
+        contraction_admissible(&batched_gemm_as_contraction(), &a_shape, &b_shape),
+{
+    lemma_batched_gemm_contraction_valid();
+    lemma_batched_gemm_contraction_shapes_match(a_shape, b_shape);
+}
+
+/// Batched GEMM reduction size = K (a_shape[2]).
+pub proof fn lemma_batched_gemm_reduction_size(a_shape: Seq<nat>)
+    requires a_shape.len() == 3,
+    ensures contraction_reduction_size(&batched_gemm_as_contraction(), &a_shape) == a_shape[2],
+{
+    let spec = batched_gemm_as_contraction();
+    assert(spec.contraction_modes_a =~= seq![2nat]);
+    lemma_gathered_product_single(&a_shape, 2);
+}
+
+/// gathered_product of two modes = shape[m0] * shape[m1].
+pub proof fn lemma_gathered_product_two(shape: &Seq<nat>, m0: nat, m1: nat)
+    requires
+        m0 < shape.len(),
+        m1 < shape.len(),
+    ensures
+        gathered_product(shape, &seq![m0, m1]) == shape[m0 as int] * shape[m1 as int],
+{
+    let modes = seq![m0, m1];
+    assert(modes.len() == 2);
+    assert(modes.last() == m1);
+    let dl = modes.drop_last();
+    assert(dl =~= seq![m0]);
+    lemma_gathered_product_single(shape, m0);
+    assert(gathered_product(shape, &dl) == shape[m0 as int]);
+    assert(gathered_product(shape, &modes) ==
+        shape[modes.last() as int] * gathered_product(shape, &dl));
+    vstd::arithmetic::mul::lemma_mul_is_commutative(
+        shape[m1 as int] as int, shape[m0 as int] as int,
+    );
+}
+
+// ══════════════════════════════════════════════════════════════
+// Epilogue partition proofs (Feature 2 Round 4)
+// ══════════════════════════════════════════════════════════════
+
+/// Local partition at any thread_id produces a valid residual layout.
+pub proof fn lemma_local_partition_valid(
+    tensor: &DividedLayout, tv_layout: &LayoutSpec, thread_id: nat,
+)
+    requires
+        divided_layout_valid(tensor),
+        tensor.layout.valid(),
+        tensor.layout.rank() > 0,
+        thread_id < tensor.layout.shape[0],
+    ensures
+        local_partition(tensor, tv_layout, thread_id).0.valid(),
+{
+    crate::proof::slice_lemmas::lemma_slice_valid(&tensor.layout, 0, thread_id);
+}
+
+/// Per-thread element count: all threads get the same shape (hence same size).
+pub proof fn lemma_local_partition_uniform_shape(
+    tensor: &DividedLayout, tv_layout: &LayoutSpec,
+    t1: nat, t2: nat,
+)
+    requires
+        divided_layout_valid(tensor),
+        tensor.layout.valid(),
+        tensor.layout.rank() > 0,
+        t1 < tensor.layout.shape[0],
+        t2 < tensor.layout.shape[0],
+    ensures
+        local_partition(tensor, tv_layout, t1).0.shape
+        =~= local_partition(tensor, tv_layout, t2).0.shape,
+{
+    crate::proof::slice_lemmas::lemma_slice_mode0(&tensor.layout, t1);
+    crate::proof::slice_lemmas::lemma_slice_mode0(&tensor.layout, t2);
+    // Both slice at mode 0, so shape = layout.shape.skip(1) for both
+}
+
+/// Thread disjointness: distinct thread_ids produce disjoint offset sets.
+pub proof fn lemma_local_partition_disjoint(
+    tensor: &DividedLayout, tv_layout: &LayoutSpec,
+    t1: nat, t2: nat, i: nat, j: nat,
+)
+    requires
+        divided_layout_valid(tensor),
+        tensor.layout.valid(),
+        tensor.layout.is_injective(),
+        tensor.layout.rank() > 0,
+        t1 < tensor.layout.shape[0],
+        t2 < tensor.layout.shape[0],
+        t1 != t2,
+        i < shape_size(slice_layout(&tensor.layout, 0, t1).shape),
+        j < shape_size(slice_layout(&tensor.layout, 0, t2).shape),
+    ensures
+        local_partition(tensor, tv_layout, t1).1
+        + local_partition(tensor, tv_layout, t1).0.offset(i)
+        != local_partition(tensor, tv_layout, t2).1
+        + local_partition(tensor, tv_layout, t2).0.offset(j),
+{
+    crate::proof::tiling_lemmas::lemma_slice_disjoint(&tensor.layout, t1, t2, i, j);
+}
+
+/// Thread coverage: every element of the tensor is assigned to some thread.
+pub proof fn lemma_local_partition_coverage(
+    tensor: &DividedLayout, tv_layout: &LayoutSpec, x: nat,
+)
+    requires
+        divided_layout_valid(tensor),
+        tensor.layout.valid(),
+        tensor.layout.rank() > 0,
+        x < shape_size(tensor.layout.shape),
+    ensures ({
+        let m0 = tensor.layout.shape[0];
+        let c = x % m0;
+        let i = x / m0;
+        &&& c < m0
+        &&& i < shape_size(slice_layout(&tensor.layout, 0, c).shape)
+        &&& tensor.layout.offset(x)
+            == local_partition(tensor, tv_layout, c).1
+               + local_partition(tensor, tv_layout, c).0.offset(i)
+    }),
+{
+    crate::proof::tiling_lemmas::lemma_partition_coverage(&tensor.layout, x);
+}
+
+/// Epilogue partition offset is 0 (thread_id = 0, so offset = 0 * stride[0] = 0).
+pub proof fn lemma_epilogue_partition_offset_zero(
+    c_tile: &DividedLayout, thread_layout: &LayoutSpec,
+)
+    requires
+        divided_layout_valid(c_tile),
+        c_tile.layout.valid(),
+        c_tile.layout.rank() > 0,
+    ensures
+        epilogue_partition(c_tile, thread_layout).1 == 0int,
+{
+    // epilogue_partition = local_partition(c_tile, thread_layout, 0)
+    // local_partition.1 = slice_offset(&c_tile.layout, 0, 0) = 0 * stride[0] = 0
+}
+
+// ══════════════════════════════════════════════════════════════
+// Contraction structural lemmas (Feature 4 Round 4)
+// ══════════════════════════════════════════════════════════════
+
+/// gather_shape length = modes length.
+pub proof fn lemma_gather_shape_len(shape: &Seq<nat>, modes: &Seq<nat>)
+    ensures
+        gather_shape(shape, modes).len() == modes.len(),
+{
+    // Direct from Seq::new definition
+}
+
+/// Contraction output rank = batch + free_a + free_b.
+pub proof fn lemma_contraction_output_rank(
+    spec: &ContractionSpec, a_shape: &Seq<nat>, b_shape: &Seq<nat>,
+)
+    ensures
+        contraction_output_shape(spec, a_shape, b_shape).len()
+        == spec.batch_modes_a.len() + spec.free_modes_a.len() + spec.free_modes_b.len(),
+{
+    let batch = gather_shape(a_shape, &spec.batch_modes_a);
+    let free_a = gather_shape(a_shape, &spec.free_modes_a);
+    let free_b = gather_shape(b_shape, &spec.free_modes_b);
+    lemma_gather_shape_len(a_shape, &spec.batch_modes_a);
+    lemma_gather_shape_len(a_shape, &spec.free_modes_a);
+    lemma_gather_shape_len(b_shape, &spec.free_modes_b);
+    assert(batch.add(free_a).add(free_b).len() ==
+        batch.len() + free_a.len() + free_b.len());
+}
+
+/// GEMM output rank = 2 (M and N dimensions).
+pub proof fn lemma_gemm_contraction_output_rank(a_shape: Seq<nat>, b_shape: Seq<nat>)
+    requires a_shape.len() == 2, b_shape.len() == 2,
+    ensures
+        contraction_output_shape(&gemm_as_contraction(), &a_shape, &b_shape).len() == 2,
+{
+    lemma_contraction_output_rank(&gemm_as_contraction(), &a_shape, &b_shape);
+}
+
+/// Batched GEMM output rank = 3 (batch, M, N).
+pub proof fn lemma_batched_gemm_contraction_output_rank(a_shape: Seq<nat>, b_shape: Seq<nat>)
+    requires a_shape.len() == 3, b_shape.len() == 3,
+    ensures
+        contraction_output_shape(&batched_gemm_as_contraction(), &a_shape, &b_shape).len() == 3,
+{
+    lemma_contraction_output_rank(&batched_gemm_as_contraction(), &a_shape, &b_shape);
+}
+
+/// GEMM contraction output matches C layout shape requirements.
+pub proof fn lemma_gemm_contraction_matches_c(
+    a_shape: Seq<nat>, b_shape: Seq<nat>, c_layout: &LayoutSpec,
+)
+    requires
+        a_shape.len() == 2,
+        b_shape.len() == 2,
+        a_shape[1] == b_shape[0],
+        c_layout.rank() == 2,
+        a_shape[0] <= c_layout.shape[0],
+        b_shape[1] <= c_layout.shape[1],
+    ensures ({
+        let out = contraction_output_shape(&gemm_as_contraction(), &a_shape, &b_shape);
+        out[0] <= c_layout.shape[0] && out[1] <= c_layout.shape[1]
+    }),
+{
+    lemma_gemm_contraction_output_shape(a_shape, b_shape);
+    let out = contraction_output_shape(&gemm_as_contraction(), &a_shape, &b_shape);
+    assert(out =~= seq![a_shape[0], b_shape[1]]);
+}
+
+/// gathered_product is 1 for empty modes.
+pub proof fn lemma_gathered_product_empty(shape: &Seq<nat>)
+    ensures
+        gathered_product(shape, &Seq::<nat>::empty()) == 1nat,
+{
+    // Base case of gathered_product definition
+}
+
+/// gathered_product is positive when all gathered shapes are positive.
+pub proof fn lemma_gathered_product_positive(shape: &Seq<nat>, modes: &Seq<nat>)
+    requires
+        forall|i: nat| i < modes.len() ==>
+            modes[i as int] < shape.len()
+            && #[trigger] shape[modes[i as int] as int] > 0,
+    ensures
+        gathered_product(shape, modes) > 0,
+    decreases modes.len(),
+{
+    if modes.len() == 0 {
+        // Base: gathered_product = 1 > 0
+    } else {
+        let last = modes.last();
+        let dl = modes.drop_last();
+        // last mode has positive shape
+        assert(modes[(modes.len() - 1) as int] == last);
+        assert(shape[last as int] > 0);
+        // Induction: drop_last modes satisfy precondition
+        assert forall|i: nat| i < dl.len() implies
+            dl[i as int] < shape.len()
+            && #[trigger] shape[dl[i as int] as int] > 0
+        by {
+            assert(dl[i as int] == modes[i as int]);
+            // Trigger the original precondition
+            assert(shape[modes[i as int] as int] > 0);
+            assert(modes[i as int] < shape.len());
+        };
+        lemma_gathered_product_positive(shape, &dl);
+        // shape[last] > 0 * rest > 0 > 0
+        vstd::arithmetic::mul::lemma_mul_strictly_positive(
+            shape[last as int] as int,
+            gathered_product(shape, &dl) as int,
+        );
+    }
 }
 
 } // verus!
