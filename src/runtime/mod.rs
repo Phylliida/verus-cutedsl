@@ -7,6 +7,7 @@ pub mod swizzle;
 pub mod inverse;
 pub mod tiling;
 pub mod predication;
+pub mod gemm;
 
 verus! {
 

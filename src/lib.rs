@@ -44,6 +44,9 @@ pub mod permutation;
 pub mod gemm;
 
 #[cfg(verus_keep_ghost)]
+pub mod contraction;
+
+#[cfg(verus_keep_ghost)]
 pub mod proof;
 
 #[cfg(verus_keep_ghost)]

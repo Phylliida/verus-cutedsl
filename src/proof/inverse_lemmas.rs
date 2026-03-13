@@ -1784,7 +1784,7 @@ proof fn lemma_remove_at_nat_to_int(preprod: Seq<nat>, idx: int)
 }
 
 /// Column-major strides at position i = shape_size(shape.take(i)).
-proof fn lemma_column_major_stride_value(shape: Seq<nat>, i: nat)
+pub proof fn lemma_column_major_stride_value(shape: Seq<nat>, i: nat)
     requires
         shape_valid(shape),
         i < shape.len(),

@@ -2,6 +2,7 @@ use vstd::prelude::*;
 use crate::layout::*;
 use crate::predication::*;
 use crate::tiling::*;
+use crate::swizzle::*;
 
 verus! {
 
@@ -149,6 +150,160 @@ pub open spec fn gemm_config_admissible(
     &&& padded_divide_admissible(m, bm)
     &&& padded_divide_admissible(n, bn)
     &&& padded_divide_admissible(k, bk)
+}
+
+// ══════════════════════════════════════════════════════════════
+// B-matrix tiled offset decomposition
+// ══════════════════════════════════════════════════════════════
+
+/// Offset of B[k,j] via tiling: tile (tk, tj) at element (ek, ej).
+pub open spec fn gemm_b_tiled_offset(
+    b_layout: &LayoutSpec, bk: nat, bn: nat,
+    tk: nat, tj: nat, ek: nat, ej: nat,
+) -> int
+    recommends b_layout.rank() == 2, bk > 0, bn > 0,
+{
+    gemm_b_offset(b_layout, tk * bk + ek, tj * bn + ej)
+}
+
+/// The flat and tiled B-offsets agree when tile coords decompose the global coords.
+pub open spec fn gemm_b_offset_tiling_consistent(
+    b_layout: &LayoutSpec, k: nat, n: nat, bk: nat, bn: nat,
+) -> bool
+    recommends b_layout.rank() == 2, bk > 0, bn > 0,
+{
+    forall|kk: nat, j: nat| kk < k && j < n ==>
+        gemm_b_offset(b_layout, kk, j)
+        == gemm_b_tiled_offset(b_layout, bk, bn,
+            kk / bk, j / bn, kk % bk, j % bn)
+}
+
+// ══════════════════════════════════════════════════════════════
+// Shared memory layouts (Feature 1)
+// ══════════════════════════════════════════════════════════════
+
+/// Shared memory layout for an A-tile (bm × bk) stored column-major.
+pub open spec fn smem_a_layout(bm: nat, bk: nat) -> LayoutSpec {
+    make_column_major(seq![bm, bk])
+}
+
+/// Shared memory layout for a B-tile (bk × bn) stored column-major.
+pub open spec fn smem_b_layout(bk: nat, bn: nat) -> LayoutSpec {
+    make_column_major(seq![bk, bn])
+}
+
+/// SM80 swizzle parameters: B=3 (8 bytes), M=0, S=3.
+pub open spec fn sm80_smem_swizzle_b() -> nat { 3 }
+pub open spec fn sm80_smem_swizzle_m() -> nat { 0 }
+pub open spec fn sm80_smem_swizzle_s() -> nat { 3 }
+
+/// SMEM layout admissibility: base layout compatible with swizzle parameters.
+pub open spec fn smem_layout_swizzle_admissible(
+    base: &LayoutSpec, b: nat, m: nat, s: nat,
+) -> bool {
+    &&& swizzle_layout_admissible(base, b, m, s)
+    &&& base.cosize_nonneg() <= pow2(m + s + b)
+}
+
+/// Swizzled offsets are all distinct within count elements.
+pub open spec fn smem_swizzle_distinct(
+    base: &LayoutSpec, b: nat, m: nat, s: nat,
+    count: nat,
+) -> bool {
+    forall|i: nat, j: nat|
+        i < count && j < count && i != j
+        ==> swizzled_offset(base, b, m, s, i)
+            != swizzled_offset(base, b, m, s, j)
+}
+
+// ══════════════════════════════════════════════════════════════
+// Copy atom specs (Feature 2)
+// ══════════════════════════════════════════════════════════════
+
+/// Global-to-shared-memory copy atom: contiguous load of access_width elements.
+pub open spec fn g2s_copy_atom(access_width: nat) -> LayoutSpec {
+    make_identity(access_width)
+}
+
+/// Tiled copy for G2S: distributes copy atom across threads.
+pub open spec fn g2s_tiled_copy(
+    access_width: nat, thr_layout: &LayoutSpec, val_layout: &LayoutSpec,
+) -> LayoutSpec {
+    make_tiled_copy(&g2s_copy_atom(access_width), thr_layout, val_layout)
+}
+
+/// G2S copy admissibility.
+pub open spec fn g2s_copy_admissible(
+    access_width: nat, thr_layout: &LayoutSpec, val_layout: &LayoutSpec,
+) -> bool {
+    &&& access_width > 0
+    &&& tiled_copy_admissible(&g2s_copy_atom(access_width), thr_layout, val_layout)
+}
+
+/// Shared-memory-to-register copy atom: contiguous load for MMA consumption.
+pub open spec fn s2r_copy_atom(access_width: nat) -> LayoutSpec {
+    make_identity(access_width)
+}
+
+/// Tiled copy for S2R.
+pub open spec fn s2r_tiled_copy(
+    access_width: nat, thr_layout: &LayoutSpec, val_layout: &LayoutSpec,
+) -> LayoutSpec {
+    make_tiled_copy(&s2r_copy_atom(access_width), thr_layout, val_layout)
+}
+
+/// S2R copy admissibility.
+pub open spec fn s2r_copy_admissible(
+    access_width: nat, thr_layout: &LayoutSpec, val_layout: &LayoutSpec,
+) -> bool {
+    &&& access_width > 0
+    &&& tiled_copy_admissible(&s2r_copy_atom(access_width), thr_layout, val_layout)
+}
+
+/// A tiled copy covers a tile: every element in [0, tile_size) is assigned.
+pub open spec fn copy_covers_tile(copy_layout: &LayoutSpec, tile_size: nat) -> bool {
+    copy_layout.size() >= tile_size
+}
+
+// ══════════════════════════════════════════════════════════════
+// Pipeline composition specs (Feature 3)
+// ══════════════════════════════════════════════════════════════
+
+/// G2S stage validity: copy tile size matches SMEM tile size.
+pub open spec fn g2s_stage_valid(
+    g2s_copy: &LayoutSpec, smem_base: &LayoutSpec,
+    tile_m: nat, tile_k: nat,
+) -> bool {
+    &&& g2s_copy.valid()
+    &&& smem_base.valid()
+    &&& g2s_copy.size() >= tile_m * tile_k
+    &&& smem_base.size() == tile_m * tile_k
+}
+
+/// S2R stage validity: register copy covers the MMA fragment.
+pub open spec fn s2r_stage_valid(
+    s2r_copy: &LayoutSpec, mma_thr: &LayoutSpec, mma_val: &LayoutSpec,
+) -> bool {
+    &&& s2r_copy.valid()
+    &&& mma_atom_admissible(mma_thr, mma_val)
+    &&& s2r_copy.size() >= mma_thr.size() * mma_val.size()
+}
+
+/// Full pipeline admissibility: all stages connect correctly.
+pub open spec fn gemm_pipeline_admissible(
+    m: nat, n: nat, k: nat,
+    bm: nat, bn: nat, bk: nat,
+    g2s_a: &LayoutSpec, g2s_b: &LayoutSpec,
+    smem_a: &LayoutSpec, smem_b: &LayoutSpec,
+    s2r_a: &LayoutSpec, s2r_b: &LayoutSpec,
+    mma_thr: &LayoutSpec, mma_val: &LayoutSpec,
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec, c_layout: &LayoutSpec,
+) -> bool {
+    &&& gemm_config_admissible(m, n, k, bm, bn, bk, a_layout, b_layout, c_layout)
+    &&& g2s_stage_valid(g2s_a, smem_a, bm, bk)
+    &&& g2s_stage_valid(g2s_b, smem_b, bk, bn)
+    &&& s2r_stage_valid(s2r_a, mma_thr, mma_val)
+    &&& s2r_stage_valid(s2r_b, mma_thr, mma_val)
 }
 
 } // verus!

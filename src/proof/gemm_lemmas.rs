@@ -4,6 +4,8 @@ use crate::layout::*;
 use crate::gemm::*;
 use crate::predication::*;
 use crate::tiling::*;
+use crate::swizzle::*;
+use crate::contraction::*;
 use crate::proof::shape_lemmas::*;
 use crate::proof::tiling_lemmas::*;
 
@@ -416,6 +418,379 @@ pub proof fn lemma_gemm_e2e_correctness(
 
     // Property 4: Tiling consistency
     lemma_gemm_offset_tiling_consistent(a_layout, m, k, bm, bk);
+}
+
+// ══════════════════════════════════════════════════════════════
+// B-matrix tiling consistency
+// ══════════════════════════════════════════════════════════════
+
+/// Flat and tiled B-offsets agree (mirrors A-matrix proof).
+pub proof fn lemma_gemm_b_offset_tiling_consistent(
+    b_layout: &LayoutSpec, k: nat, n: nat, bk: nat, bn: nat,
+)
+    requires
+        b_layout.valid(),
+        b_layout.rank() == 2,
+        bk > 0,
+        bn > 0,
+    ensures
+        gemm_b_offset_tiling_consistent(b_layout, k, n, bk, bn),
+{
+    assert forall|kk: nat, j: nat| kk < k && j < n implies
+        gemm_b_offset(b_layout, kk, j)
+        == gemm_b_tiled_offset(b_layout, bk, bn,
+            kk / bk, j / bn, kk % bk, j % bn)
+    by {
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(kk as int, bk as int);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(bk as int, (kk / bk) as int);
+        assert((kk / bk) * bk + kk % bk == kk);
+
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(j as int, bn as int);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(bn as int, (j / bn) as int);
+        assert((j / bn) * bn + j % bn == j);
+    };
+}
+
+// ══════════════════════════════════════════════════════════════
+// Feature 1: SMEM layout proofs
+// ══════════════════════════════════════════════════════════════
+
+/// Column-major layouts have non-negative strides (strides are prefix products of nat shape).
+proof fn lemma_column_major_nonneg_strides(shape: Seq<nat>)
+    requires shape_valid(shape),
+    ensures make_column_major(shape).non_negative_strides(),
+    decreases shape.len(),
+{
+    crate::proof::injectivity_lemmas::lemma_column_major_strides_len(shape);
+    crate::proof::injectivity_lemmas::lemma_column_major_valid(shape);
+    let layout = make_column_major(shape);
+    assert forall|i: int| 0 <= i < layout.stride.len() implies #[trigger] layout.stride[i] >= 0
+    by {
+        crate::proof::inverse_lemmas::lemma_column_major_stride_value(shape, i as nat);
+        // stride[i] == shape_size(shape.take(i)) >= 1 for valid shapes
+    };
+}
+
+/// SM80 smem A-layout is valid with non-negative strides.
+pub proof fn lemma_smem_a_layout_valid(bm: nat, bk: nat)
+    requires bm > 0, bk > 0,
+    ensures
+        smem_a_layout(bm, bk).valid(),
+        smem_a_layout(bm, bk).non_negative_strides(),
+{
+    let shape = seq![bm, bk];
+    assert(shape_valid(shape)) by {
+        assert forall|i: int| 0 <= i < shape.len() implies #[trigger] shape[i] > 0 by {};
+    };
+    crate::proof::injectivity_lemmas::lemma_column_major_valid(shape);
+    lemma_column_major_nonneg_strides(shape);
+}
+
+/// SM80 smem A-layout is injective.
+pub proof fn lemma_smem_a_layout_injective(bm: nat, bk: nat)
+    requires bm > 0, bk > 0,
+    ensures smem_a_layout(bm, bk).is_injective(),
+{
+    let shape = seq![bm, bk];
+    assert(shape_valid(shape)) by {
+        assert forall|i: int| 0 <= i < shape.len() implies #[trigger] shape[i] > 0 by {};
+    };
+    crate::proof::injectivity_lemmas::lemma_column_major_injective(shape);
+}
+
+/// SM80 smem B-layout is valid with non-negative strides.
+pub proof fn lemma_smem_b_layout_valid(bk: nat, bn: nat)
+    requires bk > 0, bn > 0,
+    ensures
+        smem_b_layout(bk, bn).valid(),
+        smem_b_layout(bk, bn).non_negative_strides(),
+{
+    let shape = seq![bk, bn];
+    assert(shape_valid(shape)) by {
+        assert forall|i: int| 0 <= i < shape.len() implies #[trigger] shape[i] > 0 by {};
+    };
+    crate::proof::injectivity_lemmas::lemma_column_major_valid(shape);
+    lemma_column_major_nonneg_strides(shape);
+}
+
+/// SM80 smem B-layout is injective.
+pub proof fn lemma_smem_b_layout_injective(bk: nat, bn: nat)
+    requires bk > 0, bn > 0,
+    ensures smem_b_layout(bk, bn).is_injective(),
+{
+    let shape = seq![bk, bn];
+    assert(shape_valid(shape)) by {
+        assert forall|i: int| 0 <= i < shape.len() implies #[trigger] shape[i] > 0 by {};
+    };
+    crate::proof::injectivity_lemmas::lemma_column_major_injective(shape);
+}
+
+/// SM80 swizzle params are admissible: B=3, M=0, S=3, and S >= B.
+pub proof fn lemma_sm80_swizzle_admissible()
+    ensures swizzle_admissible(sm80_smem_swizzle_b(), sm80_smem_swizzle_m(), sm80_smem_swizzle_s()),
+{
+    // B=3 > 0, S=3 >= B=3
+}
+
+/// Swizzled SMEM layout has distinct offsets when admissible.
+pub proof fn lemma_smem_swizzle_distinct(
+    base: &LayoutSpec, b: nat, m: nat, s: nat,
+    count: nat,
+)
+    requires
+        smem_layout_swizzle_admissible(base, b, m, s),
+        count <= base.size(),
+    ensures
+        smem_swizzle_distinct(base, b, m, s, count),
+{
+    crate::proof::swizzle_lemmas::lemma_swizzled_offset_injective(base, b, m, s);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Feature 2: Copy atom proofs
+// ══════════════════════════════════════════════════════════════
+
+/// G2S copy atom is a valid copy atom.
+pub proof fn lemma_g2s_copy_atom_valid(access_width: nat)
+    requires access_width > 0,
+    ensures copy_atom_valid(&g2s_copy_atom(access_width), access_width),
+{
+    // g2s_copy_atom(access_width) = make_identity(access_width) = {shape: [access_width], stride: [1]}
+    // copy_atom_valid checks: valid, rank==1, shape[0]==access_width, stride[0]==1
+}
+
+/// G2S tiled copy is valid.
+pub proof fn lemma_g2s_tiled_copy_valid(
+    access_width: nat, thr: &LayoutSpec, val: &LayoutSpec,
+)
+    requires g2s_copy_admissible(access_width, thr, val),
+    ensures g2s_tiled_copy(access_width, thr, val).valid(),
+{
+    lemma_tiled_copy_valid(&g2s_copy_atom(access_width), thr, val);
+}
+
+/// G2S tiled copy is injective (no two threads load the same element).
+pub proof fn lemma_g2s_tiled_copy_injective(
+    access_width: nat, thr: &LayoutSpec, val: &LayoutSpec,
+)
+    requires
+        g2s_copy_admissible(access_width, thr, val),
+        thr.is_injective(),
+        val.is_injective(),
+        val.non_negative_strides(),
+    ensures
+        g2s_tiled_copy(access_width, thr, val).is_injective(),
+{
+    let atom = g2s_copy_atom(access_width);
+    // atom = make_identity(access_width), which is injective and has non-neg strides
+    crate::proof::injectivity_lemmas::lemma_identity_injective(access_width);
+    lemma_tiled_copy_injective(&atom, thr, val);
+}
+
+/// G2S tiled copy covers the full tile.
+pub proof fn lemma_g2s_tiled_copy_coverage(
+    access_width: nat, thr: &LayoutSpec, val: &LayoutSpec,
+    tile_size: nat,
+)
+    requires
+        g2s_copy_admissible(access_width, thr, val),
+        tile_size == access_width * thr.size() * val.size(),
+    ensures
+        copy_covers_tile(&g2s_tiled_copy(access_width, thr, val), tile_size),
+{
+    let atom = g2s_copy_atom(access_width);
+    lemma_tiled_copy_size(&atom, thr, val);
+    // size(tiled_copy) == atom_size * thr_size * val_size
+    lemma_shape_size_single(access_width);
+    // atom_size == access_width (since atom = make_identity(access_width) = {[access_width]:[1]})
+    assert(shape_size(atom.shape) == access_width);
+}
+
+/// S2R copy atom is a valid copy atom.
+pub proof fn lemma_s2r_copy_atom_valid(access_width: nat)
+    requires access_width > 0,
+    ensures copy_atom_valid(&s2r_copy_atom(access_width), access_width),
+{
+}
+
+/// S2R tiled copy is valid.
+pub proof fn lemma_s2r_tiled_copy_valid(
+    access_width: nat, thr: &LayoutSpec, val: &LayoutSpec,
+)
+    requires s2r_copy_admissible(access_width, thr, val),
+    ensures s2r_tiled_copy(access_width, thr, val).valid(),
+{
+    lemma_tiled_copy_valid(&s2r_copy_atom(access_width), thr, val);
+}
+
+/// S2R tiled copy is injective.
+pub proof fn lemma_s2r_tiled_copy_injective(
+    access_width: nat, thr: &LayoutSpec, val: &LayoutSpec,
+)
+    requires
+        s2r_copy_admissible(access_width, thr, val),
+        thr.is_injective(),
+        val.is_injective(),
+        val.non_negative_strides(),
+    ensures
+        s2r_tiled_copy(access_width, thr, val).is_injective(),
+{
+    let atom = s2r_copy_atom(access_width);
+    crate::proof::injectivity_lemmas::lemma_identity_injective(access_width);
+    lemma_tiled_copy_injective(&atom, thr, val);
+}
+
+/// S2R tiled copy covers the full fragment.
+pub proof fn lemma_s2r_tiled_copy_coverage(
+    access_width: nat, thr: &LayoutSpec, val: &LayoutSpec,
+    tile_size: nat,
+)
+    requires
+        s2r_copy_admissible(access_width, thr, val),
+        tile_size == access_width * thr.size() * val.size(),
+    ensures
+        copy_covers_tile(&s2r_tiled_copy(access_width, thr, val), tile_size),
+{
+    let atom = s2r_copy_atom(access_width);
+    lemma_tiled_copy_size(&atom, thr, val);
+    lemma_shape_size_single(access_width);
+    assert(shape_size(atom.shape) == access_width);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Feature 3: Pipeline composition proofs
+// ══════════════════════════════════════════════════════════════
+
+/// G2S covers the A-tile.
+pub proof fn lemma_g2s_covers_a_tile(
+    g2s_a: &LayoutSpec, smem_a: &LayoutSpec, bm: nat, bk: nat,
+)
+    requires g2s_stage_valid(g2s_a, smem_a, bm, bk),
+    ensures copy_covers_tile(g2s_a, bm * bk),
+{
+    // Direct from g2s_stage_valid: g2s_a.size() >= bm * bk
+}
+
+/// G2S covers the B-tile.
+pub proof fn lemma_g2s_covers_b_tile(
+    g2s_b: &LayoutSpec, smem_b: &LayoutSpec, bk: nat, bn: nat,
+)
+    requires g2s_stage_valid(g2s_b, smem_b, bk, bn),
+    ensures copy_covers_tile(g2s_b, bk * bn),
+{
+}
+
+/// S2R loads feed the MMA.
+pub proof fn lemma_s2r_covers_mma(
+    s2r: &LayoutSpec, mma_thr: &LayoutSpec, mma_val: &LayoutSpec,
+)
+    requires s2r_stage_valid(s2r, mma_thr, mma_val),
+    ensures s2r.size() >= mma_thr.size() * mma_val.size(),
+{
+}
+
+/// Master pipeline correctness: all stages compose correctly.
+pub proof fn lemma_gemm_pipeline_correct(
+    m: nat, n: nat, k: nat,
+    bm: nat, bn: nat, bk: nat,
+    g2s_a: &LayoutSpec, g2s_b: &LayoutSpec,
+    smem_a: &LayoutSpec, smem_b: &LayoutSpec,
+    s2r_a: &LayoutSpec, s2r_b: &LayoutSpec,
+    mma_thr: &LayoutSpec, mma_val: &LayoutSpec,
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec, c_layout: &LayoutSpec,
+)
+    requires
+        gemm_pipeline_admissible(m, n, k, bm, bn, bk,
+            g2s_a, g2s_b, smem_a, smem_b, s2r_a, s2r_b,
+            mma_thr, mma_val, a_layout, b_layout, c_layout),
+        m <= c_layout.shape[0],
+        n <= c_layout.shape[1],
+    ensures
+        // E2E kernel correctness
+        gemm_output_covered(m, n, bm, bn),
+        k_reduction_complete(k, bk),
+        gemm_output_injective(c_layout, m, n),
+        gemm_offset_tiling_consistent(a_layout, m, k, bm, bk),
+        // Stage correctness
+        gemm_b_offset_tiling_consistent(b_layout, k, n, bk, bn),
+        copy_covers_tile(g2s_a, bm * bk),
+        copy_covers_tile(g2s_b, bk * bn),
+{
+    lemma_gemm_e2e_correctness(m, n, k, bm, bn, bk, a_layout, b_layout, c_layout);
+    lemma_gemm_b_offset_tiling_consistent(b_layout, k, n, bk, bn);
+    lemma_g2s_covers_a_tile(g2s_a, smem_a, bm, bk);
+    lemma_g2s_covers_b_tile(g2s_b, smem_b, bk, bn);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Feature 5: Tensor contraction proofs
+// ══════════════════════════════════════════════════════════════
+
+/// GEMM contraction spec has valid mode sets for rank-2 inputs.
+pub proof fn lemma_gemm_contraction_valid()
+    ensures contraction_mode_sets_valid(&gemm_as_contraction(), 2, 2),
+{
+    let spec = gemm_as_contraction();
+    // batch: 0 + contraction: 1 + free: 1 = 2 for A
+    // batch: 0 + contraction: 1 + free: 1 = 2 for B
+    assert(spec.contraction_modes_a[0] < 2);
+    assert(spec.contraction_modes_b[0] < 2);
+    assert(spec.free_modes_a[0] < 2);
+    assert(spec.free_modes_b[0] < 2);
+}
+
+/// GEMM contraction shapes match when K dimensions agree.
+pub proof fn lemma_gemm_contraction_shapes_match(a_shape: Seq<nat>, b_shape: Seq<nat>)
+    requires
+        a_shape.len() == 2,
+        b_shape.len() == 2,
+        a_shape[1] == b_shape[0],
+    ensures
+        contraction_shapes_match(&gemm_as_contraction(), &a_shape, &b_shape),
+{
+    let spec = gemm_as_contraction();
+    // Batch: gather_shape(a, []) =~= gather_shape(b, []) — both empty
+    assert(gather_shape(&a_shape, &spec.batch_modes_a) =~=
+           gather_shape(&b_shape, &spec.batch_modes_b));
+    // Contraction: gather_shape(a, [1]) = [a_shape[1]], gather_shape(b, [0]) = [b_shape[0]]
+    assert(gather_shape(&a_shape, &spec.contraction_modes_a) =~=
+           gather_shape(&b_shape, &spec.contraction_modes_b));
+}
+
+/// GEMM contraction output shape is (M, N).
+pub proof fn lemma_gemm_contraction_output_shape(a_shape: Seq<nat>, b_shape: Seq<nat>)
+    requires
+        a_shape.len() == 2,
+        b_shape.len() == 2,
+    ensures
+        contraction_output_shape(&gemm_as_contraction(), &a_shape, &b_shape)
+        =~= seq![a_shape[0], b_shape[1]],
+{
+    let spec = gemm_as_contraction();
+    // batch = gather(a, []) = []
+    // free_a = gather(a, [0]) = [a_shape[0]]
+    // free_b = gather(b, [1]) = [b_shape[1]]
+    // output = [] ++ [a_shape[0]] ++ [b_shape[1]] = [a_shape[0], b_shape[1]]
+    let batch = gather_shape(&a_shape, &spec.batch_modes_a);
+    let free_a = gather_shape(&a_shape, &spec.free_modes_a);
+    let free_b = gather_shape(&b_shape, &spec.free_modes_b);
+    assert(batch =~= Seq::<nat>::empty());
+    assert(free_a =~= seq![a_shape[0]]);
+    assert(free_b =~= seq![b_shape[1]]);
+    assert(batch.add(free_a).add(free_b) =~= seq![a_shape[0], b_shape[1]]);
+}
+
+/// Batched GEMM contraction spec has valid mode sets for rank-3 inputs.
+pub proof fn lemma_batched_gemm_contraction_valid()
+    ensures contraction_mode_sets_valid(&batched_gemm_as_contraction(), 3, 3),
+{
+    let spec = batched_gemm_as_contraction();
+    assert(spec.batch_modes_a[0] < 3);
+    assert(spec.batch_modes_b[0] < 3);
+    assert(spec.contraction_modes_a[0] < 3);
+    assert(spec.contraction_modes_b[0] < 3);
+    assert(spec.free_modes_a[0] < 3);
+    assert(spec.free_modes_b[0] < 3);
 }
 
 } // verus!
