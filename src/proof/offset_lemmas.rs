@@ -184,4 +184,67 @@ proof fn lemma_delinearize_all_zeros(idx: nat, shape: Seq<nat>)
     }
 }
 
+// ══════════════════════════════════════════════════════════════
+// Rank-2 offset via linearize
+// ══════════════════════════════════════════════════════════════
+
+/// For a rank-2 layout, `offset(linearize(seq![i, k], shape))` equals
+/// the arithmetic formula `i * stride[0] + k * stride[1]`.
+///
+/// This is the canonical bridge between the generic `LayoutSpec::offset`
+/// definition (which goes through delinearize/dot_product) and the direct
+/// arithmetic that runtime code and GEMM specs need.
+pub proof fn lemma_rank2_offset_linearize(layout: &LayoutSpec, i: nat, k: nat)
+    requires
+        layout.valid(),
+        layout.shape.len() == 2,
+        i < layout.shape[0],
+        k < layout.shape[1],
+    ensures
+        layout.offset(linearize(seq![i, k], layout.shape))
+            == (i as int) * layout.stride[0] + (k as int) * layout.stride[1],
+{
+    let shape = layout.shape;
+    let coords = seq![i, k];
+
+    // Show coords_in_bounds(coords, shape)
+    assert(coords.len() == shape.len());
+    assert forall|j: int| 0 <= j < coords.len() implies #[trigger] coords[j] < shape[j]
+    by {
+        if j == 0 { assert(coords[0] == i); assert(shape[0] == layout.shape[0]); }
+        else { assert(coords[1] == k); assert(shape[1] == layout.shape[1]); }
+    };
+
+    // linearize produces in-bounds index
+    lemma_linearize_bound(coords, shape);
+    let x = linearize(coords, shape);
+
+    // delinearize(linearize(coords, shape), shape) =~= coords
+    lemma_linearize_roundtrip(coords, shape);
+
+    // offset(x) = dot(delinearize(x, shape), stride)
+    // and delinearize(x, shape) =~= seq![i, k]
+    let dcoords = delinearize(x, shape);
+    assert(dcoords =~= coords);
+
+    // Unfold dot product for 2 elements
+    lemma_delinearize_len(x, shape);
+    assert(dcoords.len() == 2);
+    let skip1_c = dcoords.skip(1);
+    let skip1_s = layout.stride.skip(1);
+    assert(skip1_c.len() == 1);
+    assert(skip1_c.first() == dcoords[1]);
+    assert(skip1_s.first() == layout.stride[1]);
+    assert(skip1_c.skip(1) =~= Seq::<nat>::empty());
+    assert(skip1_s.skip(1) =~= Seq::<int>::empty());
+    assert(dot_product_nat_int(Seq::<nat>::empty(), Seq::<int>::empty()) == 0int);
+    assert(dot_product_nat_int(skip1_c, skip1_s) == (dcoords[1] as int) * layout.stride[1]);
+    assert(dot_product_nat_int(dcoords, layout.stride) ==
+        (dcoords[0] as int) * layout.stride[0] + dot_product_nat_int(skip1_c, skip1_s));
+
+    // Since dcoords =~= seq![i, k]:
+    assert(dcoords[0] == i);
+    assert(dcoords[1] == k);
+}
+
 } // verus!

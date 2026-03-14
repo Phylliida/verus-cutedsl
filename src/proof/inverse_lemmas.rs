@@ -1921,10 +1921,10 @@ proof fn lemma_right_inverse_build_correct(
         // R = {[], []}, R.size() = 1, j = 0, coords = seq![]
         // All properties hold vacuously or with 0-length dots
     } else {
-        let idx_val = find_value(stride, cursor as int);
         lemma_find_value_hit(stride, cursor as int);
 
-        if idx_val < 0 || idx_val >= shape.len() as int {
+        match find_value(stride, cursor as int) {
+            None => {
             // Build failed: R = {[], []}, R.size() = 1, j = 0
             // coords = all-zeros
             assert(j == 0nat) by {
@@ -1945,19 +1945,37 @@ proof fn lemma_right_inverse_build_correct(
             // dot with preprod_int = 0 = R.offset(0)
             lemma_dot_product_zeros(preprod_int, shape.len());
             assert(coords =~= Seq::new(preprod_int.len() as nat, |_i: int| 0nat));
-        } else {
-            let idx = idx_val;
-            let m = shape[idx];
-            let pp = preprod[idx];
+            }
+            Some(idx) => {
+            if idx >= shape.len() {
+                // Same as None: build failed
+                assert(j == 0nat) by {
+                    assert(R.shape.len() == 0);
+                    assert(R.shape =~= Seq::<nat>::empty());
+                };
+                assert(coords_in_bounds(coords, shape)) by {
+                    assert forall|i: nat| i < shape.len()
+                        implies #[trigger] coords[i as int] < shape[i as int]
+                    by {
+                        assert(coords[i as int] == 0nat);
+                    };
+                };
+                lemma_dot_product_zeros(stride, shape.len());
+                assert(coords =~= Seq::new(shape.len(), |_i: int| 0nat));
+                lemma_dot_product_zeros(preprod_int, shape.len());
+                assert(coords =~= Seq::new(preprod_int.len() as nat, |_i: int| 0nat));
+            } else {
+            let m = shape[idx as int];
+            let pp = preprod[idx as int];
             let j0 = j % m;
             let j1 = j / m;
 
             // stride[idx] == cursor
-            assert(stride[idx] == cursor as int);
+            assert(stride[idx as int] == cursor as int);
 
-            let rest_shape = remove_at_nat(shape, idx);
-            let rest_stride = remove_at_int(stride, idx);
-            let rest_preprod = remove_at_nat(preprod, idx);
+            let rest_shape = remove_at_nat(shape, idx as int);
+            let rest_stride = remove_at_int(stride, idx as int);
+            let rest_preprod = remove_at_nat(preprod, idx as int);
             let rest_R = right_inverse_build(rest_shape, rest_stride, rest_preprod, m * cursor);
             let rest_coords = right_inverse_coords(rest_shape, rest_stride, m * cursor, j1);
             let rest_preprod_int = Seq::new(rest_preprod.len(), |i: int| rest_preprod[i] as int);
@@ -1972,7 +1990,7 @@ proof fn lemma_right_inverse_build_correct(
                 assert forall|k: int| 0 <= k < rest_shape.len()
                     implies #[trigger] rest_shape[k] > 0
                 by {
-                    if k < idx { assert(rest_shape[k] == shape[k]); }
+                    if k < idx as int { assert(rest_shape[k] == shape[k]); }
                     else { assert(rest_shape[k] == shape[k + 1]); }
                 };
             };
@@ -2005,36 +2023,32 @@ proof fn lemma_right_inverse_build_correct(
                 assert forall|i: nat| i < shape.len()
                     implies #[trigger] coords[i as int] < shape[i as int]
                 by {
-                    if i as int == idx {
+                    if i as int == idx as int {
                         // coords[idx] = j % m < m = shape[idx]
                         assert(coords[i as int] == j0);
                         vstd::arithmetic::div_mod::lemma_mod_bound(j as int, m as int);
-                    } else if (i as int) < idx {
+                    } else if (i as int) < idx as int {
                         // coords[i] = rest_coords[i] < rest_shape[i] = shape[i]
                         assert(coords[i as int] == rest_coords[i as int]);
                         assert(rest_coords[i as int] < rest_shape[i as int]);
-                        assert(rest_shape[i as int] == shape.take(idx)[i as int]);
-                        assert(shape.take(idx)[i as int] == shape[i as int]);
+                        assert(rest_shape[i as int] == shape.take(idx as int)[i as int]);
+                        assert(shape.take(idx as int)[i as int] == shape[i as int]);
                     } else {
                         // coords[i] = rest_coords[i-1] < rest_shape[i-1] = shape[i]
                         assert(coords[i as int] == rest_coords[(i as int - 1) as int]);
                         assert(rest_coords[(i as int - 1) as int] < rest_shape[(i as int - 1) as int]);
-                        assert(rest_shape[(i as int - 1) as int] == shape.skip(idx + 1)[(i as int - 1 - idx) as int]);
-                        assert(shape.skip(idx + 1)[(i as int - 1 - idx) as int] == shape[i as int]);
+                        assert(rest_shape[(i as int - 1) as int] == shape.skip(idx as int + 1)[(i as int - 1 - idx as int) as int]);
+                        assert(shape.skip(idx as int + 1)[(i as int - 1 - idx as int) as int] == shape[i as int]);
                     }
                 };
             };
 
             // ── Property 3: dot(coords, stride) == cursor * j ──
-            lemma_dot_product_insert_at(rest_coords, stride, idx, j0);
-            // dot(coords, stride) = j0 * stride[idx] + dot(rest_coords, remove_at_int(stride, idx))
-            //                     = j0 * cursor + (m * cursor) * j1
-            //                     = cursor * (j0 + m * j1) = cursor * j
-            assert(dot_product_nat_int(rest_coords, remove_at_int(stride, idx))
+            lemma_dot_product_insert_at(rest_coords, stride, idx as int, j0);
+            assert(dot_product_nat_int(rest_coords, remove_at_int(stride, idx as int))
                 == dot_product_nat_int(rest_coords, rest_stride));
             assert(dot_product_nat_int(rest_coords, rest_stride)
                 == (m * cursor) as int * (j1 as int));
-            // cursor * (j0 + m * j1) = cursor * j
             assert((cursor as int) * (j as int)
                 == (j0 as int) * (cursor as int) + (m as int) * (cursor as int) * (j1 as int)) by {
                 assert(j == m * j1 + j0) by {
@@ -2051,47 +2065,35 @@ proof fn lemma_right_inverse_build_correct(
             };
 
             // ── Property 4: dot(coords, preprod_int) == R.offset(j) ──
-            lemma_dot_product_insert_at(rest_coords, preprod_int, idx, j0);
-            // dot(coords, preprod_int) = j0 * preprod_int[idx] + dot(rest_coords, remove_at_int(preprod_int, idx))
+            lemma_dot_product_insert_at(rest_coords, preprod_int, idx as int, j0);
 
             // Show remove_at_int(preprod_int, idx) =~= rest_preprod_int
-            lemma_remove_at_nat_to_int(preprod, idx);
+            lemma_remove_at_nat_to_int(preprod, idx as int);
             crate::proof::shape_lemmas::lemma_dot_product_ext(
                 rest_coords, rest_coords,
-                remove_at_int(preprod_int, idx), rest_preprod_int);
+                remove_at_int(preprod_int, idx as int), rest_preprod_int);
 
-            // By induction: dot(rest_coords, rest_preprod_int) == rest_R.offset(j1)
-            // So: dot(coords, preprod_int) = j0 * preprod_int[idx] + rest_R.offset(j1)
-
-            // Now show R.offset(j) = j0 * preprod_int[idx] + rest_R.offset(j1)
-            // R.shape = seq![m].add(rest_R.shape), R.stride = seq![pp as int].add(rest_R.stride)
             lemma_right_inverse_build_valid(shape, stride, preprod, cursor);
             let r_shape = R.shape;
             let r_stride = R.stride;
             assert(r_shape =~= seq![m as nat].add(rest_R.shape));
             assert(r_stride =~= seq![pp as int].add(rest_R.stride));
 
-            // Expand R.offset(j) = dot(delinearize(j, R.shape), R.stride)
-            // delinearize(j, seq![m].add(X)) = seq![j%m].add(delinearize(j/m, X))
             assert(r_shape.first() == m);
             assert(r_shape.skip(1) =~= rest_R.shape);
             let delin = delinearize(j, r_shape);
             assert(delin.first() == j % m);
             assert(delin =~= seq![j0].add(delinearize(j1, rest_R.shape)));
 
-            // dot(seq![j0].add(delinearize(j1, rest_R.shape)), seq![pp_int].add(rest_R.stride))
-            // = j0 * pp_int + dot(delinearize(j1, rest_R.shape), rest_R.stride)
-            // = j0 * pp_int + rest_R.offset(j1)
             assert(r_stride.first() == pp as int);
             assert(r_stride.skip(1) =~= rest_R.stride);
 
             let delin_rest = delinearize(j1, rest_R.shape);
             assert(delin.skip(1) =~= delin_rest);
 
-            // R.offset(j) = dot(delin, r_stride)
-            //             = j0 * (pp as int) + dot(delin_rest, rest_R.stride)
-            //             = j0 * preprod_int[idx] + rest_R.offset(j1)
-            assert(pp as int == preprod_int[idx]);
+            assert(pp as int == preprod_int[idx as int]);
+            }
+            }
         }
     }
 }
@@ -2373,18 +2375,21 @@ proof fn lemma_find_min_positive_sorted_zero(stride: Seq<int>)
         forall|j: int| 0 <= j < stride.len() ==> stride[j] > 0,
         forall|j: int| 0 <= j < stride.len() as int - 1 ==>
             stride[j] <= #[trigger] stride[j + 1],
-    ensures find_min_positive(stride) == 0,
+    ensures find_min_positive(stride) == Some(0nat),
 {
-    let idx = find_min_positive(stride);
     lemma_find_min_positive_in_bounds(stride);
-    if idx < 0 {
-        lemma_find_min_positive_none_means_all_nonpositive(stride, idx, 0);
-        assert(false);
-    }
-    if idx > 0 {
-        lemma_find_min_positive_is_first(stride, idx);
-        lemma_sorted_transitive(stride, 0, idx);
-        assert(false);
+    match find_min_positive(stride) {
+        None => {
+            lemma_find_min_positive_none_means_all_nonpositive(stride, 0);
+            assert(false);
+        }
+        Some(idx) => {
+            if idx > 0nat {
+                lemma_find_min_positive_is_first(stride, idx);
+                lemma_sorted_transitive(stride, 0, idx as int);
+                assert(false);
+            }
+        }
     }
 }
 

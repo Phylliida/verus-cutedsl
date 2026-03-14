@@ -1,4 +1,5 @@
 use vstd::prelude::*;
+use crate::shape::*;
 use crate::layout::*;
 use crate::predication::*;
 use crate::tiling::*;
@@ -32,24 +33,27 @@ pub open spec fn tensor_valid(t: &TensorSpec) -> bool {
 // ══════════════════════════════════════════════════════════════
 
 /// The offset of A[i,k] in a rank-2 layout: row i, column k.
+/// Defined via `LayoutSpec::offset` to ensure consistency with the generic layout machinery.
 pub open spec fn gemm_a_offset(a_layout: &LayoutSpec, i: nat, k: nat) -> int
-    recommends a_layout.rank() == 2,
+    recommends a_layout.rank() == 2, i < a_layout.shape[0], k < a_layout.shape[1],
 {
-    (i as int) * a_layout.stride[0] + (k as int) * a_layout.stride[1]
+    a_layout.offset(linearize(seq![i, k], a_layout.shape))
 }
 
 /// The offset of B[k,j] in a rank-2 layout: row k, column j.
+/// Defined via `LayoutSpec::offset` to ensure consistency with the generic layout machinery.
 pub open spec fn gemm_b_offset(b_layout: &LayoutSpec, k: nat, j: nat) -> int
-    recommends b_layout.rank() == 2,
+    recommends b_layout.rank() == 2, k < b_layout.shape[0], j < b_layout.shape[1],
 {
-    (k as int) * b_layout.stride[0] + (j as int) * b_layout.stride[1]
+    b_layout.offset(linearize(seq![k, j], b_layout.shape))
 }
 
 /// The offset of C[i,j] in a rank-2 layout: row i, column j.
+/// Defined via `LayoutSpec::offset` to ensure consistency with the generic layout machinery.
 pub open spec fn gemm_c_offset(c_layout: &LayoutSpec, i: nat, j: nat) -> int
-    recommends c_layout.rank() == 2,
+    recommends c_layout.rank() == 2, i < c_layout.shape[0], j < c_layout.shape[1],
 {
-    (i as int) * c_layout.stride[0] + (j as int) * c_layout.stride[1]
+    c_layout.offset(linearize(seq![i, j], c_layout.shape))
 }
 
 // ══════════════════════════════════════════════════════════════

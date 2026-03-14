@@ -211,10 +211,26 @@ pub proof fn lemma_gemm_c_offset_injective(
     };
     assert(coords2 =~= seq![i2, j2]);
 
-    // Now lemma_offset_rank2 gives:
-    // c_layout.offset(x1) = coords1[0]*stride[0] + coords1[1]*stride[1]
-    //                      = i1*stride[0] + j1*stride[1]
-    //                      = gemm_c_offset(c_layout, i1, j1)
+    // Bridge: x1 == linearize(seq![i1, j1], shape) and x2 == linearize(seq![i2, j2], shape)
+    // linearize(seq![i1, j1], seq![s0, s1]) = i1 + s0 * linearize(seq![j1], seq![s1])
+    //                                       = i1 + s0 * j1
+    assert(seq![s1].skip(1) =~= Seq::<nat>::empty());
+    assert(seq![j1].skip(1) =~= Seq::<nat>::empty());
+    assert(linearize(Seq::<nat>::empty(), Seq::<nat>::empty()) == 0nat);
+    assert(s1 * 0nat == 0nat);
+    assert(linearize(seq![j1], seq![s1]) == j1);
+    assert(seq![j2].skip(1) =~= Seq::<nat>::empty());
+    assert(linearize(seq![j2], seq![s1]) == j2);
+    assert(seq![i1, j1].first() == i1);
+    assert(seq![i1, j1].skip(1) =~= seq![j1]);
+    assert(seq![i2, j2].first() == i2);
+    assert(seq![i2, j2].skip(1) =~= seq![j2]);
+    vstd::arithmetic::mul::lemma_mul_is_commutative(s0 as int, j1 as int);
+    vstd::arithmetic::mul::lemma_mul_is_commutative(s0 as int, j2 as int);
+    assert(linearize(seq![i1, j1], c_layout.shape) == x1);
+    assert(linearize(seq![i2, j2], c_layout.shape) == x2);
+
+    // Now gemm_c_offset(c_layout, i1, j1) = c_layout.offset(linearize(seq![i1, j1], shape)) = c_layout.offset(x1)
     assert(c_layout.offset(x1) == gemm_c_offset(c_layout, i1, j1));
     assert(c_layout.offset(x2) == gemm_c_offset(c_layout, i2, j2));
 }
@@ -1132,6 +1148,16 @@ pub proof fn lemma_epilogue_store_in_bounds(
     assert(inner =~= seq![j % s1].add(delinearize(j / s1, Seq::<nat>::empty())));
     assert(coords =~= seq![i].add(inner));
     assert(coords[1] == j);
+
+    // Bridge: x == linearize(seq![i, j], c_layout.shape)
+    assert(seq![s1].skip(1) =~= Seq::<nat>::empty());
+    assert(seq![j].skip(1) =~= Seq::<nat>::empty());
+    assert(linearize(Seq::<nat>::empty(), Seq::<nat>::empty()) == 0nat);
+    assert(s1 * 0nat == 0nat);
+    assert(linearize(seq![j], seq![s1]) == j);
+    assert(seq![i, j].first() == i);
+    assert(seq![i, j].skip(1) =~= seq![j]);
+    assert(linearize(seq![i, j], c_layout.shape) == x);
 
     // Now: offset(x) = i*stride[0] + j*stride[1] = gemm_c_offset(c_layout, i, j)
     assert(c_layout.offset(x) == gemm_c_offset(c_layout, i, j));
