@@ -488,6 +488,23 @@ pub open spec fn gemm_int_mac_partial(
     }
 }
 
+/// Staged integer MAC over shared memory buffers.
+/// Computes sum_{c=0}^{count-1} smem_a[ei*stride_a + c] * smem_b[c*stride_b + ej].
+/// Right-peeling form to match gemm_int_mac_partial.
+pub open spec fn staged_int_mac(
+    smem_a: Seq<i64>, smem_b: Seq<i64>,
+    ei: nat, ej: nat, stride_a: nat, stride_b: nat, count: nat,
+) -> int
+    decreases count,
+{
+    if count == 0 { 0 }
+    else {
+        staged_int_mac(smem_a, smem_b, ei, ej, stride_a, stride_b, (count - 1) as nat)
+        + (smem_a[(ei * stride_a + (count - 1)) as int] as int)
+          * (smem_b[((count - 1) * stride_b + ej) as int] as int)
+    }
+}
+
 /// Sum of i64 products accessed through offset sequences.
 pub open spec fn sum_int_products(
     a_data: Seq<i64>, b_data: Seq<i64>,

@@ -482,6 +482,37 @@ pub proof fn lemma_slice_offset_reconstruction(
     // So: layout.offset(x) = c * stride[0] + sl.offset(i) = slice_offset + sl.offset(i)
 }
 
+/// Distinct remainders imply distinct sums: i*m+c1 != j*m+c2 when c1 != c2 < m.
+proof fn lemma_distinct_mod_implies_distinct(c1: nat, c2: nat, i: nat, j: nat, m0: nat)
+    requires c1 < m0, c2 < m0, c1 != c2, m0 > 0,
+    ensures i * m0 + c1 != j * m0 + c2,
+{
+    // If i == j, obvious since c1 != c2.
+    // If i != j, WLOG i > j: i*m + c1 >= (j+1)*m + 0 = j*m + m > j*m + c2.
+    if i == j {
+        // i * m0 + c1 != i * m0 + c2 because c1 != c2
+    } else if i > j {
+        assert(i * m0 + c1 >= (j + 1) * m0) by (nonlinear_arith)
+            requires i > j, m0 > 0nat;
+        assert((j + 1) * m0 > j * m0 + c2) by (nonlinear_arith)
+            requires c2 < m0, m0 > 0nat;
+    } else {
+        assert(j * m0 + c2 >= (i + 1) * m0) by (nonlinear_arith)
+            requires j > i, m0 > 0nat;
+        assert((i + 1) * m0 > i * m0 + c1) by (nonlinear_arith)
+            requires c1 < m0, m0 > 0nat;
+    }
+}
+
+/// i * m + c < m * n when i < n and c < m.
+proof fn lemma_mixed_radix_bound(i: nat, c: nat, m: nat, n: nat)
+    requires i < n, c < m, m > 0,
+    ensures i * m + c < m * n,
+{
+    assert(i * m + c < m * n) by (nonlinear_arith)
+        requires i < n, c < m, m > 0nat;
+}
+
 /// Different mode-0 slices of an injective layout produce disjoint offset sets.
 ///
 /// For c1 != c2, no offset in slice c1 can equal any offset in slice c2.
@@ -514,22 +545,12 @@ pub proof fn lemma_slice_disjoint(
     let x2 = j * m0 + c2;
 
     // x1 != x2 because c1 != c2 and both < m0
-    assert(x1 != x2) by (nonlinear_arith)
-        requires c1 != c2, c1 < m0, c2 < m0, x1 == i * m0 + c1, x2 == j * m0 + c2, m0 > 0
-    {
-        // x1 % m0 = c1, x2 % m0 = c2, c1 != c2 => x1 != x2
-        assert(x1 % m0 == c1);
-        assert(x2 % m0 == c2);
-    };
+    lemma_distinct_mod_implies_distinct(c1, c2, i, j, m0);
 
     // Both x1, x2 < shape_size(layout.shape)
     assert(shape_size(layout.shape) == m0 * rest_size);
-    assert(x1 < shape_size(layout.shape)) by (nonlinear_arith)
-        requires i < rest_size, c1 < m0, x1 == i * m0 + c1,
-            shape_size(layout.shape) == m0 * rest_size, m0 > 0;
-    assert(x2 < shape_size(layout.shape)) by (nonlinear_arith)
-        requires j < rest_size, c2 < m0, x2 == j * m0 + c2,
-            shape_size(layout.shape) == m0 * rest_size, m0 > 0;
+    lemma_mixed_radix_bound(i, c1, m0, rest_size);
+    lemma_mixed_radix_bound(j, c2, m0, rest_size);
 
     // By injectivity: layout.offset(x1) != layout.offset(x2)
     assert(layout.offset(x1) != layout.offset(x2));
@@ -2129,6 +2150,15 @@ pub proof fn lemma_war_hazard_free_consecutive(k: nat, num_buffers: nat)
     lemma_double_buffer_alternates(k, num_buffers);
 }
 
+/// Close but distinct values have distinct remainders.
+proof fn lemma_close_values_distinct_mod(a: nat, b: nat, n: nat)
+    requires a > b, a - b < n, n >= 2,
+    ensures a % n != b % n,
+{
+    assert(a % n != b % n) by (nonlinear_arith)
+        requires a == b + (a - b), 0 < a - b, a - b < n, n >= 2nat;
+}
+
 /// Pipeline no-collision for n-deep pipeline.
 pub proof fn lemma_pipeline_no_collision(num_k_tiles: nat, num_buffers: nat)
     requires num_buffers >= 2,
@@ -2143,28 +2173,12 @@ pub proof fn lemma_pipeline_no_collision(num_k_tiles: nat, num_buffers: nat)
     implies
         double_buffer_slot(k1, num_buffers) != double_buffer_slot(k2, num_buffers)
     by {
-        // |k1 - k2| < num_buffers, k1 != k2 → 0 < |k1-k2| < num_buffers
-        // k1 % n != k2 % n when 0 < |k1-k2| < n
         let diff = if k1 >= k2 { k1 - k2 } else { k2 - k1 };
         assert(0 < diff && diff < num_buffers);
-        // WLOG k1 > k2 (symmetric)
         if k1 > k2 {
-            // k1 = k2 + diff, 0 < diff < n
-            // k1 % n == (k2 + diff) % n
-            // If k1 % n == k2 % n, then diff % n == 0, but 0 < diff < n → contradiction
-            assert(k1 % num_buffers != k2 % num_buffers) by (nonlinear_arith)
-                requires
-                    k1 == k2 + diff,
-                    0 < diff,
-                    diff < num_buffers,
-                    num_buffers >= 2nat;
+            lemma_close_values_distinct_mod(k1, k2, num_buffers);
         } else {
-            assert(k2 % num_buffers != k1 % num_buffers) by (nonlinear_arith)
-                requires
-                    k2 == k1 + diff,
-                    0 < diff,
-                    diff < num_buffers,
-                    num_buffers >= 2nat;
+            lemma_close_values_distinct_mod(k2, k1, num_buffers);
         }
     };
 }

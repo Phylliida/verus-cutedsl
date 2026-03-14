@@ -12,6 +12,8 @@ use crate::proof::shape_lemmas::*;
 use crate::proof::tiling_lemmas::*;
 use verus_algebra::traits::*;
 use verus_algebra::summation::sum;
+use verus_algebra::embedding::*;
+use verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence;
 
 verus! {
 
@@ -2356,6 +2358,169 @@ pub proof fn lemma_tile_k_end_prev(t: nat, bk: nat, k_size: nat)
     // tile_k_end(prev, bk, k_size) = if (prev+1)*bk <= k_size { (prev+1)*bk } else { k_size }
     // = if t*bk <= k_size { t*bk } else { k_size }
     assert((prev + 1) == t);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Ring-generic bridge: from_int(gemm_int_mac) ≡ gemm_mac_value
+// ══════════════════════════════════════════════════════════════
+
+/// from_int distributes over gemm_int_mac_partial:
+/// from_int(partial(k_start, k_end)) ≡ sum(|k| from_int(a[k]*b[k]), k_start, k_end).
+proof fn lemma_from_int_distributes_over_int_mac<R: Ring>(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    a_data: Seq<i64>, b_data: Seq<i64>,
+    i: nat, j: nat, k_start: nat, k_end: nat,
+)
+    requires k_start <= k_end,
+    ensures
+        from_int::<R>(gemm_int_mac_partial(a_layout, b_layout, a_data, b_data, i, j, k_start, k_end))
+            .eqv(sum::<R>(
+                |k: int| from_int::<R>(
+                    (a_data[gemm_a_offset(a_layout, i, k as nat) as int] as int)
+                    * (b_data[gemm_b_offset(b_layout, k as nat, j) as int] as int)),
+                k_start as int, k_end as int)),
+    decreases k_end - k_start,
+{
+    let f = |k: int| from_int::<R>(
+        (a_data[gemm_a_offset(a_layout, i, k as nat) as int] as int)
+        * (b_data[gemm_b_offset(b_layout, k as nat, j) as int] as int));
+
+    if k_start >= k_end {
+        // Base: both sides are zero
+        lemma_from_int_zero::<R>();
+        verus_algebra::summation::lemma_sum_empty::<R>(f, k_start as int, k_end as int);
+        // from_int(0).eqv(R::zero()) and sum(f,lo,lo).eqv(R::zero())
+        R::axiom_eqv_symmetric(sum::<R>(f, k_start as int, k_end as int), R::zero());
+        R::axiom_eqv_transitive(
+            from_int::<R>(0),
+            R::zero(),
+            sum::<R>(f, k_start as int, k_end as int),
+        );
+        R::axiom_eqv_symmetric(
+            from_int::<R>(0),
+            sum::<R>(f, k_start as int, k_end as int),
+        );
+    } else {
+        let last = (k_end - 1) as nat;
+        let partial = gemm_int_mac_partial(a_layout, b_layout, a_data, b_data, i, j, k_start, last);
+        let prod = (a_data[gemm_a_offset(a_layout, i, last) as int] as int)
+                   * (b_data[gemm_b_offset(b_layout, last, j) as int] as int);
+
+        // IH: from_int(partial) ≡ sum(f, k_start, last)
+        lemma_from_int_distributes_over_int_mac::<R>(a_layout, b_layout, a_data, b_data, i, j, k_start, last);
+
+        // from_int(partial + prod) ≡ from_int(partial) + from_int(prod)
+        lemma_from_int_add::<R>(partial, prod);
+
+        // sum(f, k_start, k_end) ≡ sum(f, k_start, last) + f(last)
+        verus_algebra::summation::lemma_sum_peel_last::<R>(f, k_start as int, k_end as int);
+
+        // Chain: from_int(partial).add(from_int(prod)) ≡ sum(f,k_start,last).add(f(last))
+        R::axiom_eqv_reflexive(from_int::<R>(prod));
+        lemma_add_congruence::<R>(
+            from_int::<R>(partial), sum::<R>(f, k_start as int, last as int),
+            from_int::<R>(prod), from_int::<R>(prod),
+        );
+        // LHS: from_int(partial+prod) ≡ from_int(partial).add(from_int(prod))
+        //       ≡ sum(f,k_start,last).add(f(last))
+        // RHS: sum(f,k_start,k_end) ≡ sum(f,k_start,last).add(f(last))
+        R::axiom_eqv_transitive(
+            from_int::<R>(partial + prod),
+            from_int::<R>(partial).add(from_int::<R>(prod)),
+            sum::<R>(f, k_start as int, last as int).add(f(last as int)),
+        );
+        R::axiom_eqv_symmetric(
+            sum::<R>(f, k_start as int, k_end as int),
+            sum::<R>(f, k_start as int, last as int).add(f(last as int)),
+        );
+        R::axiom_eqv_transitive(
+            from_int::<R>(partial + prod),
+            sum::<R>(f, k_start as int, last as int).add(f(last as int)),
+            sum::<R>(f, k_start as int, k_end as int),
+        );
+        // gemm_int_mac_partial(k_start, k_end) = partial + prod by definition
+        assert(gemm_int_mac_partial(a_layout, b_layout, a_data, b_data, i, j, k_start, k_end) == partial + prod);
+    }
+}
+
+/// Pointwise from_int(a*b) ≡ from_int(a) * from_int(b) lifts to sum congruence.
+proof fn lemma_from_int_product_to_ring_product<R: Ring>(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    a_data: Seq<i64>, b_data: Seq<i64>,
+    i: nat, j: nat, lo: int, hi: int,
+)
+    ensures
+        sum::<R>(
+            |k: int| from_int::<R>(
+                (a_data[gemm_a_offset(a_layout, i, k as nat) as int] as int)
+                * (b_data[gemm_b_offset(b_layout, k as nat, j) as int] as int)),
+            lo, hi)
+        .eqv(
+        sum::<R>(
+            |k: int| from_int::<R>(a_data[gemm_a_offset(a_layout, i, k as nat) as int] as int)
+                .mul(from_int::<R>(b_data[gemm_b_offset(b_layout, k as nat, j) as int] as int)),
+            lo, hi)),
+{
+    let f = |k: int| from_int::<R>(
+        (a_data[gemm_a_offset(a_layout, i, k as nat) as int] as int)
+        * (b_data[gemm_b_offset(b_layout, k as nat, j) as int] as int));
+    let g = |k: int| from_int::<R>(a_data[gemm_a_offset(a_layout, i, k as nat) as int] as int)
+        .mul(from_int::<R>(b_data[gemm_b_offset(b_layout, k as nat, j) as int] as int));
+
+    // Pointwise: from_int(a*b) ≡ from_int(a) * from_int(b)
+    assert forall|k: int| lo <= k < hi implies (#[trigger] f(k)).eqv(g(k)) by {
+        let av = a_data[gemm_a_offset(a_layout, i, k as nat) as int] as int;
+        let bv = b_data[gemm_b_offset(b_layout, k as nat, j) as int] as int;
+        lemma_from_int_mul::<R>(av, bv);
+    };
+    verus_algebra::summation::lemma_sum_congruence::<R>(f, g, lo, hi);
+}
+
+/// Master bridge: from_int(gemm_int_mac(...)) ≡ gemm_mac_value<R>(embed_a_val, embed_b_val, ...).
+pub proof fn lemma_gemm_ring_bridge<R: Ring>(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    a_data: Seq<i64>, b_data: Seq<i64>,
+    i: nat, j: nat, k_size: nat,
+)
+    ensures
+        from_int::<R>(gemm_int_mac(a_layout, b_layout, a_data, b_data, i, j, k_size))
+            .eqv(gemm_mac_value::<R>(
+                embed_a_val::<R>(a_layout, a_data),
+                embed_b_val::<R>(b_layout, b_data),
+                i, j, k_size)),
+{
+    let a_val = embed_a_val::<R>(a_layout, a_data);
+    let b_val = embed_b_val::<R>(b_layout, b_data);
+
+    // The int-product closure (matches lemma_from_int_distributes_over_int_mac ensures RHS)
+    let f_prod = |k: int| from_int::<R>(
+        (a_data[gemm_a_offset(a_layout, i, k as nat) as int] as int)
+        * (b_data[gemm_b_offset(b_layout, k as nat, j) as int] as int));
+
+    // The Ring-product closure matching gemm_mac_value's inner function
+    let f_mac = |k: int| a_val(i, k as nat).mul(b_val(k as nat, j));
+
+    // Step 1: from_int(gemm_int_mac) ≡ sum(f_prod, 0, k_size)
+    lemma_from_int_distributes_over_int_mac::<R>(
+        a_layout, b_layout, a_data, b_data, i, j, 0, k_size);
+
+    // Step 2: pointwise f_prod(k) ≡ f_mac(k) by from_int_mul + embed unfolding
+    assert forall|k: int| 0 <= k < k_size as int implies (#[trigger] f_prod(k)).eqv(f_mac(k)) by {
+        let av = a_data[gemm_a_offset(a_layout, i, k as nat) as int] as int;
+        let bv = b_data[gemm_b_offset(b_layout, k as nat, j) as int] as int;
+        lemma_from_int_mul::<R>(av, bv);
+    };
+
+    // Step 3: sum(f_prod) ≡ sum(f_mac) by congruence
+    verus_algebra::summation::lemma_sum_congruence::<R>(f_prod, f_mac, 0, k_size as int);
+
+    // Step 4: chain from_int(mac) ≡ sum(f_prod) ≡ sum(f_mac)
+    R::axiom_eqv_transitive(
+        from_int::<R>(gemm_int_mac(a_layout, b_layout, a_data, b_data, i, j, k_size)),
+        sum::<R>(f_prod, 0, k_size as int),
+        sum::<R>(f_mac, 0, k_size as int),
+    );
+    // sum(f_mac) == gemm_mac_value(a_val, b_val, i, j, k_size) by definition
 }
 
 } // verus!

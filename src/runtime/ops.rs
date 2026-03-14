@@ -6,8 +6,10 @@ use crate::complement::*;
 use crate::product::*;
 use crate::coalesce::*;
 use crate::divide::*;
+use crate::compatibility::*;
 use super::*;
 use super::layout::RuntimeLayout;
+use super::shape_helpers::shape_size_exec;
 
 verus! {
 
@@ -1421,6 +1423,195 @@ pub fn blocked_product_exec(a: &RuntimeLayout, b: &RuntimeLayout, cosize_a: u64)
         result@ == blocked_product(&a@, &b@),
 {
     logical_product_exec(a, b, cosize_a)
+}
+
+// ══════════════════════════════════════════════════════════════
+// Permutation validation and application
+// ══════════════════════════════════════════════════════════════
+
+/// Check whether perm is a valid permutation of [0, n).
+pub fn check_valid_permutation_exec(perm: &Vec<u64>, n: u64) -> (result: bool)
+    requires n as nat <= usize::MAX as nat,
+    ensures result == crate::permutation::is_valid_permutation(
+        Seq::new(perm@.len(), |i: int| perm@[i] as nat), n as nat),
+{
+    let ghost perm_nat: Seq<nat> = Seq::new(perm@.len(), |i: int| perm@[i] as nat);
+
+    if perm.len() != n as usize {
+        return false;
+    }
+
+    // Initialize seen array
+    let mut seen: Vec<bool> = Vec::new();
+    let mut k: usize = 0;
+    while k < n as usize
+        invariant
+            k <= n as usize,
+            seen@.len() == k as nat,
+            forall|j: int| 0 <= j < k as int ==> seen@[j] == false,
+        decreases n as usize - k,
+    {
+        seen.push(false);
+        k = k + 1;
+    }
+
+    let mut i: usize = 0;
+    while i < n as usize
+        invariant
+            perm@.len() == n as nat,
+            perm_nat.len() == n as nat,
+            seen@.len() == n as nat,
+            i <= n as usize,
+            n as nat <= usize::MAX as nat,
+            // perm_nat index resolution
+            forall|j: nat| j < n as nat ==> perm_nat[j as int] == perm@[j as int] as nat,
+            // Range
+            forall|j: nat| j < i as nat ==> (perm@[j as int] as nat) < n as nat,
+            // Injectivity of processed elements
+            forall|j1: nat, j2: nat| j1 < i as nat && j2 < i as nat && j1 != j2
+                ==> perm@[j1 as int] as nat != perm@[j2 as int] as nat,
+            // Seen tracks values
+            forall|j: nat| j < n as nat ==> #[trigger] seen@[j as int] ==
+                (exists|idx: nat| idx < i as nat && perm@[idx as int] as nat == j),
+        decreases n as usize - i,
+    {
+        let v = perm[i];
+        if v >= n {
+            proof {
+                let ii: nat = i as nat;
+                let s = Seq::new(perm@.len(), |j: int| perm@[j] as nat);
+                assert(perm_nat[ii as int] >= n as nat);
+                assert(s[ii as int] == perm_nat[ii as int]);
+                assert(!(s[ii as int] < n as nat));
+            }
+            return false;
+        }
+        if seen[v as usize] {
+            proof {
+                let ii: nat = i as nat;
+                let vv: nat = v as nat;
+                let s = Seq::new(perm@.len(), |j: int| perm@[j] as nat);
+                let witness = choose|idx: nat| idx < ii && perm@[idx as int] as nat == vv;
+                assert(s[witness as int] == perm_nat[witness as int]);
+                assert(s[ii as int] == perm_nat[ii as int]);
+                assert(s[witness as int] == s[ii as int]);
+                assert(witness != ii);
+            }
+            return false;
+        }
+        seen.set(v as usize, true);
+        proof {
+            let ii: nat = i as nat;
+            let i_next: nat = (i + 1) as nat;
+            let vv: nat = v as nat;
+
+            // Injectivity maintained: v is fresh (seen[v] was false → no prior index maps to v)
+            assert forall|j1: nat, j2: nat|
+                j1 < i_next && j2 < i_next && j1 != j2
+                implies perm@[j1 as int] as nat != perm@[j2 as int] as nat
+            by {
+                if j1 == ii || j2 == ii {
+                    let other: nat = if j1 == ii { j2 } else { j1 };
+                    // other < ii, and perm@[other] as nat != vv because seen[vv] was false
+                    // (no idx < ii with perm@[idx]==vv)
+                    assert(other < ii);
+                }
+            };
+
+            // Seen array update
+            assert forall|j: nat| j < n as nat implies #[trigger] seen@[j as int] ==
+                (exists|idx: nat| idx < i_next && perm@[idx as int] as nat == j)
+            by {
+                if j == vv {
+                    assert(perm@[ii as int] as nat == j);
+                    assert(ii < i_next);
+                } else {
+                    if exists|idx: nat| idx < i_next && perm@[idx as int] as nat == j {
+                        let idx = choose|idx: nat| idx < i_next && perm@[idx as int] as nat == j;
+                        if idx == ii {
+                            assert(perm@[ii as int] as nat == j);
+                        }
+                    }
+                }
+            };
+        }
+        i = i + 1;
+    }
+
+    proof {
+        // Range
+        assert forall|j: nat| j < n as nat implies #[trigger] perm_nat[j as int] < n as nat by {
+            assert(perm_nat[j as int] == perm@[j as int] as nat);
+        };
+        // Injectivity
+        assert forall|j1: nat, j2: nat| j1 < n as nat && j2 < n as nat && j1 != j2
+            implies perm_nat[j1 as int] != perm_nat[j2 as int]
+        by {
+            assert(perm_nat[j1 as int] == perm@[j1 as int] as nat);
+            assert(perm_nat[j2 as int] == perm@[j2 as int] as nat);
+        };
+    }
+    true
+}
+
+/// Apply a permutation to a sequence at runtime.
+pub fn apply_perm_nat_exec(s: &Vec<u64>, perm: &Vec<u64>) -> (result: Vec<u64>)
+    requires
+        s@.len() == perm@.len(),
+        forall|i: nat| i < perm@.len() ==> (perm@[i as int] as nat) < s@.len(),
+        s@.len() <= usize::MAX as nat,
+    ensures
+        result@.len() == s@.len(),
+        forall|i: nat| i < result@.len() ==> result@[i as int] == s@[perm@[i as int] as int],
+{
+    let n = s.len();
+    let mut result: Vec<u64> = Vec::with_capacity(n);
+    let mut i: usize = 0;
+    while i < n
+        invariant
+            n == s@.len(),
+            perm@.len() == n,
+            i <= n,
+            result@.len() == i as nat,
+            forall|j: nat| j < i as nat ==> result@[j as int] == s@[perm@[j as int] as int],
+            forall|j: nat| j < perm@.len() ==> (perm@[j as int] as nat) < s@.len(),
+            s@.len() <= usize::MAX as nat,
+        decreases n - i,
+    {
+        let pi = perm[i] as usize;
+        result.push(s[pi]);
+        i = i + 1;
+    }
+    result
+}
+
+// ══════════════════════════════════════════════════════════════
+// Compatibility checkers
+// ══════════════════════════════════════════════════════════════
+
+/// Check if two layouts have the same total size.
+pub fn size_compatible_exec(l1: &RuntimeLayout, l2: &RuntimeLayout) -> (result: bool)
+    requires l1.wf_spec(), l2.wf_spec(),
+    ensures result == crate::compatibility::size_compatible(&l1@, &l2@),
+{
+    proof {
+        // Bridge wf_spec → shape_valid_u64 for both layouts
+        assert(shape_valid_u64(l1.shape@)) by {
+            assert forall|j: int| 0 <= j < l1.shape@.len() implies #[trigger] l1.shape@[j] > 0 by {
+                assert(l1@.shape[j] > 0);
+                assert(l1.shape@[j] as nat == l1@.shape[j]);
+            }
+        };
+        assert(shape_valid_u64(l2.shape@)) by {
+            assert forall|j: int| 0 <= j < l2.shape@.len() implies #[trigger] l2.shape@[j] > 0 by {
+                assert(l2@.shape[j] > 0);
+                assert(l2.shape@[j] as nat == l2@.shape[j]);
+            }
+        };
+    }
+    let s1 = shape_size_exec(&l1.shape);
+    let s2 = shape_size_exec(&l2.shape);
+    s1 == s2
 }
 
 } // verus!

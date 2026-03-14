@@ -5,6 +5,7 @@ use crate::tiling::*;
 use crate::swizzle::*;
 use verus_algebra::traits::*;
 use verus_algebra::summation::sum;
+use verus_algebra::embedding::from_int;
 
 verus! {
 
@@ -475,6 +476,20 @@ pub open spec fn epilogue_cross_cta_disjoint(
         && epilogue_predicated_store_safe(m, n, ti2, tj2, ei2, ej2, bm, bn)
         ==> #[trigger] gemm_c_tile_offset(c_layout, ti1, tj1, ei1, ej1, bm, bn)
             != #[trigger] gemm_c_tile_offset(c_layout, ti2, tj2, ei2, ej2, bm, bn)
+}
+
+// ══════════════════════════════════════════════════════════════
+// Ring-generic embedding specs
+// ══════════════════════════════════════════════════════════════
+
+/// Embed integer A data into a Ring: A[i,k] → from_int(a_data[offset(i,k)]).
+pub open spec fn embed_a_val<R: Ring>(a_layout: &LayoutSpec, a_data: Seq<i64>) -> spec_fn(nat, nat) -> R {
+    |i: nat, k: nat| from_int::<R>(a_data[gemm_a_offset(a_layout, i, k) as int] as int)
+}
+
+/// Embed integer B data into a Ring: B[k,j] → from_int(b_data[offset(k,j)]).
+pub open spec fn embed_b_val<R: Ring>(b_layout: &LayoutSpec, b_data: Seq<i64>) -> spec_fn(nat, nat) -> R {
+    |k: nat, j: nat| from_int::<R>(b_data[gemm_b_offset(b_layout, k, j) as int] as int)
 }
 
 } // verus!
