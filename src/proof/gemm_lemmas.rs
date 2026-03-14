@@ -2190,4 +2190,47 @@ pub proof fn lemma_dot_product_reduction_size(a_shape: Seq<nat>)
     lemma_gathered_product_single(&a_shape, 0);
 }
 
+// ══════════════════════════════════════════════════════════════
+// Intra-CTA epilogue disjointness
+// ══════════════════════════════════════════════════════════════
+
+/// Within a single CTA tile, valid elements produce distinct C offsets.
+pub proof fn lemma_epilogue_intra_cta_disjoint(
+    c_layout: &LayoutSpec, m: nat, n: nat, bm: nat, bn: nat,
+    ti: nat, tj: nat,
+    ei1: nat, ej1: nat, ei2: nat, ej2: nat,
+)
+    requires
+        c_layout.valid(),
+        c_layout.rank() == 2,
+        c_layout.is_injective(),
+        bm > 0, bn > 0,
+        m <= c_layout.shape[0],
+        n <= c_layout.shape[1],
+        ei1 < bm, ej1 < bn, ei2 < bm, ej2 < bn,
+        epilogue_predicated_store_safe(m, n, ti, tj, ei1, ej1, bm, bn),
+        epilogue_predicated_store_safe(m, n, ti, tj, ei2, ej2, bm, bn),
+        ei1 != ei2 || ej1 != ej2,
+    ensures
+        gemm_c_tile_offset(c_layout, ti, tj, ei1, ej1, bm, bn)
+            != gemm_c_tile_offset(c_layout, ti, tj, ei2, ej2, bm, bn),
+{
+    let gi1 = ti * bm + ei1;
+    let gj1 = tj * bn + ej1;
+    let gi2 = ti * bm + ei2;
+    let gj2 = tj * bn + ej2;
+
+    // Different element indices within same tile → different global indices
+    if ei1 != ei2 {
+        assert(gi1 != gi2) by (nonlinear_arith)
+            requires ei1 != ei2, gi1 == ti * bm + ei1, gi2 == ti * bm + ei2;
+    } else {
+        // ei1 == ei2, so ej1 != ej2
+        assert(gj1 != gj2) by (nonlinear_arith)
+            requires ej1 != ej2, gj1 == tj * bn + ej1, gj2 == tj * bn + ej2;
+    }
+
+    lemma_gemm_c_offset_injective(c_layout, m, n, gi1, gj1, gi2, gj2);
+}
+
 } // verus!
