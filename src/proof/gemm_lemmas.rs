@@ -10,6 +10,7 @@ use crate::slice::*;
 use crate::divide::*;
 use crate::proof::shape_lemmas::*;
 use crate::proof::tiling_lemmas::*;
+use crate::runtime::gemm::*;
 use verus_algebra::traits::*;
 use verus_algebra::summation::sum;
 use verus_algebra::embedding::*;
@@ -2316,6 +2317,45 @@ pub proof fn lemma_int_mac_split(
         // So: partial(k_start, k_end) = partial(k_start, k_mid) + partial(k_mid, last_k) + product
         //                             = partial(k_start, k_mid) + partial(k_mid, k_end)
         lemma_int_mac_split(a_layout, b_layout, a_data, b_data, i, j, k_start, k_mid, last_k);
+    }
+}
+
+/// Bound on gemm_int_mac_partial: |partial(k_start, k_end)| <= (k_end - k_start) * acc_bound
+/// when each product is bounded by acc_bound.
+pub proof fn lemma_int_mac_partial_bound(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    a_data: Seq<i64>, b_data: Seq<i64>,
+    i: nat, j: nat, k_start: nat, k_end: nat,
+    acc_bound: int,
+)
+    requires
+        k_start <= k_end,
+        acc_bound >= 0,
+        forall|kk: nat| k_start <= kk && kk < k_end ==>
+            #[trigger] gemm_product_bounded(a_layout, b_layout, a_data, b_data, i, j, kk, acc_bound),
+    ensures
+        gemm_int_mac_partial(a_layout, b_layout, a_data, b_data, i, j, k_start, k_end)
+            >= -((k_end - k_start) as int) * acc_bound,
+        gemm_int_mac_partial(a_layout, b_layout, a_data, b_data, i, j, k_start, k_end)
+            <= ((k_end - k_start) as int) * acc_bound,
+    decreases k_end - k_start,
+{
+    if k_start >= k_end {
+        // base: partial == 0
+    } else {
+        let prev = (k_end - 1) as nat;
+        lemma_int_mac_partial_bound(a_layout, b_layout, a_data, b_data, i, j, k_start, prev, acc_bound);
+
+        let partial_prev = gemm_int_mac_partial(a_layout, b_layout, a_data, b_data, i, j, k_start, prev);
+        assert(gemm_product_bounded(a_layout, b_layout, a_data, b_data, i, j, prev, acc_bound));
+        let prod = (a_data[gemm_a_offset(a_layout, i, prev) as int] as int)
+                   * (b_data[gemm_b_offset(b_layout, prev, j) as int] as int);
+
+        let n = (k_end - k_start - 1) as int;
+        assert(partial_prev + prod <= (n + 1) * acc_bound) by (nonlinear_arith)
+            requires partial_prev <= n * acc_bound, prod <= acc_bound, acc_bound >= 0int;
+        assert(partial_prev + prod >= -(n + 1) * acc_bound) by (nonlinear_arith)
+            requires partial_prev >= -n * acc_bound, prod >= -acc_bound, acc_bound >= 0int;
     }
 }
 
