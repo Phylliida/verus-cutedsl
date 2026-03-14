@@ -2233,4 +2233,129 @@ pub proof fn lemma_epilogue_intra_cta_disjoint(
     lemma_gemm_c_offset_injective(c_layout, m, n, gi1, gj1, gi2, gj2);
 }
 
+// ══════════════════════════════════════════════════════════════
+// Integer MAC bridge lemmas (Round 10)
+// ══════════════════════════════════════════════════════════════
+
+use crate::runtime::gemm::*;
+
+/// sum_int_products over offsets from gemm_mac_offsets == gemm_int_mac_partial.
+/// Both use right-peeling recursion so the induction is straightforward.
+pub proof fn lemma_sum_int_products_matches_partial(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    a_data: Seq<i64>, b_data: Seq<i64>,
+    a_offs: Seq<i64>, b_offs: Seq<i64>,
+    i: nat, j: nat, k_start: nat, k_end: nat,
+)
+    requires
+        k_start <= k_end,
+        a_offs.len() >= k_end - k_start,
+        b_offs.len() >= k_end - k_start,
+        forall|idx: nat| idx < k_end - k_start ==>
+            a_offs[idx as int] as int == gemm_a_offset(a_layout, i, k_start + idx),
+        forall|idx: nat| idx < k_end - k_start ==>
+            b_offs[idx as int] as int == gemm_b_offset(b_layout, k_start + idx, j),
+    ensures
+        sum_int_products(a_data, b_data, a_offs, b_offs, (k_end - k_start) as nat)
+            == gemm_int_mac_partial(a_layout, b_layout, a_data, b_data, i, j, k_start, k_end),
+    decreases k_end - k_start,
+{
+    let count = (k_end - k_start) as nat;
+    if k_start >= k_end {
+        // Both are 0
+    } else {
+        // Right-peel: count > 0
+        // sum_int_products peels element at index (count-1)
+        // gemm_int_mac_partial peels k = k_end - 1
+        let prev_count = (count - 1) as nat;
+        let last_idx = (count - 1) as nat;
+        let last_k = (k_end - 1) as nat;
+
+        // The last element's offsets match:
+        // a_offs[last_idx] == gemm_a_offset(a_layout, i, k_start + last_idx) == gemm_a_offset(a_layout, i, last_k)
+        assert(k_start + last_idx == last_k);
+
+        // Recursive call on prefix
+        lemma_sum_int_products_matches_partial(
+            a_layout, b_layout, a_data, b_data,
+            a_offs, b_offs, i, j, k_start, last_k,
+        );
+
+        // sum_int_products on prefix uses same a_offs, b_offs arrays but with count-1
+        // Need: prefix offsets still match for idx < prev_count
+        // This is true because prev_count < count = a_offs.len()
+    }
+}
+
+/// gemm_int_mac_partial splits: partial(k_start, k_end) == partial(k_start, k_mid) + partial(k_mid, k_end).
+pub proof fn lemma_int_mac_split(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    a_data: Seq<i64>, b_data: Seq<i64>,
+    i: nat, j: nat, k_start: nat, k_mid: nat, k_end: nat,
+)
+    requires k_start <= k_mid, k_mid <= k_end,
+    ensures
+        gemm_int_mac_partial(a_layout, b_layout, a_data, b_data, i, j, k_start, k_end)
+        == gemm_int_mac_partial(a_layout, b_layout, a_data, b_data, i, j, k_start, k_mid)
+         + gemm_int_mac_partial(a_layout, b_layout, a_data, b_data, i, j, k_mid, k_end),
+    decreases k_end - k_mid,
+{
+    if k_mid >= k_end {
+        // partial(k_mid, k_end) == 0
+    } else {
+        // Right-peel the last element from partial(k_start, k_end) and partial(k_mid, k_end)
+        let last_k = (k_end - 1) as nat;
+        let product = (a_data[gemm_a_offset(a_layout, i, last_k) as int] as int)
+            * (b_data[gemm_b_offset(b_layout, last_k, j) as int] as int);
+
+        // partial(k_start, k_end) = partial(k_start, last_k) + product
+        // partial(k_mid, k_end)   = partial(k_mid, last_k) + product
+        // By induction: partial(k_start, last_k) = partial(k_start, k_mid) + partial(k_mid, last_k)
+        // So: partial(k_start, k_end) = partial(k_start, k_mid) + partial(k_mid, last_k) + product
+        //                             = partial(k_start, k_mid) + partial(k_mid, k_end)
+        lemma_int_mac_split(a_layout, b_layout, a_data, b_data, i, j, k_start, k_mid, last_k);
+    }
+}
+
+/// The last tile ends at k_size.
+pub proof fn lemma_last_tile_end(k_size: nat, bk: nat)
+    requires bk > 0, k_size > 0,
+    ensures tile_k_end((num_tiles_ceil(k_size, bk) - 1) as nat, bk, k_size) == k_size,
+{
+    let k_tiles = num_tiles_ceil(k_size, bk);
+    let last = (k_tiles - 1) as nat;
+
+    // k_tiles = ceil(k_size / bk) >= 1
+    crate::proof::predication_lemmas::lemma_ceil_div_mul_ge(k_size, bk);
+    assert(k_tiles * bk >= k_size);
+    // k_tiles >= 1 because k_size > 0 and bk > 0
+    // ceil_div(k_size, bk) = (k_size + bk - 1) / bk >= bk / bk = 1
+    assert(k_tiles >= 1) by {
+        assert(k_size + bk - 1 >= bk) by (nonlinear_arith)
+            requires k_size >= 1nat;
+        vstd::arithmetic::div_mod::lemma_div_is_ordered(bk as int, (k_size + bk - 1) as int, bk as int);
+        assert(bk as int / bk as int == 1) by {
+            vstd::arithmetic::div_mod::lemma_div_by_self(bk as int);
+        };
+    };
+    // tile_k_end(last, bk, k_size) = min((last+1)*bk, k_size) = min(k_tiles*bk, k_size)
+    // k_tiles*bk >= k_size, so min = k_size
+    assert(tile_k_end(last, bk, k_size) == k_size);
+}
+
+/// tile_k_end(t, bk, k_size) relates to t: tile_k_end(0) = min(bk, k_size) and
+/// tile_k_end(t) = t*bk if (t+1)*bk <= k_size, else k_size.
+/// Key: tile_k_end(t) == min((t+1)*bk, k_size).
+/// And for t == 0: tile_k_end starts from 0 (i.e., partial(0, tile_k_end(0))).
+pub proof fn lemma_tile_k_end_prev(t: nat, bk: nat, k_size: nat)
+    requires bk > 0, k_size > 0, t > 0, t <= num_tiles_ceil(k_size, bk),
+    ensures
+        tile_k_end((t - 1) as nat, bk, k_size) == if t * bk <= k_size { t * bk } else { k_size },
+{
+    let prev = (t - 1) as nat;
+    // tile_k_end(prev, bk, k_size) = if (prev+1)*bk <= k_size { (prev+1)*bk } else { k_size }
+    // = if t*bk <= k_size { t*bk } else { k_size }
+    assert((prev + 1) == t);
+}
+
 } // verus!

@@ -461,6 +461,33 @@ pub open spec fn gemm_product_bounded(
     &&& (av as int) * (bv as int) <= bound
 }
 
+/// Integer-level GEMM MAC for element (i,j) over k in [0, k_size).
+/// Directly uses layout offsets into i64 data arrays.
+pub open spec fn gemm_int_mac(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    a_data: Seq<i64>, b_data: Seq<i64>,
+    i: nat, j: nat, k_size: nat,
+) -> int {
+    gemm_int_mac_partial(a_layout, b_layout, a_data, b_data, i, j, 0, k_size)
+}
+
+/// Partial integer MAC over k in [k_start, k_end).
+/// Right-peeling form to match sum_int_products structure.
+pub open spec fn gemm_int_mac_partial(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    a_data: Seq<i64>, b_data: Seq<i64>,
+    i: nat, j: nat, k_start: nat, k_end: nat,
+) -> int
+    decreases k_end - k_start,
+{
+    if k_start >= k_end { 0 }
+    else {
+        gemm_int_mac_partial(a_layout, b_layout, a_data, b_data, i, j, k_start, (k_end - 1) as nat)
+        + (a_data[gemm_a_offset(a_layout, i, (k_end - 1) as nat) as int] as int)
+          * (b_data[gemm_b_offset(b_layout, (k_end - 1) as nat, j) as int] as int)
+    }
+}
+
 /// Sum of i64 products accessed through offset sequences.
 pub open spec fn sum_int_products(
     a_data: Seq<i64>, b_data: Seq<i64>,
@@ -679,7 +706,8 @@ pub fn gemm_k_tile_loop(
         (k_size as int) * acc_bound <= i64::MAX as int,
         (bk as int) * acc_bound <= i64::MAX as int,
     ensures
-        true,
+        acc as int == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+            i as nat, j as nat, k_size as nat),
 {
     let mut acc: i64 = 0;
     let mut t: u64 = 0;
@@ -724,6 +752,10 @@ pub fn gemm_k_tile_loop(
             // Accumulator is bounded by processed-so-far
             acc as int >= -(t as int) * (bk as int) * acc_bound,
             acc as int <= (t as int) * (bk as int) * acc_bound,
+            // Functional correctness: acc == partial MAC over [0, k_processed)
+            acc as int == gemm_int_mac_partial(&a_layout@, &b_layout@, a_data@, b_data@,
+                i as nat, j as nat, 0,
+                if t == 0 { 0nat } else { tile_k_end((t - 1) as nat, bk as nat, k_size as nat) }),
         decreases k_tiles - t,
     {
         // Compute tile boundaries
@@ -891,11 +923,68 @@ pub fn gemm_k_tile_loop(
                     ((t as int) * (bk as int) + (count as int)) * acc_bound <= (k_size as int) * acc_bound,
                     (k_size as int) * acc_bound <= i64::MAX as int,
                     acc_bound >= 0int;
+
+            // Functional correctness: bridge tile_acc to gemm_int_mac_partial
+            // tile_acc == sum_int_products(a_data@, b_data@, a_offs@, b_offs@, count)
+            // Bridge to gemm_int_mac_partial(k_start, k_end)
+            crate::proof::gemm_lemmas::lemma_sum_int_products_matches_partial(
+                &a_layout@, &b_layout@, a_data@, b_data@,
+                a_offs@, b_offs@, i as nat, j as nat,
+                k_start as nat, k_end as nat,
+            );
+            // Now: tile_acc == gemm_int_mac_partial(i, j, k_start, k_end)
+
+            // k_start == previous k_processed
+            let ghost k_prev: nat = if t == 0 { 0nat } else { tile_k_end((t - 1) as nat, bk as nat, k_size as nat) };
+            // By invariant: acc == gemm_int_mac_partial(0, k_prev)
+            // k_start == t * bk
+            // Need to show: k_prev == k_start
+            // When t == 0: k_prev = 0, k_start = 0*bk = 0 ✓
+            // When t > 0: k_prev = tile_k_end(t-1, bk, k_size)
+            //   = if t*bk <= k_size { t*bk } else { k_size }
+            //   Since t < k_tiles and k_start = t*bk, we need t*bk <= k_size... not always true.
+            //   But: t < k_tiles, and we already proved k_start <= k_end <= k_size
+            //   tile_k_end(t-1) = min(t*bk, k_size) = t*bk when t*bk <= k_size
+            //                   = k_size when t*bk > k_size — but then k_start > k_size, contradiction
+            // Actually k_start <= k_end <= k_size, so t*bk = k_start <= k_size
+            assert(k_start as nat <= k_size as nat);
+            if t > 0 {
+                crate::proof::gemm_lemmas::lemma_tile_k_end_prev(t as nat, bk as nat, k_size as nat);
+                // tile_k_end(t-1) = if t*bk <= k_size { t*bk } else { k_size } = t*bk = k_start
+                assert(k_prev == k_start as nat);
+            }
+            assert(k_prev == k_start as nat);
+
+            // Split: partial(0, k_end) = partial(0, k_start) + partial(k_start, k_end)
+            crate::proof::gemm_lemmas::lemma_int_mac_split(
+                &a_layout@, &b_layout@, a_data@, b_data@,
+                i as nat, j as nat, 0, k_start as nat, k_end as nat,
+            );
+            // acc + tile_acc == partial(0, k_start) + partial(k_start, k_end) == partial(0, k_end)
+
+            // Show k_end == tile_k_end(t, bk, k_size)
+            assert(k_end as nat == tile_k_end(t as nat, bk as nat, k_size as nat));
         }
 
         acc = acc + tile_acc;
 
         t = t + 1;
+    }
+
+    // At exit: t == k_tiles, so k_processed == tile_k_end(k_tiles-1, bk, k_size) == k_size
+    proof {
+        // t == k_tiles > 0 (since k_size > 0, bk > 0)
+        crate::proof::gemm_lemmas::lemma_last_tile_end(k_size as nat, bk as nat);
+        // tile_k_end(k_tiles - 1, bk, k_size) == k_size
+        assert(t > 0) by {
+            // k_tiles >= 1 since k_size > 0 and bk > 0
+            crate::proof::predication_lemmas::lemma_ceil_div_mul_ge(k_size as nat, bk as nat);
+            assert(k_tiles as nat * (bk as nat) >= k_size as nat);
+        };
+        let ghost k_processed = tile_k_end((t - 1) as nat, bk as nat, k_size as nat);
+        assert(k_processed == k_size as nat);
+        assert(acc as int == gemm_int_mac_partial(&a_layout@, &b_layout@, a_data@, b_data@,
+            i as nat, j as nat, 0, k_size as nat));
     }
 
     acc
@@ -1047,7 +1136,16 @@ pub fn epilogue_tile_write(
             ==> #[trigger] c_data@[gemm_c_tile_offset(&c_layout@,
                     ti as nat, tj as nat, ei, ej, bm as nat, bn as nat) as int]
                 == accumulators@[(ei * bn as nat + ej) as int],
+        // Frame: indices not written by this CTA tile are unchanged
+        forall|idx: int| 0 <= idx < c_data@.len()
+            && (forall|ei: nat, ej: nat| ei < bm as nat && ej < bn as nat
+                && epilogue_predicated_store_safe(m as nat, n as nat,
+                    ti as nat, tj as nat, ei, ej, bm as nat, bn as nat)
+                ==> idx != gemm_c_tile_offset(&c_layout@,
+                    ti as nat, tj as nat, ei, ej, bm as nat, bn as nat))
+            ==> c_data@[idx] == old(c_data)@[idx],
 {
+    let ghost c_orig = c_data@;
     let mut ei: u64 = 0;
 
     while ei < bm
@@ -1075,6 +1173,15 @@ pub fn epilogue_tile_write(
                 ==> #[trigger] c_data@[gemm_c_tile_offset(&c_layout@,
                         ti as nat, tj as nat, pi, pj, bm as nat, bn as nat) as int]
                     == accumulators@[(pi * bn as nat + pj) as int],
+            // Frame: non-CTA indices unchanged from original
+            c_orig =~= old(c_data)@,
+            forall|idx: int| 0 <= idx < c_data@.len()
+                && (forall|ei2: nat, ej2: nat| ei2 < bm as nat && ej2 < bn as nat
+                    && epilogue_predicated_store_safe(m as nat, n as nat,
+                        ti as nat, tj as nat, ei2, ej2, bm as nat, bn as nat)
+                    ==> idx != gemm_c_tile_offset(&c_layout@,
+                        ti as nat, tj as nat, ei2, ej2, bm as nat, bn as nat))
+                ==> c_data@[idx] == c_orig[idx],
         decreases bm - ei,
     {
         let mut ej: u64 = 0;
@@ -1112,6 +1219,15 @@ pub fn epilogue_tile_write(
                     ==> c_data@[gemm_c_tile_offset(&c_layout@,
                             ti as nat, tj as nat, ei as nat, pj, bm as nat, bn as nat) as int]
                         == accumulators@[(ei as nat * bn as nat + pj) as int],
+                // Frame: non-CTA indices unchanged from original
+                c_orig =~= old(c_data)@,
+                forall|idx: int| 0 <= idx < c_data@.len()
+                    && (forall|ei2: nat, ej2: nat| ei2 < bm as nat && ej2 < bn as nat
+                        && epilogue_predicated_store_safe(m as nat, n as nat,
+                            ti as nat, tj as nat, ei2, ej2, bm as nat, bn as nat)
+                        ==> idx != gemm_c_tile_offset(&c_layout@,
+                            ti as nat, tj as nat, ei2, ej2, bm as nat, bn as nat))
+                    ==> c_data@[idx] == c_orig[idx],
             decreases bn - ej,
         {
             // Accumulator index — prove overflow safety first
@@ -1204,6 +1320,22 @@ pub fn epilogue_tile_write(
                         assert(c_data@[off_old as int] == c_before[off_old as int]);
                     };
 
+                    // Frame: non-CTA indices unchanged from original
+                    assert forall|idx: int| 0 <= idx < c_data@.len()
+                        && (forall|ei2: nat, ej2: nat| ei2 < bm as nat && ej2 < bn as nat
+                            && epilogue_predicated_store_safe(m as nat, n as nat,
+                                ti as nat, tj as nat, ei2, ej2, bm as nat, bn as nat)
+                            ==> idx != gemm_c_tile_offset(&c_layout@,
+                                ti as nat, tj as nat, ei2, ej2, bm as nat, bn as nat))
+                        implies c_data@[idx] == c_orig[idx]
+                    by {
+                        // idx differs from off_new (since it differs from all CTA offsets)
+                        assert(idx != off_new);
+                        // So c_data@[idx] == c_before[idx] (frame of predicated store)
+                        assert(c_data@[idx] == c_before[idx]);
+                        // And c_before[idx] == c_orig[idx] (frame invariant from before this iteration)
+                    };
+
                     // epilogue_cta_correct preserved (c_data.len() unchanged)
                 } else {
                     // c_data unchanged, nothing to prove
@@ -1290,8 +1422,38 @@ pub fn gemm_cta_kernel(
         // C offset overflow safety
         cta_tile_overflow_ok(&c_layout@, m as nat, n as nat,
             bm as nat, bn as nat, ti as nat, tj as nat),
+        // Cross-CTA disjointness (for flat frame ensures)
+        epilogue_cross_cta_disjoint(&c_layout@, m as nat, n as nat, bm as nat, bn as nat),
+        // Tensor validity (for offset bounds of other CTAs)
+        tensor_valid(&TensorSpec { layout: c_layout@, data_size: old(c_data)@.len() }),
     ensures
         c_data@.len() == old(c_data)@.len(),
+        // Each valid element in this CTA written with correct GEMM value
+        forall|ei: nat, ej: nat| ei < bm as nat && ej < bn as nat
+            && epilogue_predicated_store_safe(m as nat, n as nat,
+                ti as nat, tj as nat, ei, ej, bm as nat, bn as nat)
+            ==> #[trigger] c_data@[gemm_c_tile_offset(&c_layout@,
+                    ti as nat, tj as nat, ei, ej, bm as nat, bn as nat) as int]
+                as int == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                    ti as nat * bm as nat + ei, tj as nat * bn as nat + ej, k_size as nat),
+        // Frame: indices not written by this CTA are unchanged
+        forall|idx: int| 0 <= idx < c_data@.len()
+            && (forall|ei: nat, ej: nat| ei < bm as nat && ej < bn as nat
+                && epilogue_predicated_store_safe(m as nat, n as nat,
+                    ti as nat, tj as nat, ei, ej, bm as nat, bn as nat)
+                ==> idx != gemm_c_tile_offset(&c_layout@,
+                    ti as nat, tj as nat, ei, ej, bm as nat, bn as nat))
+            ==> c_data@[idx] == old(c_data)@[idx],
+        // Cross-CTA frame: offsets from other CTAs are unchanged (flat, Z3-friendly)
+        forall|ti2: nat, tj2: nat, ei2: nat, ej2: nat|
+            (ti2 != ti as nat || tj2 != tj as nat)
+            && ei2 < bm as nat && ej2 < bn as nat
+            && epilogue_predicated_store_safe(m as nat, n as nat,
+                ti2, tj2, ei2, ej2, bm as nat, bn as nat)
+            ==> #[trigger] c_data@[gemm_c_tile_offset(&c_layout@,
+                    ti2, tj2, ei2, ej2, bm as nat, bn as nat) as int]
+                == old(c_data)@[gemm_c_tile_offset(&c_layout@,
+                    ti2, tj2, ei2, ej2, bm as nat, bn as nat) as int],
 {
     // Step 1: Allocate accumulators
     let acc_size: u64 = bm * bn;
@@ -1354,6 +1516,13 @@ pub fn gemm_cta_kernel(
                 #[trigger] a_row_stride_ok(&a_layout@, gi),
             forall|gj: nat| gj < n as nat ==>
                 #[trigger] b_col_stride_ok(&b_layout@, gj),
+            // Accumulator correctness: previous rows have correct GEMM values
+            forall|pi: nat, pj: nat| pi < ei as nat && pj < bn as nat
+                && epilogue_predicated_store_safe(m as nat, n as nat,
+                    ti as nat, tj as nat, pi, pj, bm as nat, bn as nat)
+                ==> accumulators@[(pi * bn as nat + pj) as int] as int
+                    == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                        ti as nat * bm as nat + pi, tj as nat * bn as nat + pj, k_size as nat),
         decreases bm - ei,
     {
         let mut ej: u64 = 0;
@@ -1401,6 +1570,20 @@ pub fn gemm_cta_kernel(
                     #[trigger] a_row_stride_ok(&a_layout@, gi),
                 forall|gj: nat| gj < n as nat ==>
                     #[trigger] b_col_stride_ok(&b_layout@, gj),
+                // Previous rows: correct GEMM values
+                forall|pi: nat, pj: nat| pi < ei as nat && pj < bn as nat
+                    && epilogue_predicated_store_safe(m as nat, n as nat,
+                        ti as nat, tj as nat, pi, pj, bm as nat, bn as nat)
+                    ==> accumulators@[(pi * bn as nat + pj) as int] as int
+                        == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                            ti as nat * bm as nat + pi, tj as nat * bn as nat + pj, k_size as nat),
+                // Current row: already-computed columns correct
+                forall|pj: nat| pj < ej as nat
+                    && epilogue_predicated_store_safe(m as nat, n as nat,
+                        ti as nat, tj as nat, ei as nat, pj, bm as nat, bn as nat)
+                    ==> accumulators@[(ei as nat * bn as nat + pj) as int] as int
+                        == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                            ti as nat * bm as nat + ei as nat, tj as nat * bn as nat + pj, k_size as nat),
             decreases bn - ej,
         {
             let gi = ti * bm + ei;
@@ -1494,6 +1677,39 @@ pub fn gemm_cta_kernel(
                     assert((acc_idx as usize) as int == acc_idx as int);
                 }
                 accumulators.set(acc_idx as usize, mac_val);
+
+                proof {
+                    // mac_val == gemm_int_mac for this (gi, gj)
+                    // The set only changes index acc_idx = ei*bn+ej
+                    let cur_idx_nat = ei as nat * bn as nat + ej as nat;
+
+                    // Previous rows preserved: pi < ei means pi*bn+pj < (pi+1)*bn <= ei*bn <= cur_idx
+                    assert forall|pi: nat, pj: nat| pi < ei as nat && pj < bn as nat
+                        && epilogue_predicated_store_safe(m as nat, n as nat,
+                            ti as nat, tj as nat, pi, pj, bm as nat, bn as nat)
+                    implies accumulators@[(pi * bn as nat + pj) as int] as int
+                        == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                            ti as nat * bm as nat + pi, tj as nat * bn as nat + pj, k_size as nat)
+                    by {
+                        // pi*bn + pj < (pi+1)*bn <= ei*bn <= ei*bn+ej
+                        assert(pi * bn as nat + pj < (pi + 1) * bn as nat) by (nonlinear_arith)
+                            requires pj < bn as nat;
+                        assert((pi + 1) * bn as nat <= ei as nat * bn as nat) by (nonlinear_arith)
+                            requires pi + 1 <= ei as nat, bn as nat > 0;
+                    };
+
+                    // Current row: pj < ej means ei*bn+pj < ei*bn+ej
+                    assert forall|pj: nat| pj < ej as nat
+                        && epilogue_predicated_store_safe(m as nat, n as nat,
+                            ti as nat, tj as nat, ei as nat, pj, bm as nat, bn as nat)
+                    implies accumulators@[(ei as nat * bn as nat + pj) as int] as int
+                        == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                            ti as nat * bm as nat + ei as nat, tj as nat * bn as nat + pj, k_size as nat)
+                    by {
+                        assert(ei as nat * bn as nat + pj < ei as nat * bn as nat + ej as nat) by (nonlinear_arith)
+                            requires pj < ej as nat;
+                    };
+                }
             }
 
             ej = ej + 1;
@@ -1503,7 +1719,72 @@ pub fn gemm_cta_kernel(
     }
 
     // Step 3: Write accumulators to C
+    // At this point, all valid accumulators hold correct GEMM values.
+    // epilogue_tile_write writes them to C with frame condition.
     epilogue_tile_write(c_data, c_layout, &accumulators, ti, tj, bm, bn, m, n);
+
+    proof {
+        // Chain: accumulators correct → epilogue writes them → C correct
+        // epilogue_tile_write ensures:
+        //   valid elements: c_data@[offset] == accumulators@[ei*bn+ej]
+        //   frame: non-CTA indices unchanged
+        // accumulators ensure: accumulators@[ei*bn+ej] as int == gemm_int_mac(...)
+        // Combined: c_data@[offset] as int == gemm_int_mac(...)
+        assert forall|ei: nat, ej: nat| ei < bm as nat && ej < bn as nat
+            && epilogue_predicated_store_safe(m as nat, n as nat,
+                ti as nat, tj as nat, ei, ej, bm as nat, bn as nat)
+        implies #[trigger] c_data@[gemm_c_tile_offset(&c_layout@,
+                ti as nat, tj as nat, ei, ej, bm as nat, bn as nat) as int]
+            as int == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                ti as nat * bm as nat + ei, tj as nat * bn as nat + ej, k_size as nat)
+        by {
+            // epilogue wrote: c_data@[offset] == accumulators@[ei*bn+ej]
+            assert(c_data@[gemm_c_tile_offset(&c_layout@,
+                ti as nat, tj as nat, ei, ej, bm as nat, bn as nat) as int]
+                == accumulators@[(ei * bn as nat + ej) as int]);
+            // accumulator has correct value
+            assert(accumulators@[(ei * bn as nat + ej) as int] as int
+                == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                    ti as nat * bm as nat + ei, tj as nat * bn as nat + ej, k_size as nat));
+        };
+
+        // Prove cross-CTA frame: offsets from other CTAs are unchanged
+        // Uses epilogue_tile_write's frame + cross-CTA disjointness
+        assert forall|ti2: nat, tj2: nat, ei2: nat, ej2: nat|
+            (ti2 != ti as nat || tj2 != tj as nat)
+            && ei2 < bm as nat && ej2 < bn as nat
+            && epilogue_predicated_store_safe(m as nat, n as nat,
+                ti2, tj2, ei2, ej2, bm as nat, bn as nat)
+        implies #[trigger] c_data@[gemm_c_tile_offset(&c_layout@,
+                ti2, tj2, ei2, ej2, bm as nat, bn as nat) as int]
+            == old(c_data)@[gemm_c_tile_offset(&c_layout@,
+                ti2, tj2, ei2, ej2, bm as nat, bn as nat) as int]
+        by {
+            let off = gemm_c_tile_offset(&c_layout@,
+                ti2, tj2, ei2, ej2, bm as nat, bn as nat);
+            // Cross-CTA disjointness: off differs from all CTA (ti,tj) offsets
+            // epilogue_tile_write's frame: if off != all CTA offsets, then unchanged
+            // Prove the inner quantifier needed by the frame condition
+            assert forall|ei3: nat, ej3: nat| ei3 < bm as nat && ej3 < bn as nat
+                && epilogue_predicated_store_safe(m as nat, n as nat,
+                    ti as nat, tj as nat, ei3, ej3, bm as nat, bn as nat)
+            implies off != gemm_c_tile_offset(&c_layout@,
+                ti as nat, tj as nat, ei3, ej3, bm as nat, bn as nat)
+            by {
+                // (ti2,tj2) != (ti,tj), both eps-safe → offsets differ by cross-CTA disjointness
+            };
+            // Offset is in bounds: use tensor_valid + lemma_epilogue_store_in_bounds
+            let gi2 = ti2 * bm as nat + ei2;
+            let gj2 = tj2 * bn as nat + ej2;
+            assert(gi2 < m as nat && gj2 < n as nat);
+            assert(gi2 < c_layout@.shape[0]);
+            assert(gj2 < c_layout@.shape[1]);
+            crate::proof::gemm_lemmas::lemma_epilogue_store_in_bounds(
+                &c_layout@, c_data@.len(), gi2, gj2,
+            );
+            assert(0 <= off && off < c_data@.len() as int);
+        };
+    }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1573,15 +1854,22 @@ pub fn gemm_dispatch(
         num_tiles_ceil(k_size as nat, bk as nat) * (bk as nat) <= u64::MAX as nat,
     ensures
         c_data@.len() == old(c_data)@.len(),
+        // Every valid (gi, gj) in [0,m) x [0,n) has correct GEMM value
+        forall|gi: nat, gj: nat| gi < m as nat && gj < n as nat
+            ==> #[trigger] c_data@[gemm_c_offset(&c_layout@, gi, gj) as int]
+                as int == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                    gi, gj, k_size as nat),
 {
     let k_tiles = num_tiles_ceil_exec(k_size, bk);
     let m_tiles = num_tiles_ceil_exec(m, bm);
     let n_tiles = num_tiles_ceil_exec(n, bn);
 
     proof {
-        // Prove m_tiles and n_tiles fit in u64 (they already do from num_tiles_ceil_exec)
-        // Prove k_tiles matches spec
         assert(k_tiles as nat == num_tiles_ceil(k_size as nat, bk as nat));
+        // Prove cross-CTA disjointness — used throughout for frame reasoning
+        crate::proof::gemm_lemmas::lemma_epilogue_cross_cta_disjoint(
+            &c_layout@, m as nat, n as nat, bm as nat, bn as nat,
+        );
     }
 
     let mut ti: u64 = 0;
@@ -1632,6 +1920,18 @@ pub fn gemm_dispatch(
             k_tiles as nat * (bk as nat) <= u64::MAX as nat,
             k_size <= i64::MAX as u64,
             bk <= i64::MAX as u64,
+            // Cross-CTA disjointness
+            epilogue_cross_cta_disjoint(&c_layout@, m as nat, n as nat, bm as nat, bn as nat),
+            // Correctness: all elements from completed tile rows are correct
+            forall|ti2: nat, tj2: nat, ei: nat, ej: nat|
+                ti2 < ti as nat && tj2 < n_tiles as nat
+                && ei < bm as nat && ej < bn as nat
+                && epilogue_predicated_store_safe(m as nat, n as nat,
+                    ti2, tj2, ei, ej, bm as nat, bn as nat)
+                ==> #[trigger] c_data@[gemm_c_tile_offset(&c_layout@,
+                        ti2, tj2, ei, ej, bm as nat, bn as nat) as int]
+                    as int == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                        ti2 * bm as nat + ei, tj2 * bn as nat + ej, k_size as nat),
         decreases m_tiles - ti,
     {
         let mut tj: u64 = 0;
@@ -1682,14 +1982,33 @@ pub fn gemm_dispatch(
                 k_tiles as nat * (bk as nat) <= u64::MAX as nat,
                 k_size <= i64::MAX as u64,
                 bk <= i64::MAX as u64,
+                // Cross-CTA disjointness
+                epilogue_cross_cta_disjoint(&c_layout@, m as nat, n as nat, bm as nat, bn as nat),
+                // Previous tile rows: correct
+                forall|ti2: nat, tj2: nat, ei: nat, ej: nat|
+                    ti2 < ti as nat && tj2 < n_tiles as nat
+                    && ei < bm as nat && ej < bn as nat
+                    && epilogue_predicated_store_safe(m as nat, n as nat,
+                        ti2, tj2, ei, ej, bm as nat, bn as nat)
+                    ==> #[trigger] c_data@[gemm_c_tile_offset(&c_layout@,
+                            ti2, tj2, ei, ej, bm as nat, bn as nat) as int]
+                        as int == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                            ti2 * bm as nat + ei, tj2 * bn as nat + ej, k_size as nat),
+                // Current tile row, previous columns: correct
+                forall|tj2: nat, ei: nat, ej: nat|
+                    tj2 < tj as nat
+                    && ei < bm as nat && ej < bn as nat
+                    && epilogue_predicated_store_safe(m as nat, n as nat,
+                        ti as nat, tj2, ei, ej, bm as nat, bn as nat)
+                    ==> c_data@[gemm_c_tile_offset(&c_layout@,
+                            ti as nat, tj2, ei, ej, bm as nat, bn as nat) as int]
+                        as int == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                            ti as nat * bm as nat + ei, tj2 * bn as nat + ej, k_size as nat),
             decreases n_tiles - tj,
         {
             proof {
                 // Prove tile index overflow bounds
-                // ti < ceil(m/bm), so ti*bm < m + bm (by ceil_div_tight)
                 crate::proof::predication_lemmas::lemma_ceil_div_tight(m as nat, bm as nat);
-                // ceil(m/bm) * bm < m + bm, so ti * bm <= ceil(m/bm)*bm - bm < m
-                // Actually: ti * bm + bm <= ceil(m/bm) * bm < m + bm
                 let ti_n = ti as nat;
                 let tj_n = tj as nat;
                 let bm_n = bm as nat;
@@ -1699,8 +2018,6 @@ pub fn gemm_dispatch(
                 let mt_n = m_tiles as nat;
                 let nt_n = n_tiles as nat;
 
-                // ti < m_tiles = ceil(m/bm), so (ti+1) <= ceil(m/bm)
-                // (ti+1)*bm <= ceil(m/bm)*bm < m + bm
                 assert((ti_n + 1) * bm_n <= mt_n * bm_n) by (nonlinear_arith)
                     requires ti_n + 1 <= mt_n, bm_n >= 1;
                 assert(mt_n * bm_n < m_n + bm_n) by {
@@ -1740,6 +2057,9 @@ pub fn gemm_dispatch(
                 assert(cta_tile_overflow_ok(&c_layout@, m_n, n_n, bm_n, bn_n, ti_n, tj_n));
             }
 
+            // Snapshot for frame reasoning
+            let ghost c_before_cta = c_data@;
+
             gemm_cta_kernel(
                 a_layout, b_layout, c_layout,
                 a_data, b_data, c_data,
@@ -1748,10 +2068,91 @@ pub fn gemm_dispatch(
                 Ghost(acc_bound),
             );
 
+            proof {
+                // After gemm_cta_kernel:
+                // (1) CTA (ti, tj) elements are correct (flat ensures)
+                // (2) Cross-CTA frame: other CTA offsets unchanged (flat ensures)
+                // Use flat cross-CTA frame to show previous CTA values are preserved
+
+                // Previous tile rows preserved
+                assert forall|ti2: nat, tj2: nat, ei: nat, ej: nat|
+                    ti2 < ti as nat && tj2 < n_tiles as nat
+                    && ei < bm as nat && ej < bn as nat
+                    && epilogue_predicated_store_safe(m as nat, n as nat,
+                        ti2, tj2, ei, ej, bm as nat, bn as nat)
+                implies #[trigger] c_data@[gemm_c_tile_offset(&c_layout@,
+                        ti2, tj2, ei, ej, bm as nat, bn as nat) as int]
+                    as int == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                        ti2 * bm as nat + ei, tj2 * bn as nat + ej, k_size as nat)
+                by {
+                    // ti2 < ti, so (ti2,tj2) != (ti,tj)
+                    // By flat cross-CTA frame: c_data@[off] == c_before_cta[off]
+                    assert(ti2 != ti as nat);
+                    // c_before_cta had the correct value (from loop invariant)
+                };
+
+                // Current tile row, previous columns preserved
+                assert forall|tj2: nat, ei: nat, ej: nat|
+                    tj2 < tj as nat
+                    && ei < bm as nat && ej < bn as nat
+                    && epilogue_predicated_store_safe(m as nat, n as nat,
+                        ti as nat, tj2, ei, ej, bm as nat, bn as nat)
+                implies c_data@[gemm_c_tile_offset(&c_layout@,
+                        ti as nat, tj2, ei, ej, bm as nat, bn as nat) as int]
+                    as int == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                        ti as nat * bm as nat + ei, tj2 * bn as nat + ej, k_size as nat)
+                by {
+                    // tj2 < tj, so (ti,tj2) != (ti,tj)
+                    assert(tj2 != tj as nat);
+                    // c_before_cta had the correct value (from loop invariant)
+                };
+            }
+
             tj = tj + 1;
         }
 
         ti = ti + 1;
+    }
+
+    // Final proof: translate tile-based invariant to global-index ensures
+    proof {
+        assert forall|gi: nat, gj: nat| gi < m as nat && gj < n as nat
+        implies #[trigger] c_data@[gemm_c_offset(&c_layout@, gi, gj) as int]
+            as int == gemm_int_mac(&a_layout@, &b_layout@, a_data@, b_data@,
+                gi, gj, k_size as nat)
+        by {
+            // Map (gi, gj) to tile coordinates
+            let ti_g = gi / bm as nat;
+            let ei_g = gi % bm as nat;
+            let tj_g = gj / bn as nat;
+            let ej_g = gj % bn as nat;
+
+            // Reconstruct: ti_g*bm + ei_g == gi, tj_g*bn + ej_g == gj
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(gi as int, bm as int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(bm as int, ti_g as int);
+            assert(ti_g * bm as nat + ei_g == gi);
+
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(gj as int, bn as int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(bn as int, tj_g as int);
+            assert(tj_g * bn as nat + ej_g == gj);
+
+            // ei_g < bm, ej_g < bn (by mod bound)
+            vstd::arithmetic::div_mod::lemma_mod_pos_bound(gi as int, bm as int);
+            vstd::arithmetic::div_mod::lemma_mod_pos_bound(gj as int, bn as int);
+
+            // ti_g < m_tiles (by tile_for_index_bound)
+            crate::proof::predication_lemmas::lemma_tile_for_index_bound(gi, bm as nat, m as nat);
+            crate::proof::predication_lemmas::lemma_tile_for_index_bound(gj, bn as nat, n as nat);
+
+            // epilogue_predicated_store_safe: gi < m && gj < n ✓
+            assert(epilogue_predicated_store_safe(m as nat, n as nat,
+                ti_g, tj_g, ei_g, ej_g, bm as nat, bn as nat));
+
+            // By outer loop invariant (ti == m_tiles): ti_g < m_tiles = ti
+            // gemm_c_offset == gemm_c_tile_offset (definitionally)
+            assert(gemm_c_offset(&c_layout@, gi, gj)
+                == gemm_c_tile_offset(&c_layout@, ti_g, tj_g, ei_g, ej_g, bm as nat, bn as nat));
+        };
     }
 }
 
