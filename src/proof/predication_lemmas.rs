@@ -34,7 +34,7 @@ pub proof fn lemma_ceil_div_mul_ge(m: nat, n: nat)
 }
 
 /// Helper: padded_size(m, n) - m < n.
-proof fn lemma_ceil_div_tight(m: nat, n: nat)
+pub proof fn lemma_ceil_div_tight(m: nat, n: nat)
     requires n > 0,
     ensures (ceil_div(m, n) * n) as int - (m as int) < (n as int),
 {
