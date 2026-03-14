@@ -417,6 +417,18 @@ pub open spec fn gemm_product_ok(
     &&& (av as int) * (bv as int) <= i64::MAX as int
 }
 
+/// Product magnitude bounded by given bound.
+pub open spec fn product_bounded_at_offset(
+    a_data: Seq<i64>, b_data: Seq<i64>,
+    a_off: i64, b_off: i64,
+    bound: int,
+) -> bool {
+    let av = a_data[a_off as int];
+    let bv = b_data[b_off as int];
+    &&& (av as int) * (bv as int) >= -bound
+    &&& (av as int) * (bv as int) <= bound
+}
+
 /// Inner tile MAC: compute sum_{k in 0..count} a_data[a_offs[k]] * b_data[b_offs[k]].
 /// Returns the i64 partial sum for one tile.
 pub fn inner_tile_mac_i64(
@@ -437,6 +449,9 @@ pub fn inner_tile_mac_i64(
         // Each product fits in i64
         forall|idx: nat| idx < count as nat ==>
             #[trigger] product_at_offset_ok(a_data@, b_data@, a_offsets@[idx as int], b_offsets@[idx as int]),
+        // Each product magnitude bounded by acc_bound
+        forall|idx: nat| idx < count as nat ==>
+            #[trigger] product_bounded_at_offset(a_data@, b_data@, a_offsets@[idx as int], b_offsets@[idx as int], acc_bound),
         // Cumulative sum bound: all partial sums fit in i64
         acc_bound >= 0,
         acc_bound <= i64::MAX as int,
@@ -444,7 +459,8 @@ pub fn inner_tile_mac_i64(
         // Each partial sum magnitude is bounded by acc_bound
         count as int * acc_bound <= i64::MAX as int,
     ensures
-        true,
+        acc as int >= -(count as int) * acc_bound,
+        acc as int <= (count as int) * acc_bound,
 {
     let mut acc: i64 = 0;
     let mut idx: u64 = 0;
@@ -460,6 +476,8 @@ pub fn inner_tile_mac_i64(
                 0 <= (#[trigger] b_offsets@[k as int]) && (b_offsets@[k as int] as nat) < b_data@.len(),
             forall|k: nat| k < count as nat ==>
                 #[trigger] product_at_offset_ok(a_data@, b_data@, a_offsets@[k as int], b_offsets@[k as int]),
+            forall|k: nat| k < count as nat ==>
+                #[trigger] product_bounded_at_offset(a_data@, b_data@, a_offsets@[k as int], b_offsets@[k as int], acc_bound),
             // Partial accumulator is bounded
             acc as int >= -(idx as int) * acc_bound,
             acc as int <= (idx as int) * acc_bound,
@@ -489,10 +507,23 @@ pub fn inner_tile_mac_i64(
         let b_val = b_data[b_off_i64 as usize];
 
         proof {
-            // Product overflow: bridges from product_at_offset_ok via exec↔spec index identity
-            // On 64-bit: (non-negative i64 as usize) as int == i64 as int
-            assume((a_val as int) * (b_val as int) >= i64::MIN as int);
-            assume((a_val as int) * (b_val as int) <= i64::MAX as int);
+            // Bridge exec↔spec: (non-neg i64 as usize) as int == i64 as int on 64-bit
+            assert(a_off_i64 as int >= 0);
+            assert(a_off_i64 as int <= i64::MAX as int);
+            assert((a_off_i64 as usize) as int == a_off_i64 as int);
+            assert(a_val == a_data@[a_off_i64 as int]);
+            assert(b_off_i64 as int >= 0);
+            assert(b_off_i64 as int <= i64::MAX as int);
+            assert((b_off_i64 as usize) as int == b_off_i64 as int);
+            assert(b_val == b_data@[b_off_i64 as int]);
+            // Connect to spec-level offsets
+            assert(a_off_i64 as int == a_offsets@[idx as int] as int);
+            assert(b_off_i64 as int == b_offsets@[idx as int] as int);
+            // Now a_val == a_data@[a_offsets@[idx as int] as int], etc.
+            // Product overflow from product_at_offset_ok
+            assert(product_at_offset_ok(a_data@, b_data@, a_offsets@[idx as int], b_offsets@[idx as int]));
+            // Product bound from product_bounded_at_offset
+            assert(product_bounded_at_offset(a_data@, b_data@, a_offsets@[idx as int], b_offsets@[idx as int], acc_bound));
         }
 
         let prod = a_val * b_val;
@@ -500,8 +531,6 @@ pub fn inner_tile_mac_i64(
         // Prove accumulation doesn't overflow:
         // |acc + prod| <= idx*bound + bound = (idx+1)*bound <= count*bound <= i64::MAX
         proof {
-            assume(prod as int >= -acc_bound);
-            assume(prod as int <= acc_bound);
 
             let old_acc = acc as int;
             let old_idx = idx as int;
@@ -516,6 +545,18 @@ pub fn inner_tile_mac_i64(
                     acc_bound >= 0int;
             assert((old_idx + 1) * acc_bound <= count as int * acc_bound) by (nonlinear_arith)
                 requires old_idx + 1 <= count as int, acc_bound >= 0int;
+            // Prove acc + prod fits in i64
+            assert(old_acc + prod as int <= i64::MAX as int) by (nonlinear_arith)
+                requires
+                    old_acc + prod as int <= (old_idx + 1) * acc_bound,
+                    (old_idx + 1) * acc_bound <= count as int * acc_bound,
+                    count as int * acc_bound <= i64::MAX as int;
+            assert(old_acc + prod as int >= i64::MIN as int) by (nonlinear_arith)
+                requires
+                    old_acc + prod as int >= -(old_idx + 1) * acc_bound,
+                    (old_idx + 1) * acc_bound <= count as int * acc_bound,
+                    count as int * acc_bound <= i64::MAX as int,
+                    acc_bound >= 0int;
         }
 
         acc = acc + prod;
@@ -616,7 +657,7 @@ pub fn gemm_k_tile_loop(
             (k_size as int) * acc_bound <= i64::MAX as int,
             (bk as int) * acc_bound <= i64::MAX as int,
             // Accumulator is bounded by processed-so-far
-            acc as int >= -((t as int) * (bk as int) * acc_bound),
+            acc as int >= -(t as int) * (bk as int) * acc_bound,
             acc as int <= (t as int) * (bk as int) * acc_bound,
         decreases k_tiles - t,
     {
@@ -723,9 +764,7 @@ pub fn gemm_k_tile_loop(
 
         // Prove accumulation doesn't overflow
         proof {
-            // tile_acc processes 'count' elements, each bounded by acc_bound
-            assume(tile_acc as int >= -(count as int) * acc_bound);
-            assume(tile_acc as int <= (count as int) * acc_bound);
+            // tile_acc bounded by inner_tile_mac_i64's ensures
             // Weaker bk-based bounds for invariant maintenance
             assert(tile_acc as int >= -(bk as int) * acc_bound) by (nonlinear_arith)
                 requires tile_acc as int >= -(count as int) * acc_bound,
@@ -763,6 +802,18 @@ pub fn gemm_k_tile_loop(
                 requires
                     acc as int >= -(t as int) * (bk as int) * acc_bound,
                     tile_acc as int >= -(count as int) * acc_bound,
+                    acc_bound >= 0int;
+            // Prove acc + tile_acc fits in i64
+            assert((acc as int + tile_acc as int) <= i64::MAX as int) by (nonlinear_arith)
+                requires
+                    (acc as int + tile_acc as int) <= ((t as int) * (bk as int) + (count as int)) * acc_bound,
+                    ((t as int) * (bk as int) + (count as int)) * acc_bound <= (k_size as int) * acc_bound,
+                    (k_size as int) * acc_bound <= i64::MAX as int;
+            assert((acc as int + tile_acc as int) >= i64::MIN as int) by (nonlinear_arith)
+                requires
+                    (acc as int + tile_acc as int) >= -((t as int) * (bk as int) + (count as int)) * acc_bound,
+                    ((t as int) * (bk as int) + (count as int)) * acc_bound <= (k_size as int) * acc_bound,
+                    (k_size as int) * acc_bound <= i64::MAX as int,
                     acc_bound >= 0int;
         }
 
