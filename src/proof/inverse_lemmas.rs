@@ -242,7 +242,7 @@ pub proof fn lemma_right_inverse_correct_1d(m: nat, d: int, j: nat)
 }
 
 /// column_major_strides always starts with 1 for non-empty shapes.
-proof fn lemma_column_major_strides_first(shape: Seq<nat>)
+pub proof fn lemma_column_major_strides_first(shape: Seq<nat>)
     requires shape.len() > 0,
     ensures column_major_strides(shape)[0] == 1int,
 {
