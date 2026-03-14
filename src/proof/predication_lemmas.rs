@@ -10,7 +10,7 @@ verus! {
 // ══════════════════════════════════════════════════════════════
 
 /// Helper: (m + n - 1) as nat / n = q implies q * n >= m.
-proof fn lemma_ceil_div_mul_ge(m: nat, n: nat)
+pub proof fn lemma_ceil_div_mul_ge(m: nat, n: nat)
     requires n > 0,
     ensures ceil_div(m, n) * n >= m,
 {

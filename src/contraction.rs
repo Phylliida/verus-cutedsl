@@ -99,6 +99,42 @@ pub open spec fn batched_gemm_as_contraction() -> ContractionSpec {
     }
 }
 
+/// Matrix-vector: A[m,k] * x[k] = y[m]. Contract over k (mode 1 of A, mode 0 of x).
+pub open spec fn matvec_as_contraction() -> ContractionSpec {
+    ContractionSpec {
+        batch_modes_a: seq![],
+        batch_modes_b: seq![],
+        contraction_modes_a: seq![1nat],
+        contraction_modes_b: seq![0nat],
+        free_modes_a: seq![0nat],
+        free_modes_b: seq![],
+    }
+}
+
+/// Outer product: u[m] * v[n] = C[m,n]. No contraction modes.
+pub open spec fn outer_product_as_contraction() -> ContractionSpec {
+    ContractionSpec {
+        batch_modes_a: seq![],
+        batch_modes_b: seq![],
+        contraction_modes_a: seq![],
+        contraction_modes_b: seq![],
+        free_modes_a: seq![0nat],
+        free_modes_b: seq![0nat],
+    }
+}
+
+/// Dot product: a[k] * b[k] = scalar. Contract over k, no free modes.
+pub open spec fn dot_product_as_contraction() -> ContractionSpec {
+    ContractionSpec {
+        batch_modes_a: seq![],
+        batch_modes_b: seq![],
+        contraction_modes_a: seq![0nat],
+        contraction_modes_b: seq![0nat],
+        free_modes_a: seq![],
+        free_modes_b: seq![],
+    }
+}
+
 /// Contraction is fully admissible: mode sets valid + shapes match.
 pub open spec fn contraction_admissible(
     spec: &ContractionSpec, a_shape: &Seq<nat>, b_shape: &Seq<nat>,

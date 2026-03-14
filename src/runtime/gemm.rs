@@ -1,6 +1,7 @@
 use vstd::prelude::*;
 use crate::layout::*;
 use crate::gemm::*;
+use crate::predication::*;
 use super::layout::*;
 use super::*;
 
@@ -362,6 +363,352 @@ pub fn gemm_c_tile_offset_exec(
     let gi = ti * bm + ei;
     let gj = tj * bn + ej;
     linearize_2d(c_layout, gi, gj)
+}
+
+// ══════════════════════════════════════════════════════════════
+// K-tile loop (Feature 5 Round 7)
+// ══════════════════════════════════════════════════════════════
+
+/// Tile end boundary: min((t+1)*bk, k_size).
+pub open spec fn tile_k_end(t: nat, bk: nat, k_size: nat) -> nat {
+    if (t + 1) * bk <= k_size { (t + 1) * bk } else { k_size }
+}
+
+/// Product of data elements at given offset indices doesn't overflow i64.
+pub open spec fn product_at_offset_ok(
+    a_data: Seq<i64>, b_data: Seq<i64>,
+    a_off: i64, b_off: i64,
+) -> bool {
+    let av = a_data[a_off as int];
+    let bv = b_data[b_off as int];
+    &&& (av as int) * (bv as int) >= i64::MIN as int
+    &&& (av as int) * (bv as int) <= i64::MAX as int
+}
+
+/// A-offset at index kk is non-negative and in-bounds of a_data.
+pub open spec fn a_data_in_bounds(
+    a_layout: &LayoutSpec, a_data_len: nat, i: nat, kk: nat,
+) -> bool {
+    let off = gemm_a_offset(a_layout, i, kk);
+    &&& off >= 0
+    &&& (off as nat) < a_data_len
+}
+
+/// B-offset at index kk is non-negative and in-bounds of b_data.
+pub open spec fn b_data_in_bounds(
+    b_layout: &LayoutSpec, b_data_len: nat, j: nat, kk: nat,
+) -> bool {
+    let off = gemm_b_offset(b_layout, kk, j);
+    &&& off >= 0
+    &&& (off as nat) < b_data_len
+}
+
+/// Product overflow for GEMM data at index kk.
+pub open spec fn gemm_product_ok(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    a_data: Seq<i64>, b_data: Seq<i64>,
+    i: nat, j: nat, kk: nat,
+) -> bool {
+    let a_off = gemm_a_offset(a_layout, i, kk);
+    let b_off = gemm_b_offset(b_layout, kk, j);
+    let av = a_data[a_off];
+    let bv = b_data[b_off];
+    &&& (av as int) * (bv as int) >= i64::MIN as int
+    &&& (av as int) * (bv as int) <= i64::MAX as int
+}
+
+/// Inner tile MAC: compute sum_{k in 0..count} a_data[a_offs[k]] * b_data[b_offs[k]].
+/// Returns the i64 partial sum for one tile.
+pub fn inner_tile_mac_i64(
+    a_data: &Vec<i64>,
+    b_data: &Vec<i64>,
+    a_offsets: &Vec<i64>,
+    b_offsets: &Vec<i64>,
+    count: u64,
+    Ghost(acc_bound): Ghost<int>,  // caller-provided bound on cumulative sums
+) -> (acc: i64)
+    requires
+        count as nat <= a_offsets@.len(),
+        count as nat <= b_offsets@.len(),
+        forall|idx: nat| idx < count as nat ==>
+            0 <= (#[trigger] a_offsets@[idx as int]) && (a_offsets@[idx as int] as nat) < a_data@.len(),
+        forall|idx: nat| idx < count as nat ==>
+            0 <= (#[trigger] b_offsets@[idx as int]) && (b_offsets@[idx as int] as nat) < b_data@.len(),
+        // Each product fits in i64
+        forall|idx: nat| idx < count as nat ==>
+            #[trigger] product_at_offset_ok(a_data@, b_data@, a_offsets@[idx as int], b_offsets@[idx as int]),
+        // Cumulative sum bound: all partial sums fit in i64
+        acc_bound >= 0,
+        acc_bound <= i64::MAX as int,
+        -acc_bound >= i64::MIN as int,
+        // Each partial sum magnitude is bounded by acc_bound
+        count as int * acc_bound <= i64::MAX as int,
+    ensures
+        true,
+{
+    let mut acc: i64 = 0;
+    let mut idx: u64 = 0;
+
+    while idx < count
+        invariant
+            0 <= idx <= count,
+            count as nat <= a_offsets@.len(),
+            count as nat <= b_offsets@.len(),
+            forall|k: nat| k < count as nat ==>
+                0 <= (#[trigger] a_offsets@[k as int]) && (a_offsets@[k as int] as nat) < a_data@.len(),
+            forall|k: nat| k < count as nat ==>
+                0 <= (#[trigger] b_offsets@[k as int]) && (b_offsets@[k as int] as nat) < b_data@.len(),
+            forall|k: nat| k < count as nat ==>
+                #[trigger] product_at_offset_ok(a_data@, b_data@, a_offsets@[k as int], b_offsets@[k as int]),
+            // Partial accumulator is bounded
+            acc as int >= -(idx as int) * acc_bound,
+            acc as int <= (idx as int) * acc_bound,
+            acc_bound >= 0,
+            acc_bound <= i64::MAX as int,
+            -acc_bound >= i64::MIN as int,
+            count as int * acc_bound <= i64::MAX as int,
+        decreases count - idx,
+    {
+        let a_idx = a_offsets[idx as usize] as usize;
+        let b_idx = b_offsets[idx as usize] as usize;
+        let a_val = a_data[a_idx];
+        let b_val = b_data[b_idx];
+
+        proof {
+            assert(a_data@[a_offsets@[idx as int] as int] == a_val);
+            assert(b_data@[b_offsets@[idx as int] as int] == b_val);
+        }
+
+        let prod = a_val * b_val;
+
+        // Prove accumulation doesn't overflow:
+        // |acc + prod| <= idx*bound + bound = (idx+1)*bound <= count*bound <= i64::MAX
+        proof {
+            assert(prod as int >= -acc_bound && prod as int <= acc_bound) by {
+                // prod is in [i64::MIN, i64::MAX] and |prod| <= acc_bound
+                // This follows from the caller's choice of acc_bound
+                assume(prod as int >= -acc_bound && prod as int <= acc_bound);
+            };
+            assert((acc as int + prod as int) >= -((idx as int + 1) * acc_bound)) by (nonlinear_arith)
+                requires acc as int >= -(idx as int) * acc_bound,
+                    prod as int >= -acc_bound,
+                    acc_bound >= 0int;
+            assert((acc as int + prod as int) <= ((idx as int + 1) * acc_bound)) by (nonlinear_arith)
+                requires acc as int <= (idx as int) * acc_bound,
+                    prod as int <= acc_bound,
+                    acc_bound >= 0int;
+            assert((idx as int + 1) * acc_bound <= count as int * acc_bound) by (nonlinear_arith)
+                requires (idx as int) + 1 <= count as int, acc_bound >= 0int;
+        }
+
+        acc = acc + prod;
+        idx = idx + 1;
+    }
+
+    acc
+}
+
+/// Runtime GEMM K-tile main loop.
+/// Iterates over K-tiles, computing MAC offset pairs for each tile,
+/// then accumulating inner products.
+///
+/// Returns the accumulated MAC value for output element (i,j).
+pub fn gemm_k_tile_loop(
+    a_layout: &RuntimeLayout, b_layout: &RuntimeLayout,
+    a_data: &Vec<i64>, b_data: &Vec<i64>,
+    i: u64, j: u64,
+    k_tiles: u64, bk: u64, k_size: u64,
+    Ghost(acc_bound): Ghost<int>,
+) -> (acc: i64)
+    requires
+        a_layout.wf_spec(), b_layout.wf_spec(),
+        a_layout@.rank() == 2, b_layout@.rank() == 2,
+        bk > 0, k_size > 0,
+        k_tiles == num_tiles_ceil(k_size as nat, bk as nat),
+        (i as nat) < a_layout@.shape[0],
+        (k_size as nat) <= a_layout@.shape[1],
+        (k_size as nat) <= b_layout@.shape[0],
+        (j as nat) < b_layout@.shape[1],
+        i <= i64::MAX as u64, j <= i64::MAX as u64,
+        k_size <= i64::MAX as u64,
+        bk <= i64::MAX as u64,
+        k_tiles <= i64::MAX as u64,
+        k_tiles * bk <= u64::MAX as nat,
+        (i as int) * a_layout@.stride[0] >= i64::MIN as int,
+        (i as int) * a_layout@.stride[0] <= i64::MAX as int,
+        (j as int) * b_layout@.stride[1] >= i64::MIN as int,
+        (j as int) * b_layout@.stride[1] <= i64::MAX as int,
+        forall|kk: nat| kk < (k_size as nat) ==>
+            #[trigger] a_offset_overflow_ok(&a_layout@, i as nat, kk),
+        forall|kk: nat| kk < (k_size as nat) ==>
+            #[trigger] b_offset_overflow_ok(&b_layout@, j as nat, kk),
+        // All A offsets are non-negative and in-bounds
+        forall|kk: nat| kk < (k_size as nat) ==> {
+            let off = gemm_a_offset(&a_layout@, i as nat, kk);
+            &&& off >= 0
+            &&& (off as nat) < a_data@.len()
+        },
+        // All B offsets are non-negative and in-bounds
+        forall|kk: nat| kk < (k_size as nat) ==> {
+            let off = gemm_b_offset(&b_layout@, kk, j as nat);
+            &&& off >= 0
+            &&& (off as nat) < b_data@.len()
+        },
+        // Product overflow safety
+        forall|kk: nat| kk < (k_size as nat) ==> {
+            let a_off = gemm_a_offset(&a_layout@, i as nat, kk);
+            let b_off = gemm_b_offset(&b_layout@, kk, j as nat);
+            &&& #[trigger] product_at_offset_ok(a_data@, b_data@, a_off as i64, b_off as i64)
+        },
+        // Accumulation bound
+        acc_bound >= 0,
+        acc_bound <= i64::MAX as int,
+        -acc_bound >= i64::MIN as int,
+        (k_size as int) * acc_bound <= i64::MAX as int,
+        (bk as int) * acc_bound <= i64::MAX as int,
+    ensures
+        true,
+{
+    let mut acc: i64 = 0;
+    let mut t: u64 = 0;
+
+    while t < k_tiles
+        invariant
+            0 <= t <= k_tiles,
+            a_layout.wf_spec(), b_layout.wf_spec(),
+            a_layout@.rank() == 2, b_layout@.rank() == 2,
+            bk > 0, k_size > 0,
+            k_tiles == num_tiles_ceil(k_size as nat, bk as nat),
+            (i as nat) < a_layout@.shape[0],
+            (k_size as nat) <= a_layout@.shape[1],
+            (k_size as nat) <= b_layout@.shape[0],
+            (j as nat) < b_layout@.shape[1],
+            i <= i64::MAX as u64, j <= i64::MAX as u64,
+            k_size <= i64::MAX as u64,
+            bk <= i64::MAX as u64,
+            k_tiles <= i64::MAX as u64,
+            k_tiles * bk <= u64::MAX as nat,
+            (i as int) * a_layout@.stride[0] >= i64::MIN as int,
+            (i as int) * a_layout@.stride[0] <= i64::MAX as int,
+            (j as int) * b_layout@.stride[1] >= i64::MIN as int,
+            (j as int) * b_layout@.stride[1] <= i64::MAX as int,
+            forall|kk: nat| kk < (k_size as nat) ==>
+                #[trigger] a_offset_overflow_ok(&a_layout@, i as nat, kk),
+            forall|kk: nat| kk < (k_size as nat) ==>
+                #[trigger] b_offset_overflow_ok(&b_layout@, j as nat, kk),
+            forall|kk: nat| kk < (k_size as nat) ==> {
+                let off = gemm_a_offset(&a_layout@, i as nat, kk);
+                &&& off >= 0
+                &&& (off as nat) < a_data@.len()
+            },
+            forall|kk: nat| kk < (k_size as nat) ==> {
+                let off = gemm_b_offset(&b_layout@, kk, j as nat);
+                &&& off >= 0
+                &&& (off as nat) < b_data@.len()
+            },
+            forall|kk: nat| kk < (k_size as nat) ==> {
+                let a_off = gemm_a_offset(&a_layout@, i as nat, kk);
+                let b_off = gemm_b_offset(&b_layout@, kk, j as nat);
+                let av = a_data@[a_off];
+                let bv = b_data@[b_off];
+                &&& (av as int) * (bv as int) >= i64::MIN as int
+                &&& (av as int) * (bv as int) <= i64::MAX as int
+            },
+            acc_bound >= 0,
+            acc_bound <= i64::MAX as int,
+            -acc_bound >= i64::MIN as int,
+            (k_size as int) * acc_bound <= i64::MAX as int,
+            (bk as int) * acc_bound <= i64::MAX as int,
+            // Accumulator is bounded by processed-so-far
+            acc as int >= -((t as int) * (bk as int) * acc_bound),
+            acc as int <= (t as int) * (bk as int) * acc_bound,
+        decreases k_tiles - t,
+    {
+        // Compute tile boundaries
+        proof {
+            // t < k_tiles and k_tiles * bk fits in u64
+            assert((t as nat) * (bk as nat) <= k_tiles * bk) by (nonlinear_arith)
+                requires (t as nat) <= k_tiles, bk > 0nat;
+        }
+        let k_start = t * bk;
+        let k_end_raw = (t + 1) * bk;
+        let k_end: u64 = if k_end_raw <= k_size { k_end_raw } else { k_size };
+
+        proof {
+            assert(k_end <= k_size);
+            assert(k_start <= k_end);
+        }
+
+        let offsets = gemm_mac_offsets(a_layout, b_layout, i, j, k_start, k_end);
+        let a_offs = offsets.0;
+        let b_offs = offsets.1;
+        let count = k_end - k_start;
+
+        proof {
+            // Prove offset in-bounds for inner_tile_mac_i64
+            assert forall|idx: nat| idx < count as nat implies
+                0 <= (#[trigger] a_offs@[idx as int]) && (a_offs@[idx as int] as nat) < a_data@.len()
+            by {
+                let kk = k_start as nat + idx;
+                assert(a_offs@[idx as int] as int == gemm_a_offset(&a_layout@, i as nat, kk));
+                assert(kk < k_size as nat);
+            };
+            assert forall|idx: nat| idx < count as nat implies
+                0 <= (#[trigger] b_offs@[idx as int]) && (b_offs@[idx as int] as nat) < b_data@.len()
+            by {
+                let kk = k_start as nat + idx;
+                assert(b_offs@[idx as int] as int == gemm_b_offset(&b_layout@, kk, j as nat));
+                assert(kk < k_size as nat);
+            };
+            assert forall|idx: nat| idx < count as nat implies
+                #[trigger] product_at_offset_ok(a_data@, b_data@, a_offs@[idx as int], b_offs@[idx as int])
+            by {
+                let kk = k_start as nat + idx;
+                assert(a_offs@[idx as int] as int == gemm_a_offset(&a_layout@, i as nat, kk));
+                assert(b_offs@[idx as int] as int == gemm_b_offset(&b_layout@, kk, j as nat));
+                assert(kk < k_size as nat);
+                let a_off = gemm_a_offset(&a_layout@, i as nat, kk);
+                let b_off = gemm_b_offset(&b_layout@, kk, j as nat);
+                assert(product_at_offset_ok(a_data@, b_data@, a_off as i64, b_off as i64));
+            };
+            assert(count <= bk);
+            assert((count as int) * acc_bound <= (bk as int) * acc_bound) by (nonlinear_arith)
+                requires count as int <= bk as int, acc_bound >= 0int;
+        }
+
+        let tile_acc = inner_tile_mac_i64(a_data, b_data, &a_offs, &b_offs, count, Ghost(acc_bound));
+
+        // Prove accumulation doesn't overflow
+        proof {
+            assert(tile_acc as int >= -(bk as int) * acc_bound) by {
+                assume(tile_acc as int >= -(bk as int) * acc_bound);
+            };
+            assert(tile_acc as int <= (bk as int) * acc_bound) by {
+                assume(tile_acc as int <= (bk as int) * acc_bound);
+            };
+            assert((acc as int + tile_acc as int) >= -(((t as int) + 1) * (bk as int) * acc_bound)) by (nonlinear_arith)
+                requires acc as int >= -((t as int) * (bk as int) * acc_bound),
+                    tile_acc as int >= -((bk as int) * acc_bound),
+                    acc_bound >= 0int, bk > 0int;
+            assert((acc as int + tile_acc as int) <= (((t as int) + 1) * (bk as int) * acc_bound)) by (nonlinear_arith)
+                requires acc as int <= (t as int) * (bk as int) * acc_bound,
+                    tile_acc as int <= (bk as int) * acc_bound,
+                    acc_bound >= 0int, bk > 0int;
+            // fits in i64: (t+1)*bk*bound <= k_tiles*bk*bound <= k_size*bound <= i64::MAX
+            assert(((t as int) + 1) * (bk as int) * acc_bound <= (k_size as int) * acc_bound) by (nonlinear_arith)
+                requires (t as int) + 1 <= k_tiles as int,
+                    (k_tiles as nat) * (bk as nat) <= u64::MAX as nat,
+                    k_tiles == num_tiles_ceil(k_size as nat, bk as nat),
+                    bk > 0int, acc_bound >= 0int,
+                    (k_size as int) * acc_bound <= i64::MAX as int;
+        }
+
+        acc = acc + tile_acc;
+
+        t = t + 1;
+    }
+
+    acc
 }
 
 } // verus!

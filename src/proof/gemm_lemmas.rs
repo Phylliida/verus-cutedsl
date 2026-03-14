@@ -7,6 +7,7 @@ use crate::tiling::*;
 use crate::swizzle::*;
 use crate::contraction::*;
 use crate::slice::*;
+use crate::divide::*;
 use crate::proof::shape_lemmas::*;
 use crate::proof::tiling_lemmas::*;
 use verus_algebra::traits::*;
@@ -1708,6 +1709,88 @@ pub proof fn lemma_copy_pipeline_identity(
 }
 
 // ══════════════════════════════════════════════════════════════
+// Swizzle+Divide SMEM composition proofs (Feature 3 Round 7)
+// ══════════════════════════════════════════════════════════════
+
+/// Divided column-major SMEM tile has identity offset.
+pub proof fn lemma_smem_divide_identity(
+    smem_base: &LayoutSpec, thread_tile: &LayoutSpec, x: nat,
+)
+    requires
+        divide_admissible(smem_base, thread_tile),
+        smem_base.stride =~= column_major_strides(smem_base.shape),
+        thread_tile.stride =~= column_major_strides(thread_tile.shape),
+        x < shape_size(smem_base.shape),
+    ensures
+        logical_divide(smem_base, thread_tile).offset(x) == x as int,
+{
+    crate::proof::divide_lemmas::lemma_divide_offset_column_major(smem_base, thread_tile, x);
+}
+
+/// Swizzled divided SMEM: each element gets a unique swizzled address.
+/// Since divide has identity offset for column-major layouts,
+/// swizzle(divide.offset(x)) == swizzle(x), and swizzle is injective.
+pub proof fn lemma_smem_swizzle_divide_injective(
+    smem_base: &LayoutSpec, thread_tile: &LayoutSpec,
+    b_bits: nat, m_bits: nat, s_bits: nat,
+)
+    requires
+        divide_admissible(smem_base, thread_tile),
+        smem_base.stride =~= column_major_strides(smem_base.shape),
+        thread_tile.stride =~= column_major_strides(thread_tile.shape),
+        swizzle_admissible(b_bits, m_bits, s_bits),
+        shape_size(smem_base.shape) <= pow2(m_bits + s_bits + b_bits),
+    ensures
+        forall|i: nat, j: nat|
+            i < shape_size(smem_base.shape) && j < shape_size(smem_base.shape) && i != j
+            ==> swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(i) as nat, b_bits, m_bits, s_bits)
+                != swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(j) as nat, b_bits, m_bits, s_bits),
+{
+    let sz = shape_size(smem_base.shape);
+    // First establish identity offset for all elements
+    assert forall|x: nat| x < sz implies
+        #[trigger] logical_divide(smem_base, thread_tile).offset(x) == x as int
+    by {
+        lemma_smem_divide_identity(smem_base, thread_tile, x);
+    };
+
+    // Swizzle is injective on [0, 2^(m+s+b))
+    crate::proof::swizzle_lemmas::lemma_swizzle_bijection_on_domain(b_bits, m_bits, s_bits);
+
+    // Combine: distinct x,y → distinct swizzle(x), swizzle(y)
+    assert forall|i: nat, j: nat|
+        i < sz && j < sz && i != j
+    implies
+        swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(i) as nat, b_bits, m_bits, s_bits)
+        != swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(j) as nat, b_bits, m_bits, s_bits)
+    by {
+        assert(logical_divide(smem_base, thread_tile).offset(i) == i as int);
+        assert(logical_divide(smem_base, thread_tile).offset(j) == j as int);
+        // i, j < sz <= pow2(m+s+b), and i != j, so swizzle(i) != swizzle(j)
+        assert(i < pow2(m_bits + s_bits + b_bits));
+        assert(j < pow2(m_bits + s_bits + b_bits));
+    };
+}
+
+/// SM80 instantiation: SMEM tile with B=3,M=0,S=3 swizzle after divide is injective.
+pub proof fn lemma_sm80_smem_tile_swizzle_divide(
+    smem_base: &LayoutSpec, thread_tile: &LayoutSpec,
+)
+    requires
+        divide_admissible(smem_base, thread_tile),
+        smem_base.stride =~= column_major_strides(smem_base.shape),
+        thread_tile.stride =~= column_major_strides(thread_tile.shape),
+        shape_size(smem_base.shape) <= pow2(6),  // 2^(0+3+3) = 64 ... B+M+S bits
+    ensures
+        forall|i: nat, j: nat|
+            i < shape_size(smem_base.shape) && j < shape_size(smem_base.shape) && i != j
+            ==> swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(i) as nat, 3, 0, 3)
+                != swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(j) as nat, 3, 0, 3),
+{
+    lemma_smem_swizzle_divide_injective(smem_base, thread_tile, 3, 0, 3);
+}
+
+// ══════════════════════════════════════════════════════════════
 // E2E GEMM correctness proofs (Feature 5 Round 6)
 // ══════════════════════════════════════════════════════════════
 
@@ -1799,6 +1882,312 @@ pub proof fn lemma_gemm_full_correctness<R: Ring>(
     by {
         lemma_gemm_output_correct::<R>(a_val, b_val, i, j, k);
     };
+}
+
+// ══════════════════════════════════════════════════════════════
+// K-loop pipeline safety proofs (Feature 4 Round 7)
+// ══════════════════════════════════════════════════════════════
+
+/// K-loop base case: accumulator starts at zero ≡ sum of 0 tiles.
+pub proof fn lemma_k_loop_base<R: Ring>(
+    a_val: spec_fn(nat, nat) -> R,
+    b_val: spec_fn(nat, nat) -> R,
+    i: nat, j: nat, bk: nat, k_size: nat,
+)
+    requires bk > 0, k_size > 0,
+    ensures
+        k_loop_acc_invariant::<R>(a_val, b_val, i, j, R::zero(), 0, bk, k_size),
+{
+    // iteration=0 → k_end = min(0*bk, k_size) = 0
+    // acc ≡ tiled_mac(0, 0) ≡ zero
+    lemma_mac_empty::<R>(a_val, b_val, i, j, 0);
+    R::axiom_eqv_symmetric(
+        gemm_tiled_mac_value::<R>(a_val, b_val, i, j, 0, 0),
+        R::zero(),
+    );
+}
+
+/// K-loop iteration preserves accumulator invariant.
+/// After adding this tile's contribution, invariant holds for iteration+1.
+pub proof fn lemma_k_loop_step<R: Ring>(
+    a_val: spec_fn(nat, nat) -> R,
+    b_val: spec_fn(nat, nat) -> R,
+    i: nat, j: nat,
+    acc: R, iteration: nat, bk: nat, k_size: nat,
+)
+    requires
+        bk > 0,
+        k_size > 0,
+        iteration * bk < k_size,  // not past the end
+        k_loop_acc_invariant::<R>(a_val, b_val, i, j, acc, iteration, bk, k_size),
+    ensures ({
+        let k_start = iteration * bk;
+        let k_end = if (iteration + 1) * bk <= k_size { (iteration + 1) * bk } else { k_size };
+        let tile_mac = gemm_tiled_mac_value::<R>(a_val, b_val, i, j, k_start, k_end);
+        k_loop_acc_invariant::<R>(a_val, b_val, i, j, acc.add(tile_mac), iteration + 1, bk, k_size)
+    }),
+{
+    let k_start = iteration * bk;
+    let k_end = if (iteration + 1) * bk <= k_size { (iteration + 1) * bk } else { k_size };
+    let tile_mac = gemm_tiled_mac_value::<R>(a_val, b_val, i, j, k_start, k_end);
+
+    // Current invariant: acc ≡ tiled_mac(0, k_start)
+    // (since iteration * bk < k_size → k_end_for_iteration = iteration * bk = k_start)
+    assert(iteration * bk <= k_size) by (nonlinear_arith)
+        requires iteration * bk < k_size;
+    let prev_k_end = iteration * bk;
+    assert(prev_k_end == k_start);
+
+    // acc ≡ tiled_mac(0, k_start)
+    let prev_mac = gemm_tiled_mac_value::<R>(a_val, b_val, i, j, 0, k_start);
+
+    // k_start <= k_end: since k_start < k_size and k_end = min((iter+1)*bk, k_size) >= k_size or >= (iter+1)*bk > iter*bk = k_start
+    assert(k_start <= k_end) by (nonlinear_arith)
+        requires iteration * bk < k_size, bk > 0nat,
+            k_start == iteration * bk,
+            k_end == (if (iteration + 1) * bk <= k_size { (iteration + 1) * bk } else { k_size });
+
+    // Split: tiled_mac(0, k_end) ≡ tiled_mac(0, k_start) + tiled_mac(k_start, k_end)
+    lemma_mac_accumulate::<R>(a_val, b_val, i, j, 0, k_start, k_end);
+
+    // acc.add(tile_mac) ≡ prev_mac.add(tile_mac) ≡ tiled_mac(0, k_end)
+    // Step 1: acc.add(tile_mac) ≡ prev_mac.add(tile_mac) by congruence on acc ≡ prev_mac
+    R::axiom_eqv_reflexive(tile_mac);
+    verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence::<R>(
+        acc, prev_mac, tile_mac, tile_mac,
+    );
+    // acc.add(tile_mac) ≡ prev_mac.add(tile_mac)
+
+    // Step 2: prev_mac.add(tile_mac) ≡ tiled_mac(0, k_end) by symmetry of split
+    let full_mac = gemm_tiled_mac_value::<R>(a_val, b_val, i, j, 0, k_end);
+    R::axiom_eqv_symmetric(full_mac, prev_mac.add(tile_mac));
+
+    // Step 3: chain transitivity
+    R::axiom_eqv_transitive(acc.add(tile_mac), prev_mac.add(tile_mac), full_mac);
+
+    // Now we need to show this matches k_loop_acc_invariant for iteration+1
+    // k_end_for_iter+1 = if (iteration+1)*bk <= k_size { (iteration+1)*bk } else { k_size }
+    // = k_end by definition. So acc.add(tile_mac) ≡ tiled_mac(0, k_end) = tiled_mac(0, k_end_iter+1).
+}
+
+/// K-loop completion: after all tiles, acc ≡ full MAC.
+pub proof fn lemma_k_loop_complete<R: Ring>(
+    a_val: spec_fn(nat, nat) -> R,
+    b_val: spec_fn(nat, nat) -> R,
+    i: nat, j: nat,
+    acc: R, bk: nat, k_size: nat,
+)
+    requires
+        bk > 0, k_size > 0,
+        k_loop_acc_invariant::<R>(a_val, b_val, i, j, acc,
+            num_tiles_ceil(k_size, bk), bk, k_size),
+    ensures
+        acc.eqv(gemm_mac_value::<R>(a_val, b_val, i, j, k_size)),
+{
+    let n_tiles = num_tiles_ceil(k_size, bk);
+    // k_end for iteration=n_tiles: if n_tiles*bk <= k_size then n_tiles*bk else k_size
+    // n_tiles = ceil_div(k_size, bk) → n_tiles*bk >= k_size → k_end = k_size
+    assert(n_tiles * bk >= k_size) by {
+        crate::proof::predication_lemmas::lemma_ceil_div_mul_ge(k_size, bk);
+    };
+    // So acc ≡ tiled_mac(0, k_size)
+    let full_tiled = gemm_tiled_mac_value::<R>(a_val, b_val, i, j, 0, k_size);
+    // tiled_mac(0, k_size) ≡ mac_value(k_size) by definition (both are sum(f, 0, k_size))
+    R::axiom_eqv_reflexive(full_tiled);
+    // They're the same: gemm_mac_value = sum(f, 0, k) = gemm_tiled_mac_value(0, k)
+    R::axiom_eqv_transitive(acc, full_tiled, gemm_mac_value::<R>(a_val, b_val, i, j, k_size));
+}
+
+// ══════════════════════════════════════════════════════════════
+// Contraction instantiation proofs (Feature 2 Round 7)
+// ══════════════════════════════════════════════════════════════
+
+/// Matrix-vector contraction has valid mode sets for rank-2 A, rank-1 x.
+pub proof fn lemma_matvec_contraction_valid()
+    ensures contraction_mode_sets_valid(&matvec_as_contraction(), 2, 1),
+{
+    let spec = matvec_as_contraction();
+    assert(spec.contraction_modes_a[0] < 2);
+    assert(spec.contraction_modes_b[0] < 1);
+    assert(spec.free_modes_a[0] < 2);
+}
+
+/// Matrix-vector contraction shapes match when K dims agree.
+pub proof fn lemma_matvec_contraction_shapes_match(a_shape: Seq<nat>, x_shape: Seq<nat>)
+    requires
+        a_shape.len() == 2,
+        x_shape.len() == 1,
+        a_shape[1] == x_shape[0],
+    ensures
+        contraction_shapes_match(&matvec_as_contraction(), &a_shape, &x_shape),
+{
+    let spec = matvec_as_contraction();
+    assert(gather_shape(&a_shape, &spec.batch_modes_a) =~=
+           gather_shape(&x_shape, &spec.batch_modes_b));
+    assert(gather_shape(&a_shape, &spec.contraction_modes_a) =~=
+           gather_shape(&x_shape, &spec.contraction_modes_b));
+}
+
+/// Matrix-vector contraction admissibility.
+pub proof fn lemma_matvec_contraction_admissible(a_shape: Seq<nat>, x_shape: Seq<nat>)
+    requires
+        a_shape.len() == 2,
+        x_shape.len() == 1,
+        a_shape[1] == x_shape[0],
+    ensures
+        contraction_admissible(&matvec_as_contraction(), &a_shape, &x_shape),
+{
+    lemma_matvec_contraction_valid();
+    lemma_matvec_contraction_shapes_match(a_shape, x_shape);
+}
+
+/// Matrix-vector output shape = (m,).
+pub proof fn lemma_matvec_output_shape(a_shape: Seq<nat>, x_shape: Seq<nat>)
+    requires a_shape.len() == 2, x_shape.len() == 1,
+    ensures
+        contraction_output_shape(&matvec_as_contraction(), &a_shape, &x_shape)
+        =~= seq![a_shape[0]],
+{
+    let spec = matvec_as_contraction();
+    let batch = gather_shape(&a_shape, &spec.batch_modes_a);
+    let free_a = gather_shape(&a_shape, &spec.free_modes_a);
+    let free_b = gather_shape(&x_shape, &spec.free_modes_b);
+    assert(batch =~= Seq::<nat>::empty());
+    assert(free_a =~= seq![a_shape[0]]);
+    assert(free_b =~= Seq::<nat>::empty());
+    assert(batch.add(free_a).add(free_b) =~= seq![a_shape[0]]);
+}
+
+/// Matrix-vector reduction size = K (a_shape[1]).
+pub proof fn lemma_matvec_reduction_size(a_shape: Seq<nat>)
+    requires a_shape.len() == 2,
+    ensures contraction_reduction_size(&matvec_as_contraction(), &a_shape) == a_shape[1],
+{
+    let spec = matvec_as_contraction();
+    assert(spec.contraction_modes_a =~= seq![1nat]);
+    lemma_gathered_product_single(&a_shape, 1);
+}
+
+/// Outer product contraction has valid mode sets for rank-1 inputs.
+pub proof fn lemma_outer_product_contraction_valid()
+    ensures contraction_mode_sets_valid(&outer_product_as_contraction(), 1, 1),
+{
+    let spec = outer_product_as_contraction();
+    assert(spec.free_modes_a[0] < 1);
+    assert(spec.free_modes_b[0] < 1);
+}
+
+/// Outer product contraction shapes match (trivially — no contraction/batch modes).
+pub proof fn lemma_outer_product_contraction_shapes_match(u_shape: Seq<nat>, v_shape: Seq<nat>)
+    requires u_shape.len() == 1, v_shape.len() == 1,
+    ensures contraction_shapes_match(&outer_product_as_contraction(), &u_shape, &v_shape),
+{
+    let spec = outer_product_as_contraction();
+    assert(gather_shape(&u_shape, &spec.batch_modes_a) =~=
+           gather_shape(&v_shape, &spec.batch_modes_b));
+    assert(gather_shape(&u_shape, &spec.contraction_modes_a) =~=
+           gather_shape(&v_shape, &spec.contraction_modes_b));
+}
+
+/// Outer product contraction admissibility.
+pub proof fn lemma_outer_product_contraction_admissible(u_shape: Seq<nat>, v_shape: Seq<nat>)
+    requires u_shape.len() == 1, v_shape.len() == 1,
+    ensures contraction_admissible(&outer_product_as_contraction(), &u_shape, &v_shape),
+{
+    lemma_outer_product_contraction_valid();
+    lemma_outer_product_contraction_shapes_match(u_shape, v_shape);
+}
+
+/// Outer product output shape = (m, n).
+pub proof fn lemma_outer_product_output_shape(u_shape: Seq<nat>, v_shape: Seq<nat>)
+    requires u_shape.len() == 1, v_shape.len() == 1,
+    ensures
+        contraction_output_shape(&outer_product_as_contraction(), &u_shape, &v_shape)
+        =~= seq![u_shape[0], v_shape[0]],
+{
+    let spec = outer_product_as_contraction();
+    let batch = gather_shape(&u_shape, &spec.batch_modes_a);
+    let free_a = gather_shape(&u_shape, &spec.free_modes_a);
+    let free_b = gather_shape(&v_shape, &spec.free_modes_b);
+    assert(batch =~= Seq::<nat>::empty());
+    assert(free_a =~= seq![u_shape[0]]);
+    assert(free_b =~= seq![v_shape[0]]);
+    assert(batch.add(free_a).add(free_b) =~= seq![u_shape[0], v_shape[0]]);
+}
+
+/// Outer product reduction size = 1 (no contraction modes).
+pub proof fn lemma_outer_product_reduction_size(u_shape: Seq<nat>)
+    requires u_shape.len() == 1,
+    ensures contraction_reduction_size(&outer_product_as_contraction(), &u_shape) == 1nat,
+{
+    let spec = outer_product_as_contraction();
+    assert(spec.contraction_modes_a =~= Seq::<nat>::empty());
+    lemma_gathered_product_empty(&u_shape);
+}
+
+/// Dot product contraction has valid mode sets for rank-1 inputs.
+pub proof fn lemma_dot_product_contraction_valid()
+    ensures contraction_mode_sets_valid(&dot_product_as_contraction(), 1, 1),
+{
+    let spec = dot_product_as_contraction();
+    assert(spec.contraction_modes_a[0] < 1);
+    assert(spec.contraction_modes_b[0] < 1);
+}
+
+/// Dot product contraction shapes match when K dims agree.
+pub proof fn lemma_dot_product_contraction_shapes_match(a_shape: Seq<nat>, b_shape: Seq<nat>)
+    requires
+        a_shape.len() == 1,
+        b_shape.len() == 1,
+        a_shape[0] == b_shape[0],
+    ensures
+        contraction_shapes_match(&dot_product_as_contraction(), &a_shape, &b_shape),
+{
+    let spec = dot_product_as_contraction();
+    assert(gather_shape(&a_shape, &spec.batch_modes_a) =~=
+           gather_shape(&b_shape, &spec.batch_modes_b));
+    assert(gather_shape(&a_shape, &spec.contraction_modes_a) =~=
+           gather_shape(&b_shape, &spec.contraction_modes_b));
+}
+
+/// Dot product contraction admissibility.
+pub proof fn lemma_dot_product_contraction_admissible(a_shape: Seq<nat>, b_shape: Seq<nat>)
+    requires
+        a_shape.len() == 1,
+        b_shape.len() == 1,
+        a_shape[0] == b_shape[0],
+    ensures
+        contraction_admissible(&dot_product_as_contraction(), &a_shape, &b_shape),
+{
+    lemma_dot_product_contraction_valid();
+    lemma_dot_product_contraction_shapes_match(a_shape, b_shape);
+}
+
+/// Dot product output shape = () (scalar — empty shape).
+pub proof fn lemma_dot_product_output_shape(a_shape: Seq<nat>, b_shape: Seq<nat>)
+    requires a_shape.len() == 1, b_shape.len() == 1,
+    ensures
+        contraction_output_shape(&dot_product_as_contraction(), &a_shape, &b_shape)
+        =~= Seq::<nat>::empty(),
+{
+    let spec = dot_product_as_contraction();
+    let batch = gather_shape(&a_shape, &spec.batch_modes_a);
+    let free_a = gather_shape(&a_shape, &spec.free_modes_a);
+    let free_b = gather_shape(&b_shape, &spec.free_modes_b);
+    assert(batch =~= Seq::<nat>::empty());
+    assert(free_a =~= Seq::<nat>::empty());
+    assert(free_b =~= Seq::<nat>::empty());
+    assert(batch.add(free_a).add(free_b) =~= Seq::<nat>::empty());
+}
+
+/// Dot product reduction size = K (a_shape[0]).
+pub proof fn lemma_dot_product_reduction_size(a_shape: Seq<nat>)
+    requires a_shape.len() == 1,
+    ensures contraction_reduction_size(&dot_product_as_contraction(), &a_shape) == a_shape[0],
+{
+    let spec = dot_product_as_contraction();
+    assert(spec.contraction_modes_a =~= seq![0nat]);
+    lemma_gathered_product_single(&a_shape, 0);
 }
 
 } // verus!

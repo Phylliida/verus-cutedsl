@@ -397,6 +397,32 @@ pub open spec fn gemm_predicated_mac_value<R: Ring>(
 }
 
 // ══════════════════════════════════════════════════════════════
+// K-loop iteration specs (Feature 4 Round 7)
+// ══════════════════════════════════════════════════════════════
+
+/// K-loop iteration is valid: iteration is within tile count.
+pub open spec fn k_loop_iteration_valid(
+    iteration: nat, k_tiles: nat, bk: nat, k_size: nat,
+) -> bool {
+    &&& iteration < k_tiles
+    &&& bk > 0
+    &&& k_size > 0
+    &&& k_tiles == num_tiles_ceil(k_size, bk)
+}
+
+/// K-loop accumulator invariant: after t iterations, acc ≡ tiled_mac(0, k_end_t)
+/// where k_end_t = min(t * bk, k_size).
+pub open spec fn k_loop_acc_invariant<R: Ring>(
+    a_val: spec_fn(nat, nat) -> R,
+    b_val: spec_fn(nat, nat) -> R,
+    i: nat, j: nat,
+    acc: R, iteration: nat, bk: nat, k_size: nat,
+) -> bool {
+    let k_end = if iteration * bk <= k_size { iteration * bk } else { k_size };
+    acc.eqv(gemm_tiled_mac_value::<R>(a_val, b_val, i, j, 0, k_end))
+}
+
+// ══════════════════════════════════════════════════════════════
 // Epilogue store specs
 // ══════════════════════════════════════════════════════════════
 
