@@ -460,6 +460,22 @@ pub open spec fn gemm_product_bounded(
     &&& (av as int) * (bv as int) <= bound
 }
 
+/// Sum of i64 products accessed through offset sequences.
+pub open spec fn sum_int_products(
+    a_data: Seq<i64>, b_data: Seq<i64>,
+    a_offs: Seq<i64>, b_offs: Seq<i64>,
+    count: nat,
+) -> int
+    decreases count,
+{
+    if count == 0 { 0 }
+    else {
+        sum_int_products(a_data, b_data, a_offs, b_offs, (count - 1) as nat)
+        + (a_data[a_offs[(count - 1) as int] as int] as int)
+          * (b_data[b_offs[(count - 1) as int] as int] as int)
+    }
+}
+
 /// Inner tile MAC: compute sum_{k in 0..count} a_data[a_offs[k]] * b_data[b_offs[k]].
 /// Returns the i64 partial sum for one tile.
 pub fn inner_tile_mac_i64(
@@ -492,6 +508,7 @@ pub fn inner_tile_mac_i64(
     ensures
         acc as int >= -(count as int) * acc_bound,
         acc as int <= (count as int) * acc_bound,
+        acc as int == sum_int_products(a_data@, b_data@, a_offsets@, b_offsets@, count as nat),
 {
     let mut acc: i64 = 0;
     let mut idx: u64 = 0;
@@ -512,6 +529,8 @@ pub fn inner_tile_mac_i64(
             // Partial accumulator is bounded
             acc as int >= -(idx as int) * acc_bound,
             acc as int <= (idx as int) * acc_bound,
+            // Functional correctness
+            acc as int == sum_int_products(a_data@, b_data@, a_offsets@, b_offsets@, idx as nat),
             acc_bound >= 0,
             acc_bound <= i64::MAX as int,
             -acc_bound >= i64::MIN as int,
