@@ -509,4 +509,47 @@ pub open spec fn epilogue_partition(
     local_partition(c_tile, thread_layout, 0)
 }
 
+// ══════════════════════════════════════════════════════════════
+// SM90 WGMMA Atom Instances (m64n16k16)
+// ══════════════════════════════════════════════════════════════
+
+/// SM90 m64n16k16 A-fragment thread layout: 128 threads (warpgroup) in 4×32 grid.
+pub open spec fn sm90_m64n16k16_thr_a() -> LayoutSpec {
+    LayoutSpec { shape: seq![4nat, 32nat], stride: seq![1int, 4int] }
+}
+
+/// SM90 m64n16k16 A-fragment value layout: 8 values per thread in 2×4 grid.
+pub open spec fn sm90_m64n16k16_val_a() -> LayoutSpec {
+    LayoutSpec { shape: seq![2nat, 4nat], stride: seq![1int, 16int] }
+}
+
+/// SM90 m64n16k16 D-fragment (accumulator) thread layout: 128 threads in 4×32 grid.
+pub open spec fn sm90_m64n16k16_thr_d() -> LayoutSpec {
+    LayoutSpec { shape: seq![4nat, 32nat], stride: seq![1int, 4int] }
+}
+
+/// SM90 m64n16k16 D-fragment (accumulator) value layout: 8 values per thread in 2×4 grid.
+pub open spec fn sm90_m64n16k16_val_d() -> LayoutSpec {
+    LayoutSpec { shape: seq![2nat, 4nat], stride: seq![1int, 16int] }
+}
+
+/// SM90 WGMMA uses shared memory for B operand (no register decomposition).
+pub open spec fn sm90_wgmma_b_from_smem() -> bool { true }
+
+/// SM90 warpgroup size: 128 threads = 4 warps.
+pub open spec fn sm90_warpgroup_size() -> nat { 128 }
+
+// ══════════════════════════════════════════════════════════════
+// SM90 MMA Atom Cosize specs
+// ══════════════════════════════════════════════════════════════
+
+/// SM90 m64n16k16 thr cosize = 128. (4-1)*1 + (32-1)*4 + 1 = 3+124+1.
+pub open spec fn sm90_m64n16k16_thr_cosize() -> nat { 128 }
+
+/// SM90 m64n16k16 val_a cosize = 50. (2-1)*1 + (4-1)*16 + 1 = 1+48+1.
+pub open spec fn sm90_m64n16k16_val_a_cosize() -> nat { 50 }
+
+/// SM90 m64n16k16 val_d cosize = 50. Same layout as val_a.
+pub open spec fn sm90_m64n16k16_val_d_cosize() -> nat { 50 }
+
 } // verus!

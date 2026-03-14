@@ -1381,7 +1381,7 @@ pub proof fn lemma_gemm_cta_count(m_size: nat, n_size: nat, bm: nat, bn: nat)
 // ══════════════════════════════════════════════════════════════
 
 /// Helper: shape_size of a 2-element shape.
-proof fn lemma_shape_size_2(a: nat, b: nat)
+pub proof fn lemma_shape_size_2(a: nat, b: nat)
     requires a > 0, b > 0,
     ensures shape_size(seq![a, b]) == a * b,
 {
@@ -3065,6 +3065,163 @@ pub proof fn lemma_warp_partition_injective_from_predicated(
         // z2 is bijective → injective: distinct inputs → distinct offsets
         assert(z2.offset(i) != z2.offset(j));
     };
+}
+
+// ══════════════════════════════════════════════════════════════
+// SM90 WGMMA Atom Proofs (m64n16k16)
+// ══════════════════════════════════════════════════════════════
+
+/// SM90 m64n16k16 A-fragment is valid MMA atom.
+pub proof fn lemma_sm90_m64n16k16_a_valid()
+    ensures
+        mma_atom_admissible(&sm90_m64n16k16_thr_a(), &sm90_m64n16k16_val_a()),
+        sm90_m64n16k16_thr_a().size() == 128,
+        sm90_m64n16k16_val_a().size() == 8,
+{
+    let thr = sm90_m64n16k16_thr_a();
+    let val = sm90_m64n16k16_val_a();
+
+    assert(thr.valid());
+    assert(val.valid());
+    assert(thr.non_negative_strides());
+    assert(val.non_negative_strides());
+    assert(thr.shape.len() > 0);
+
+    // Sizes
+    lemma_shape_size_2(4, 32);
+    assert(thr.size() == 128);
+    lemma_shape_size_2(2, 4);
+    assert(val.size() == 8);
+
+    // thr injectivity: strides [1, 4] with shape [4, 32]
+    // This is column-major: stride = prefix_products(shape) = [1, 4]
+    assert(thr.is_injective()) by {
+        assert forall|i: nat, j: nat|
+            i < thr.size() && j < thr.size() && i != j
+        implies thr.offset(i) != thr.offset(j) by {
+            let ci = delinearize(i, thr.shape);
+            let cj = delinearize(j, thr.shape);
+            lemma_delinearize_bounds(i, thr.shape);
+            lemma_delinearize_bounds(j, thr.shape);
+            lemma_delinearize_len(i, thr.shape);
+            lemma_delinearize_len(j, thr.shape);
+
+            if ci[0] == cj[0] && ci[1] == cj[1] {
+                assert(ci =~= cj);
+                lemma_delinearize_roundtrip(i, thr.shape);
+                lemma_delinearize_roundtrip(j, thr.shape);
+                assert(false);
+            }
+
+            lemma_offset_rank2(&thr, i);
+            lemma_offset_rank2(&thr, j);
+            let oi = (ci[0] as int) * 1 + (ci[1] as int) * 4;
+            let oj = (cj[0] as int) * 1 + (cj[1] as int) * 4;
+            assert(thr.offset(i) == oi);
+            assert(thr.offset(j) == oj);
+
+            assert(oi != oj) by (nonlinear_arith)
+                requires
+                    ci[0] < 4, cj[0] < 4, ci[1] < 32, cj[1] < 32,
+                    ci[0] != cj[0] || ci[1] != cj[1],
+                    oi == (ci[0] as int) * 1 + (ci[1] as int) * 4,
+                    oj == (cj[0] as int) * 1 + (cj[1] as int) * 4;
+        };
+    };
+
+    // val injectivity: strides [1, 16] with shape [2, 4]
+    // max c0*1 = 1 < 16 = min nonzero c1*16
+    assert(val.is_injective()) by {
+        assert forall|i: nat, j: nat|
+            i < val.size() && j < val.size() && i != j
+        implies val.offset(i) != val.offset(j) by {
+            let ci = delinearize(i, val.shape);
+            let cj = delinearize(j, val.shape);
+            lemma_delinearize_bounds(i, val.shape);
+            lemma_delinearize_bounds(j, val.shape);
+            lemma_delinearize_len(i, val.shape);
+            lemma_delinearize_len(j, val.shape);
+
+            if ci[0] == cj[0] && ci[1] == cj[1] {
+                assert(ci =~= cj);
+                lemma_delinearize_roundtrip(i, val.shape);
+                lemma_delinearize_roundtrip(j, val.shape);
+                assert(false);
+            }
+
+            lemma_offset_rank2(&val, i);
+            lemma_offset_rank2(&val, j);
+            let oi = (ci[0] as int) * 1 + (ci[1] as int) * 16;
+            let oj = (cj[0] as int) * 1 + (cj[1] as int) * 16;
+            assert(val.offset(i) == oi);
+            assert(val.offset(j) == oj);
+
+            assert(oi != oj) by (nonlinear_arith)
+                requires
+                    ci[0] < 2, cj[0] < 2, ci[1] < 4, cj[1] < 4,
+                    ci[0] != cj[0] || ci[1] != cj[1],
+                    oi == (ci[0] as int) * 1 + (ci[1] as int) * 16,
+                    oj == (cj[0] as int) * 1 + (cj[1] as int) * 16;
+        };
+    };
+}
+
+/// SM90 m64n16k16 D-fragment is valid MMA atom.
+pub proof fn lemma_sm90_m64n16k16_d_valid()
+    ensures
+        mma_atom_admissible(&sm90_m64n16k16_thr_d(), &sm90_m64n16k16_val_d()),
+        sm90_m64n16k16_thr_d().size() == 128,
+        sm90_m64n16k16_val_d().size() == 8,
+{
+    // D layout is identical to A layout
+    lemma_sm90_m64n16k16_a_valid();
+}
+
+/// SM90 m64n16k16 sizes: A=1024, D=1024.
+pub proof fn lemma_sm90_m64n16k16_sizes()
+    ensures
+        sm90_m64n16k16_thr_a().size() * sm90_m64n16k16_val_a().size() == 1024,
+        sm90_m64n16k16_thr_d().size() * sm90_m64n16k16_val_d().size() == 1024,
+{
+    lemma_sm90_m64n16k16_a_valid();
+    // 128 * 8 = 1024
+}
+
+/// SM90 thread layout size = 128 (warpgroup).
+pub proof fn lemma_sm90_m64n16k16_thr_size()
+    ensures
+        sm90_m64n16k16_thr_a().size() == 128,
+        sm90_m64n16k16_thr_d().size() == 128,
+{
+    lemma_sm90_m64n16k16_a_valid();
+}
+
+/// SM90 val_a cosize = 50: (2-1)*1 + (4-1)*16 + 1 = 50.
+pub proof fn lemma_sm90_m64n16k16_val_a_cosize()
+    ensures sm90_m64n16k16_val_a().cosize_nonneg() == 50,
+{
+    let val = sm90_m64n16k16_val_a();
+    lemma_cosize_rank2(val);
+    assert(val.shape[0] == 2nat);
+    assert(val.shape[1] == 4nat);
+    assert(val.stride[0] == 1int);
+    assert(val.stride[1] == 16int);
+    assert(val.stride[0] as nat == 1nat);
+    assert(val.stride[1] as nat == 16nat);
+}
+
+/// SM90 thr cosize = 128: (4-1)*1 + (32-1)*4 + 1 = 128.
+pub proof fn lemma_sm90_m64n16k16_thr_cosize()
+    ensures sm90_m64n16k16_thr_a().cosize_nonneg() == 128,
+{
+    let thr = sm90_m64n16k16_thr_a();
+    lemma_cosize_rank2(thr);
+    assert(thr.shape[0] == 4nat);
+    assert(thr.shape[1] == 32nat);
+    assert(thr.stride[0] == 1int);
+    assert(thr.stride[1] == 4int);
+    assert(thr.stride[0] as nat == 1nat);
+    assert(thr.stride[1] as nat == 4nat);
 }
 
 } // verus!

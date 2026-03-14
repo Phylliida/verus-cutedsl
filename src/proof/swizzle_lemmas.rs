@@ -987,4 +987,68 @@ pub proof fn lemma_swizzled_layout_fully_distinct(
     lemma_swizzled_offset_injective(layout, b, m, s);
 }
 
+// ══════════════════════════════════════════════════════════════
+// Swizzle bijectivity proofs
+// ══════════════════════════════════════════════════════════════
+
+/// Swizzle is a bijection on [0, 2^(m+s+b)): injective (from involution) + surjective.
+pub proof fn lemma_swizzle_bijection_on_domain(b: nat, m: nat, s: nat)
+    requires swizzle_admissible(b, m, s),
+    ensures
+        // Injective
+        forall|x: nat, y: nat| x < pow2(m + s + b) && y < pow2(m + s + b) && x != y
+            ==> swizzle(x, b, m, s) != swizzle(y, b, m, s),
+        // Surjective: every k in [0, 2^(m+s+b)) has a pre-image
+        forall|k: nat| k < pow2(m + s + b) ==> ({
+            let w = #[trigger] swizzle(k, b, m, s);
+            w < pow2(m + s + b) && swizzle(w, b, m, s) == k
+        }),
+{
+    // Injectivity from involution
+    lemma_swizzle_injective_on_domain(b, m, s, pow2(m + s + b));
+
+    // Surjectivity: witness is swizzle(k) itself (involution)
+    assert forall|k: nat| k < pow2(m + s + b) implies ({
+        let w = #[trigger] swizzle(k, b, m, s);
+        w < pow2(m + s + b) && swizzle(w, b, m, s) == k
+    }) by {
+        lemma_swizzle_surjective_bounded(k, b, m, s);
+    };
+}
+
+/// Swizzled bijective layout remains injective on swizzled image.
+pub proof fn lemma_swizzled_bijective_layout(
+    layout: &LayoutSpec, b: nat, m: nat, s: nat, target: nat,
+)
+    requires
+        swizzle_layout_admissible(layout, b, m, s),
+        layout.is_bijective_upto(target),
+        target <= pow2(m + s + b),
+    ensures
+        forall|i: nat, j: nat| i < layout.size() && j < layout.size() && i != j
+            ==> swizzled_offset(layout, b, m, s, i) != swizzled_offset(layout, b, m, s, j),
+{
+    // Direct from lemma_swizzled_offset_injective
+    lemma_swizzled_offset_injective(layout, b, m, s);
+}
+
+/// SM80 GEMM swizzle (B=3, M=0, S=3) instantiation: injective layout
+/// has no bank conflicts after swizzling.
+pub proof fn lemma_sm80_smem_swizzle_injective(layout: &LayoutSpec, size: nat)
+    requires
+        swizzle_layout_admissible(layout, 3, 0, 3),
+        layout.is_injective(),
+        size <= layout.size(),
+    ensures
+        forall|i: nat, j: nat| i < size && j < size && i != j
+            ==> swizzled_offset(layout, 3, 0, 3, i) != swizzled_offset(layout, 3, 0, 3, j),
+{
+    lemma_swizzled_offset_injective(layout, 3, 0, 3);
+    assert forall|i: nat, j: nat| i < size && j < size && i != j implies
+        swizzled_offset(layout, 3, 0, 3, i) != swizzled_offset(layout, 3, 0, 3, j)
+    by {
+        assert(i < layout.size() && j < layout.size());
+    };
+}
+
 } // verus!
