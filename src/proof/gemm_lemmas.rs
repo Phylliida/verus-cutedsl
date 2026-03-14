@@ -2523,4 +2523,54 @@ pub proof fn lemma_gemm_ring_bridge<R: Ring>(
     // sum(f_mac) == gemm_mac_value(a_val, b_val, i, j, k_size) by definition
 }
 
+// ══════════════════════════════════════════════════════════════
+// Staged GEMM: shared-memory MAC equals direct MAC
+// ══════════════════════════════════════════════════════════════
+
+/// staged_int_mac over smem buffers equals gemm_int_mac_partial when smem data matches global data.
+pub proof fn lemma_staged_mac_equals_direct(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    a_data: Seq<i64>, b_data: Seq<i64>,
+    smem_a: Seq<i64>, smem_b: Seq<i64>,
+    gi: nat, gj: nat, ei: nat, ej: nat,
+    k_start: nat, k_end: nat, stride_a: nat, stride_b: nat,
+)
+    requires
+        k_start <= k_end,
+        // smem_a row ei matches global A row gi for cols [k_start, k_end)
+        forall|c: nat| c < k_end - k_start ==>
+            #[trigger] smem_a[(ei * stride_a + c) as int]
+            == a_data[gemm_a_offset(a_layout, gi, k_start + c) as int],
+        // smem_b col ej matches global B col gj for rows [k_start, k_end)
+        forall|c: nat| c < k_end - k_start ==>
+            #[trigger] smem_b[(c * stride_b + ej) as int]
+            == b_data[gemm_b_offset(b_layout, k_start + c, gj) as int],
+    ensures
+        staged_int_mac(smem_a, smem_b, ei, ej, stride_a, stride_b, (k_end - k_start) as nat)
+            == gemm_int_mac_partial(a_layout, b_layout, a_data, b_data, gi, gj, k_start, k_end),
+    decreases k_end - k_start,
+{
+    let count = (k_end - k_start) as nat;
+    if k_start >= k_end {
+        // Both sides are 0
+    } else {
+        // Right-peel: both sides peel the last element (index count-1 / k_end-1)
+        let last_c = (count - 1) as nat;
+        let last_k = (k_end - 1) as nat;
+
+        // Inductive hypothesis: staged_int_mac(..., count-1) == partial(k_start, k_end-1)
+        lemma_staged_mac_equals_direct(
+            a_layout, b_layout, a_data, b_data, smem_a, smem_b,
+            gi, gj, ei, ej, k_start, last_k, stride_a, stride_b,
+        );
+
+        // Last products match: smem_a[ei*stride_a + last_c] == a_data[A_off(gi, last_k)]
+        assert(smem_a[(ei * stride_a + last_c) as int]
+            == a_data[gemm_a_offset(a_layout, gi, last_k) as int]);
+        assert(smem_b[(last_c * stride_b + ej) as int]
+            == b_data[gemm_b_offset(b_layout, last_k, gj) as int]);
+        // Both sides = recursive part + last product, QED
+    }
+}
+
 } // verus!
