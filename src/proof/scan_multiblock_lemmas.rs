@@ -20,7 +20,7 @@ use crate::scan::*;
 use crate::scan_multiblock::*;
 use crate::swizzle::pow2;
 use crate::proof::scan_lemmas::*;
-use crate::runtime::scan::{partial_sum, all_partial_sums_bounded};
+// partial_sum and all_partial_sums_bounded now come from crate::scan::*
 
 verus! {
 

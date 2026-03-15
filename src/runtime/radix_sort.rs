@@ -17,6 +17,7 @@ use crate::proof::scan_multiblock_lemmas::{
 use crate::proof::radix_sort_lemmas::*;
 use crate::proof::swizzle_lemmas::{lemma_pow2_positive, lemma_pow2_monotone};
 use crate::proof::integer_helpers::*;
+use crate::proof::permutation_lemmas::lemma_finite_pigeonhole;
 use crate::runtime::scan::*;
 
 verus! {
@@ -443,10 +444,20 @@ proof fn lemma_radix_scatter_surjective(data: Seq<nat>, pos: nat, dest: int)
     ensures
         exists|j: nat| j < data.len() && radix_scatter_dest(data, pos, j) as int == dest,
 {
-    // Injective function from [0,n) to [0,n) is surjective (finite pigeonhole).
-    if !exists|j: nat| j < data.len() && radix_scatter_dest(data, pos, j) as int == dest {
-        assume(false); // proof debt: finite pigeonhole for injective [0,n)->[0,n)
-    }
+    let perm = radix_scatter_perm(data, pos);
+    // perm maps into [0, n)
+    assert forall|i: nat| i < perm.len() implies #[trigger] perm[i as int] < perm.len() by {
+        lemma_radix_scatter_in_bounds(data, pos, i);
+    };
+    // perm is injective
+    assert forall|i: nat, j: nat| i < perm.len() && j < perm.len() && i != j
+        implies perm[i as int] != perm[j as int]
+    by {
+        lemma_radix_scatter_injective(data, pos, i, j);
+    };
+    lemma_finite_pigeonhole(perm, dest as nat);
+    let j = choose|j: nat| j < perm.len() && perm[j as int] == dest as nat;
+    assert(radix_scatter_dest(data, pos, j) as int == dest);
 }
 
 /// Full radix sort: process bits 0 to num_bits-1.

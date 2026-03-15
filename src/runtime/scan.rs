@@ -13,18 +13,6 @@ use crate::proof::scan_lemmas::*;
 
 verus! {
 
-/// Partial sum of i64 data interpreted as int.
-pub open spec fn partial_sum(data: Seq<i64>, lo: int, hi: int) -> int {
-    sum::<int>(|j: int| data[j] as int, lo, hi)
-}
-
-/// All partial sums of data fit in i64.
-pub open spec fn all_partial_sums_bounded(data: Seq<i64>) -> bool {
-    forall|lo: int, hi: int| 0 <= lo <= hi <= data.len() ==>
-        i64::MIN as int <= #[trigger] partial_sum(data, lo, hi)
-        && partial_sum(data, lo, hi) <= i64::MAX as int
-}
-
 /// Hillis-Steele element value: what element i should hold after `level` levels.
 /// This is sum(f, max(0, i+1-pow2(level)), i+1).
 pub open spec fn hs_value(data: Seq<i64>, i: int, level: nat) -> int {

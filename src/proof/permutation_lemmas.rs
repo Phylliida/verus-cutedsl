@@ -235,4 +235,119 @@ pub proof fn lemma_compose_permutations_valid(p1: Seq<nat>, p2: Seq<nat>, n: nat
     };
 }
 
+// ══════════════════════════════════════════════════════════════
+// Finite pigeonhole principle
+// ══════════════════════════════════════════════════════════════
+
+/// Injective function [0,n) → [0,n) is surjective.
+/// Proof: induction on n. Drop last element, compress codomain, apply IH.
+pub proof fn lemma_finite_pigeonhole(perm: Seq<nat>, target: nat)
+    requires
+        forall|i: nat| i < perm.len() ==> #[trigger] perm[i as int] < perm.len(),
+        forall|i: nat, j: nat| i < perm.len() && j < perm.len() && i != j
+            ==> perm[i as int] != perm[j as int],
+        target < perm.len(),
+    ensures
+        exists|j: nat| j < perm.len() && perm[j as int] == target,
+    decreases perm.len(),
+{
+    let n = perm.len();
+    if n == 0 {
+        return;
+    }
+    let last = perm[(n - 1) as int];
+    if last == target {
+        let witness: nat = (n - 1) as nat;
+        assert(witness < perm.len() && perm[witness as int] == target);
+        return;
+    }
+    // Build compressed permutation g: [0,n-1) → [0,n-1)
+    // Removes `last` from the codomain by shifting values above it down by 1.
+    let g = Seq::new((n - 1) as nat, |i: int|
+        if perm[i] < last { perm[i] } else { (perm[i] - 1) as nat }
+    );
+    let target_c: nat = if target < last { target } else { (target - 1) as nat };
+
+    // g maps into [0, n-1)
+    assert forall|i: nat| i < g.len() implies #[trigger] g[i as int] < g.len() by {
+        assert(perm[i as int] < n);
+        // perm[i] != last since i != n-1 and perm is injective
+        assert(i != (n - 1) as nat);
+        assert(perm[i as int] != perm[(n - 1) as int]);
+        if perm[i as int] < last {
+            // g[i] = perm[i] < last ≤ n-1
+        } else {
+            // perm[i] > last (since != last), g[i] = perm[i]-1 ≤ n-2 < n-1
+            assert(perm[i as int] > 0nat);
+        }
+    };
+
+    // g is injective
+    assert forall|i: nat, j: nat|
+        i < g.len() && j < g.len() && i != j
+        implies g[i as int] != g[j as int]
+    by {
+        assert(perm[i as int] != perm[j as int]);
+        assert(i != (n - 1) as nat);
+        assert(j != (n - 1) as nat);
+        assert(perm[i as int] != last);
+        assert(perm[j as int] != last);
+
+        if perm[i as int] < last && perm[j as int] < last {
+            // g[i] = perm[i] != perm[j] = g[j]
+        } else if perm[i as int] > last && perm[j as int] > last {
+            // g[i] = perm[i]-1 != perm[j]-1 = g[j]
+        } else if perm[i as int] < last && perm[j as int] > last {
+            // g[i] = perm[i] ≤ last-1, g[j] = perm[j]-1 ≥ last
+            assert(perm[i as int] <= (last - 1) as nat);
+            assert(perm[j as int] >= last + 1);
+            assert(g[j as int] >= last);
+        } else {
+            // perm[i] > last, perm[j] < last
+            assert(perm[i as int] >= last + 1);
+            assert(g[i as int] >= last);
+            assert(perm[j as int] <= (last - 1) as nat);
+        }
+    };
+
+    // target_c < n-1
+    if target < last {
+    } else {
+        assert(target > last);
+        assert(target >= 1nat);
+    }
+
+    // Apply IH
+    lemma_finite_pigeonhole(g, target_c);
+    let j = choose|j: nat| j < g.len() && g[j as int] == target_c;
+
+    // Reconstruct: perm[j] == target
+    assert(j < (n - 1) as nat);
+    if perm[j as int] < last {
+        // g[j] = perm[j] = target_c
+        if target < last {
+            // target_c = target, so perm[j] = target
+        } else {
+            // target > last, target_c = target-1, perm[j] = target-1
+            // But perm[j] < last < target, so perm[j] < target-1... contradiction
+            // perm[j] = target-1 >= last (since target > last) but perm[j] < last
+            assert(false);
+        }
+    } else {
+        // perm[j] >= last, and != last (since j < n-1), so perm[j] > last
+        // g[j] = perm[j]-1 = target_c
+        assert(perm[j as int] != last);
+        assert(perm[j as int] > last);
+        if target > last {
+            // target_c = target-1, perm[j]-1 = target-1, so perm[j] = target
+        } else {
+            // target < last, target_c = target, perm[j]-1 = target
+            // perm[j] = target+1 ≤ last (since target < last), but perm[j] > last
+            assert(false);
+        }
+    }
+    assert(perm[j as int] == target);
+    assert(j < perm.len() && perm[j as int] == target);
+}
+
 } // verus!
