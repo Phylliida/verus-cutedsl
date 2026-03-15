@@ -224,4 +224,27 @@ pub proof fn lemma_log2_ceil_upper_bound(n: nat, k: nat)
     }
 }
 
+/// pow2(log2_ceil(n)) == n when n is a power of 2.
+pub proof fn lemma_pow2_log2_ceil_exact(n: nat)
+    requires n > 0, is_power_of_2(n),
+    ensures pow2(log2_ceil(n)) == n,
+{
+    let k = choose|k: nat| pow2(k) == n;
+    lemma_log2_ceil_upper_bound(n, k);
+    lemma_log2_ceil_pow2(n);
+    let a = log2_ceil(n);
+    if a < k {
+        crate::proof::swizzle_lemmas::lemma_pow2_monotone((a + 1) as nat, k);
+        crate::proof::swizzle_lemmas::lemma_pow2_positive(a);
+        assert(pow2((a + 1) as nat) == 2 * pow2(a));
+        assert(false) by (nonlinear_arith)
+            requires
+                pow2((a + 1) as nat) as int <= pow2(k) as int,
+                pow2(a) as int >= n as int,
+                pow2((a + 1) as nat) as int == 2 * pow2(a) as int,
+                pow2(k) == n,
+                n > 0nat;
+    }
+}
+
 } // verus!

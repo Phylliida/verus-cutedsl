@@ -696,7 +696,7 @@ proof fn lemma_extraction_invariant_high(x: nat, mask: nat, n: nat, b: nat)
 
 /// If x % pow2(a) == 0 and b <= a, then x % pow2(b) == 0.
 /// (pow2(a) is a multiple of pow2(b) when a >= b)
-proof fn lemma_mod_pow2_weaken(x: nat, a: nat, b: nat)
+pub proof fn lemma_mod_pow2_weaken(x: nat, a: nat, b: nat)
     requires
         x % pow2(a) == 0,
         b <= a,
@@ -738,7 +738,7 @@ proof fn lemma_shl_mod_zero(e: nat, m: nat)
 }
 
 /// pow2(a) * pow2(b) == pow2(a + b).
-proof fn lemma_pow2_mul(a: nat, b: nat)
+pub proof fn lemma_pow2_mul(a: nat, b: nat)
     ensures pow2(a) * pow2(b) == pow2(a + b),
     decreases a,
 {

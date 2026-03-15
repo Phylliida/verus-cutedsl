@@ -53,6 +53,9 @@ pub mod scan;
 pub mod scan_tree;
 
 #[cfg(verus_keep_ghost)]
+pub mod scan_blelloch;
+
+#[cfg(verus_keep_ghost)]
 pub mod proof;
 
 #[cfg(verus_keep_ghost)]
