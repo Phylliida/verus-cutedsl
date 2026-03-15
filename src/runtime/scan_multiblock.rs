@@ -7,6 +7,7 @@ use crate::scan_multiblock::*;
 use crate::swizzle::pow2;
 use crate::proof::scan_lemmas::*;
 use crate::proof::scan_multiblock_lemmas::*;
+use crate::proof::swizzle_lemmas::{lemma_pow2_positive, lemma_pow2_monotone};
 use crate::runtime::scan::*;
 
 verus! {
@@ -90,6 +91,56 @@ proof fn lemma_inclusive_scan_subrange(
 }
 
 // ============================================================
+// Padding helpers for non-power-of-2 block counts
+// ============================================================
+
+/// Partial sum of all-zero region is zero.
+proof fn lemma_zero_partial_sum(data: Seq<i64>, lo: int, hi: int, nblocks: int)
+    requires
+        0 <= nblocks,
+        nblocks <= lo,
+        lo <= hi,
+        hi <= data.len(),
+        forall|i: int| nblocks <= i < data.len() as int ==> data[i] == 0i64,
+    ensures
+        partial_sum(data, lo, hi) == 0,
+    decreases hi - lo,
+{
+    if lo >= hi {
+        lemma_sum_empty::<int>(|j: int| data[j] as int, lo, hi);
+    } else {
+        lemma_sum_peel_last::<int>(|j: int| data[j] as int, lo, hi);
+        lemma_zero_partial_sum(data, lo, hi - 1, nblocks);
+    }
+}
+
+/// Partial sum of padded data equals partial sum of original for indices within original range.
+proof fn lemma_original_partial_sum(
+    padded: Seq<i64>, original: Seq<i64>, lo: int, hi: int, nblocks: int,
+)
+    requires
+        0 <= lo,
+        lo <= hi,
+        hi <= nblocks,
+        nblocks <= padded.len(),
+        original.len() == nblocks as nat,
+        forall|i: int| 0 <= i < nblocks ==> padded[i] == original[i],
+    ensures
+        partial_sum(padded, lo, hi) == partial_sum(original, lo, hi),
+{
+    assert forall|j: int| lo <= j < hi implies
+        padded[j] as int == original[j] as int
+    by {
+        assert(padded[j] == original[j]);
+    }
+    lemma_sum_congruence::<int>(
+        |j: int| padded[j] as int,
+        |j: int| original[j] as int,
+        lo, hi,
+    );
+}
+
+// ============================================================
 // Three-phase inclusive scan
 // ============================================================
 
@@ -99,13 +150,10 @@ pub fn three_phase_inclusive_scan_exec(
 ) -> (output: Vec<i64>)
     requires
         data@.len() > 0,
-        block_size > 0,
+        block_size > 1,
         is_power_of_2(block_size as nat),
         all_partial_sums_bounded(data@),
         data@.len() <= i64::MAX as nat,
-        (data@.len() as int) % (block_size as int) == 0,
-        is_power_of_2(((data@.len() as int) / (block_size as int)) as nat),
-        (data@.len() as int) / (block_size as int) <= i64::MAX as int,
         block_size <= i64::MAX as u64,
     ensures
         output@.len() == data@.len(),
@@ -114,19 +162,51 @@ pub fn three_phase_inclusive_scan_exec(
 {
     let n: u64 = data.len() as u64;
     let data_len = data.len(); // usize bridge: establishes n fits in usize
-    let nblocks: u64 = n / block_size;
     let ghost int_data = as_int_seq(data@);
+
+    // Compute nblocks = ceil_div(n, block_size)
+    proof {
+        // n + block_size - 1 fits in u64 (both <= i64::MAX, so sum < u64::MAX)
+        assert(n as int + block_size as int - 1 <= u64::MAX as int) by (nonlinear_arith)
+            requires n <= i64::MAX as u64, block_size <= i64::MAX as u64;
+    }
+    let nblocks: u64 = (n + block_size - 1) / block_size;
+    let remainder: u64 = n % block_size;
 
     proof {
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(n as int, block_size as int);
-        // fundamental_div_mod gives: n == block_size * nblocks + n % block_size
+        let full_blocks: int = n as int / block_size as int;
+        let rem: int = n as int % block_size as int;
+        // n == block_size * full_blocks + rem, 0 <= rem < block_size
+        assert(remainder as int == rem);
+
+        // ceil_div(n, bs) = full_blocks + (if rem > 0 { 1 } else { 0 })
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+            (n as int + block_size as int - 1), block_size as int);
         assert(nblocks > 0) by (nonlinear_arith)
-            requires n > 0, (n as int) == block_size as int * nblocks as int + ((n as int) % (block_size as int)),
-                     (n as int) % (block_size as int) == 0, block_size > 0;
-        // Also establish the commuted product form for loop invariant
-        assert(n as int == nblocks as int * block_size as int) by (nonlinear_arith)
-            requires (n as int) == block_size as int * nblocks as int + ((n as int) % (block_size as int)),
-                     (n as int) % (block_size as int) == 0;
+            requires n > 0, block_size > 1,
+                     n as int == block_size as int * full_blocks + rem,
+                     0 <= rem, rem < block_size as int;
+
+        // (nblocks - 1) * block_size < n <= nblocks * block_size
+        assert(nblocks as int * block_size as int >= n as int) by (nonlinear_arith)
+            requires n as int == block_size as int * full_blocks + rem,
+                     0 <= rem, rem < block_size as int,
+                     nblocks as int == (n as int + block_size as int - 1) / block_size as int,
+                     block_size > 0;
+
+        assert((nblocks as int - 1) * block_size as int < n as int) by (nonlinear_arith)
+            requires n as int == block_size as int * full_blocks + rem,
+                     0 <= rem, rem < block_size as int,
+                     nblocks as int == (n as int + block_size as int - 1) / block_size as int,
+                     block_size > 0, n > 0;
+
+        // nblocks bound for padding: nblocks <= (n+1)/2 since block_size >= 2
+        assert(nblocks as int <= (n as int + 1) / 2) by (nonlinear_arith)
+            requires nblocks as int == (n as int + block_size as int - 1) / block_size as int,
+                     block_size > 1;
+        assert(nblocks <= i64::MAX as u64) by (nonlinear_arith)
+            requires nblocks as int <= (n as int + 1) / 2, n <= i64::MAX as u64;
     }
 
     // ============================================================
@@ -139,53 +219,70 @@ pub fn three_phase_inclusive_scan_exec(
     while b < nblocks
         invariant
             b <= nblocks,
-            output@.len() == (b as int * block_size as int) as nat,
+            // Output length: b*bs for full blocks, n when all blocks processed
+            output@.len() == (if b as int * block_size as int <= n as int {
+                (b as int * block_size as int) as nat } else { n as nat }),
             block_sums@.len() == b as nat,
             data@.len() == n as nat,
-            n as int == nblocks as int * block_size as int,
+            nblocks as int * block_size as int >= n as int,
+            (nblocks as int - 1) * block_size as int < n as int,
+            n > 0,
             n as int == data_len as int, // usize bridge
-            block_size > 0,
+            block_size > 1,
             block_size <= i64::MAX as u64,
+            nblocks > 0,
             nblocks <= i64::MAX as u64,
             n <= i64::MAX as u64,
             is_power_of_2(block_size as nat),
             all_partial_sums_bounded(data@),
             int_data == as_int_seq(data@),
+            // For b < nblocks: b*bs < n (all processed blocks are full)
+            b < nblocks ==> b as int * block_size as int < n as int,
             // block sums correct
             forall|bi: int| 0 <= bi < b as int ==>
                 #[trigger] block_sums@[bi] as int
                     == block_reduce(int_data, block_size as nat, bi as nat),
-            // output holds per-block inclusive scans
-            forall|bi: int, j: int| 0 <= bi < b as int && 0 <= j < block_size as int ==>
+            // output holds per-block inclusive scans (clamped to n)
+            forall|bi: int, j: int| 0 <= bi < b as int && 0 <= j
+                && bi * block_size as int + j < n as int ==>
                 #[trigger] output@[(bi * block_size as int + j) as int] as int
                     == reduce::<int>(int_data,
                         bi * block_size as int,
                         bi * block_size as int + j + 1),
         decreases nblocks - b,
     {
-        proof {
-            assert(b as int * block_size as int + block_size as int <= n as int) by (nonlinear_arith)
-                requires b < nblocks, n as int == nblocks as int * block_size as int, block_size > 0;
-            assert(b as int * block_size as int <= i64::MAX as int) by (nonlinear_arith)
-                requires b < nblocks, n <= i64::MAX as u64,
-                         n as int == nblocks as int * block_size as int, block_size > 0;
-        }
         let bsi: u64 = b * block_size;
+        // this_block_len = min(block_size, n - bsi)
+        let this_block_len: u64 = if bsi + block_size <= n { block_size } else { n - bsi };
+
+        proof {
+            // bsi < n (from b < nblocks invariant)
+            assert(bsi as int < n as int) by (nonlinear_arith)
+                requires b < nblocks, (nblocks as int - 1) * block_size as int < n as int,
+                         block_size > 0;
+            assert(this_block_len > 0) by (nonlinear_arith)
+                requires bsi as int < n as int;
+            assert(bsi as int + this_block_len as int <= n as int);
+            assert(bsi as int <= i64::MAX as int) by (nonlinear_arith)
+                requires bsi as int < n as int, n <= i64::MAX as u64;
+            // this_block_len <= block_size
+            assert(this_block_len <= block_size);
+        }
 
         // Copy block into temp buffer
         let mut block_buf: Vec<i64> = Vec::new();
         let mut j: u64 = 0;
-        while j < block_size
+        while j < this_block_len
             invariant
-                j <= block_size,
+                j <= this_block_len,
                 block_buf@.len() == j as nat,
-                bsi as int + block_size as int <= n as int,
+                bsi as int + this_block_len as int <= n as int,
                 data@.len() == n as nat,
                 n as int == data_len as int, // usize bridge
                 bsi == b * block_size,
                 forall|k: int| 0 <= k < j as int ==>
                     #[trigger] block_buf@[k] == data@[(bsi as int + k) as int],
-            decreases block_size - j,
+            decreases this_block_len - j,
         {
             block_buf.push(data[(bsi + j) as usize]);
             j = j + 1;
@@ -193,26 +290,26 @@ pub fn three_phase_inclusive_scan_exec(
 
         // Prove bounded partial sums for block_buf
         proof {
-            lemma_subrange_partial_sums_bounded(data@, bsi as int, block_size as int);
-            let ghost sub_spec = Seq::new(block_size as nat, |i: int| data@[(bsi as int + i) as int]);
+            lemma_subrange_partial_sums_bounded(data@, bsi as int, this_block_len as int);
+            let ghost sub_spec = Seq::new(this_block_len as nat, |i: int| data@[(bsi as int + i) as int]);
             assert(block_buf@ =~= sub_spec);
         }
 
-        // Run inclusive scan on block
-        let scanned = hillis_steele_exec(&block_buf, block_size);
+        // Run inclusive scan on block (Hillis-Steele works for any n > 0)
+        let scanned = hillis_steele_exec(&block_buf, this_block_len);
 
         // Append scanned results to output
         let ghost output_before = output@;
         let mut j2: u64 = 0;
-        while j2 < block_size
+        while j2 < this_block_len
             invariant
-                j2 <= block_size,
+                j2 <= this_block_len,
                 output@.len() == (b as int * block_size as int + j2 as int) as nat,
-                scanned@.len() == block_size as nat,
+                scanned@.len() == this_block_len as nat,
                 bsi == b * block_size,
-                bsi as int + block_size as int <= n as int,
+                bsi as int + this_block_len as int <= n as int,
                 n as int == data_len as int, // usize bridge
-                block_size > 0,
+                this_block_len > 0,
                 // new elements are scanned values
                 forall|k: int| 0 <= k < j2 as int ==>
                     output@[(bsi as int + k) as int] == scanned@[k],
@@ -220,63 +317,68 @@ pub fn three_phase_inclusive_scan_exec(
                 forall|k: int| 0 <= k < bsi as int ==>
                     output@[k] == output_before[k],
                 // scanned holds inclusive scan of block_buf
-                forall|k: int| 0 <= k < block_size as int ==>
+                forall|k: int| 0 <= k < this_block_len as int ==>
                     scanned@[k] as int == inclusive_scan_int(block_buf@)[k],
-            decreases block_size - j2,
+            decreases this_block_len - j2,
         {
             output.push(scanned[j2 as usize]);
             j2 = j2 + 1;
         }
 
         // Store block sum
-        let block_sum_val = scanned[(block_size - 1) as usize];
+        let block_sum_val = scanned[(this_block_len - 1) as usize];
         block_sums.push(block_sum_val);
 
         proof {
             // Re-assert block_buf equality in this proof scope
-            let ghost sub = Seq::new(block_size as nat, |i: int| data@[(bsi as int + i) as int]);
+            let ghost sub = Seq::new(this_block_len as nat, |i: int| data@[(bsi as int + i) as int]);
             assert(block_buf@ =~= sub);
 
             // Bridge block sum to block_reduce
             lemma_inclusive_scan_subrange(
-                data@, bsi as int, block_size as int, block_size as int - 1,
+                data@, bsi as int, this_block_len as int, this_block_len as int - 1,
             );
 
             // Explicit chain: block_sum_val → scanned → inclusive_scan → reduce
             assert(block_sum_val as int
-                == scanned@[(block_size as int - 1) as int] as int);
-            assert(scanned@[(block_size as int - 1) as int] as int
-                == inclusive_scan_int(block_buf@)[block_size as int - 1]);
+                == scanned@[(this_block_len as int - 1) as int] as int);
+            assert(scanned@[(this_block_len as int - 1) as int] as int
+                == inclusive_scan_int(block_buf@)[this_block_len as int - 1]);
 
-            // Show block_end and block_start for unfolding block_reduce
-            assert((b as nat + 1) * block_size as nat <= n as nat) by (nonlinear_arith)
-                requires b < nblocks, n as int == nblocks as int * block_size as int, block_size > 0;
-            assert(block_end(n as nat, block_size as nat, b as nat)
-                == (b as nat + 1) * block_size as nat);
+            // Show block_end: min((b+1)*bs, n)
             assert(block_start(block_size as nat, b as nat)
                 == b as nat * block_size as nat);
 
-            // Chain: inclusive_scan_int(block_buf@)[bs-1]
-            //   == reduce::<int>(int_data, bsi, bsi + bs)       [by lemma_inclusive_scan_subrange]
-            //   == reduce::<int>(int_data, block_start, block_end) [by above assertions]
-            //   == block_reduce(int_data, bs, b)                [by definition of block_reduce]
-            // block_end(n, bs, b) = (b+1)*bs when (b+1)*bs <= n
-            // Already proved: (b+1)*bs <= n
-            // Need: (b+1)*bs == b*bs + bs (nonlinear)
+            // block_end(n, bs, b) = min((b+1)*bs, n)
+            // bsi + this_block_len = min(bsi + bs, n) = block_end
             assert(((b as nat + 1) * block_size as nat) as int
                 == (b as nat * block_size as nat) as int + block_size as int)
             by (nonlinear_arith)
                 requires b >= 0nat, block_size as nat >= 0nat;
-            assert(block_end(n as nat, block_size as nat, b as nat)
-                == (b as nat + 1) * block_size as nat);
-            // Now block_reduce unfolds correctly
-            assert(reduce::<int>(int_data, bsi as int, bsi as int + block_size as int)
+
+            if bsi + block_size <= n {
+                // Full block: block_end = (b+1)*bs
+                assert((b as nat + 1) * block_size as nat <= n as nat);
+                assert(block_end(n as nat, block_size as nat, b as nat)
+                    == (b as nat + 1) * block_size as nat);
+                assert(this_block_len == block_size);
+            } else {
+                // Short last block: block_end = n
+                assert(block_end(n as nat, block_size as nat, b as nat)
+                    == n as nat);
+                assert(bsi as int + this_block_len as int == n as int);
+            }
+
+            // In both cases: reduce(int_data, bsi, bsi + this_block_len) == block_reduce
+            assert(bsi as int + this_block_len as int
+                == block_end(n as nat, block_size as nat, b as nat) as int);
+            assert(reduce::<int>(int_data, bsi as int, bsi as int + this_block_len as int)
                 == block_reduce(int_data, block_size as nat, b as nat));
             assert(block_sum_val as int
                 == block_reduce(int_data, block_size as nat, b as nat));
 
             // Bridge local scan values for block b
-            assert forall|ji: int| 0 <= ji < block_size as int implies
+            assert forall|ji: int| 0 <= ji < this_block_len as int implies
                 #[trigger] output@[(b as int * block_size as int + ji) as int] as int
                     == reduce::<int>(int_data,
                         b as int * block_size as int,
@@ -284,12 +386,28 @@ pub fn three_phase_inclusive_scan_exec(
             by {
                 assert(output@[(bsi as int + ji) as int] == scanned@[ji]);
                 assert(scanned@[ji] as int == inclusive_scan_int(block_buf@)[ji]);
-                lemma_inclusive_scan_subrange(data@, bsi as int, block_size as int, ji);
+                lemma_inclusive_scan_subrange(data@, bsi as int, this_block_len as int, ji);
+            }
+            // Since this_block_len <= block_size and bsi + this_block_len <= n,
+            // this covers all j where b*bs + j < n (for this block)
+            assert forall|ji: int| 0 <= ji
+                && b as int * block_size as int + ji < n as int implies
+                #[trigger] output@[(b as int * block_size as int + ji) as int] as int
+                    == reduce::<int>(int_data,
+                        b as int * block_size as int,
+                        b as int * block_size as int + ji + 1)
+            by {
+                // ji < n - b*bs = n - bsi <= this_block_len
+                assert(ji < this_block_len as int) by (nonlinear_arith)
+                    requires b as int * block_size as int + ji < n as int,
+                             bsi as int + this_block_len as int <= n as int,
+                             bsi as int >= b as int * block_size as int;
             }
 
             // Preserve old blocks
             assert forall|bi: int, ji: int|
-                0 <= bi < b as int && 0 <= ji < block_size as int
+                0 <= bi < b as int && 0 <= ji
+                && bi * block_size as int + ji < n as int
             implies
                 #[trigger] output@[(bi * block_size as int + ji) as int] as int
                     == reduce::<int>(int_data,
@@ -297,32 +415,55 @@ pub fn three_phase_inclusive_scan_exec(
                         bi * block_size as int + ji + 1)
             by {
                 assert(bi * block_size as int + ji < bsi as int) by (nonlinear_arith)
-                    requires bi < b as int, 0 <= ji, ji < block_size as int,
+                    requires bi < b as int, 0 <= ji, bi * block_size as int + ji < n as int,
                              bsi as int == b as int * block_size as int, block_size > 0;
                 assert(output@[(bi * block_size as int + ji) as int]
                     == output_before[(bi * block_size as int + ji) as int]);
             }
 
-            // (b+1)*bs == b*bs + bs  for length invariant after increment
-            assert(((b as int + 1) * block_size as int)
-                == (b as int * block_size as int + block_size as int)) by (nonlinear_arith);
+            // Output length after processing block b
+            // After appending this_block_len elements: output.len = b*bs + this_block_len
+            // = bsi + this_block_len
+            // If (b+1)*bs <= n: = bsi + bs = (b+1)*bs
+            // If (b+1)*bs > n: = bsi + (n - bsi) = n
+            // Invariant at b+1: if (b+1)*bs <= n then (b+1)*bs else n
+            if bsi + block_size <= n {
+                assert(output@.len() == ((b as int + 1) * block_size as int) as nat) by (nonlinear_arith)
+                    requires output@.len() == (b as int * block_size as int + this_block_len as int) as nat,
+                             this_block_len == block_size;
+                assert((b + 1) as int * block_size as int <= n as int) by (nonlinear_arith)
+                    requires bsi as int + block_size as int <= n as int,
+                             bsi as int == b as int * block_size as int;
+            } else {
+                assert(output@.len() == n as nat);
+            }
+
+            // b+1 < nblocks ==> (b+1)*bs < n (for next iteration's invariant)
+            assert((b as int + 1) < nblocks as int ==>
+                (b as int + 1) * block_size as int < n as int)
+            by (nonlinear_arith)
+                requires (nblocks as int - 1) * block_size as int < n as int, block_size > 0;
         }
 
         b = b + 1;
     }
 
     // ============================================================
-    // Phase 2: Exclusive scan of block sums
+    // Phase 2: Exclusive scan of block sums (pad to power-of-2)
     // ============================================================
     let ghost original_block_sums = block_sums@;
 
+    // After Phase 1: output has n elements (all blocks processed)
     proof {
-        // Bridge nblocks to is_power_of_2
-        assert(nblocks as int == (n as int) / (block_size as int));
-        assert(is_power_of_2(nblocks as nat));
+        // At loop exit, b == nblocks. nblocks*bs >= n, so the conditional gives n.
+        assert(nblocks as int * block_size as int >= n as int);
+        assert(output@.len() == n as nat);
+
         // block_sums partial sums bounded (from original data being bounded)
-        assert(nblocks as nat * block_size as nat <= data@.len()) by (nonlinear_arith)
-            requires n as int == nblocks as int * block_size as int, data@.len() == n as nat;
+        // lemma_block_sums_bounded needs nblocks * block_size <= data.len()
+        // With ceil_div, nblocks * block_size >= n = data.len(). So we need >=.
+        // Actually lemma_block_sums_bounded uses block_end which clamps, so it's fine
+        // as long as we pass the right bound.
         lemma_block_sums_bounded(data@, block_size as nat, nblocks as nat);
         // Bridge: the Seq::new in lemma matches our block_sums
         let ghost lemma_seq: Seq<i64> = Seq::new(nblocks as nat, |i: int|
@@ -334,12 +475,141 @@ pub fn three_phase_inclusive_scan_exec(
             by {
                 assert(block_sums@[i] as int == block_reduce(int_data, block_size as nat, i as nat));
                 assert(lemma_seq[i] == block_reduce(int_data, block_size as nat, i as nat) as i64);
-                // Both are i64 with same int value
             }
         }
     }
 
-    blelloch_exclusive_scan_exec(&mut block_sums, nblocks);
+    // Pad block_sums to next power-of-2 for Blelloch
+    let padded_levels = log2_ceil_exec(nblocks);
+
+    // Compute padded_nblocks = pow2(padded_levels)
+    let mut padded_nblocks: u64 = 1;
+    let mut pk: u64 = 0;
+
+    proof {
+        // Bound padded_levels: nblocks <= (n+1)/2 since block_size >= 2,
+        // so log2_ceil(nblocks) <= 62, and pow2(62) fits in i64.
+        assert(nblocks as int <= (n as int + 1) / 2) by (nonlinear_arith)
+            requires nblocks as int == (n as int + block_size as int - 1) / block_size as int,
+                     block_size > 1;
+        assert(nblocks as int <= (i64::MAX as int) / 2) by (nonlinear_arith)
+            requires nblocks as int <= (n as int + 1) / 2, n <= i64::MAX as u64;
+        assert(pow2(62) >= nblocks as nat) by {
+            assert(pow2(62) >= 4611686018427387903nat) by (compute_only);
+            assert((i64::MAX as int) / 2 == 4611686018427387903int);
+        }
+        lemma_log2_ceil_upper_bound(nblocks as nat, 62);
+    }
+
+    while pk < padded_levels
+        invariant
+            pk <= padded_levels,
+            padded_nblocks as nat == pow2(pk as nat),
+            padded_nblocks > 0,
+            padded_levels as nat <= 62,
+        decreases padded_levels - pk,
+    {
+        proof {
+            assert(pow2((pk + 1) as nat) == 2 * pow2(pk as nat));
+            lemma_pow2_monotone((pk + 1) as nat, 62);
+            assert(pow2(62) <= u64::MAX as nat) by (compute_only);
+        }
+        padded_nblocks = padded_nblocks * 2;
+        pk = pk + 1;
+    }
+
+    // padded_nblocks == pow2(log2_ceil(nblocks)) >= nblocks
+    proof {
+        lemma_log2_ceil_pow2(nblocks as nat);
+        // pow2(padded_levels) >= nblocks
+        assert(padded_nblocks as nat >= nblocks as nat);
+        // pow2(padded_levels) <= pow2(62) < i64::MAX
+        lemma_pow2_monotone(padded_levels as nat, 62);
+        assert(pow2(62) <= i64::MAX as nat) by (compute_only);
+        assert(padded_nblocks as nat <= i64::MAX as nat);
+        // is_power_of_2
+        assert(is_power_of_2(padded_nblocks as nat));
+    }
+
+    // Pad block_sums with zeros
+    let mut pad_i: u64 = nblocks;
+    while pad_i < padded_nblocks
+        invariant
+            nblocks <= pad_i,
+            pad_i <= padded_nblocks,
+            block_sums@.len() == pad_i as nat,
+            padded_nblocks as nat <= i64::MAX as nat,
+            // Original elements preserved
+            forall|i: int| 0 <= i < nblocks as int ==>
+                block_sums@[i] == original_block_sums[i],
+            // Padding elements are zero
+            forall|i: int| nblocks as int <= i < pad_i as int ==>
+                block_sums@[i] == 0i64,
+        decreases padded_nblocks - pad_i,
+    {
+        block_sums.push(0i64);
+        pad_i = pad_i + 1;
+    }
+
+    // Prove padded block_sums have bounded partial sums
+    let ghost padded_block_sums = block_sums@;
+    proof {
+        // The padded suffix is all zeros, so partial sums over any range
+        // [lo, hi) equal partial sums of the original (clamped to nblocks).
+        assert forall|lo: int, hi: int| 0 <= lo <= hi <= block_sums@.len()
+        implies i64::MIN as int <= #[trigger] partial_sum(block_sums@, lo, hi)
+            && partial_sum(block_sums@, lo, hi) <= i64::MAX as int
+        by {
+            // Clamp hi to nblocks for the non-zero portion
+            let clamped_hi = if hi <= nblocks as int { hi } else { nblocks as int };
+            let clamped_lo = if lo <= nblocks as int { lo } else { nblocks as int };
+            // partial_sum(padded, lo, hi) = partial_sum(padded, lo, clamped_hi) + partial_sum(padded, clamped_hi, hi)
+            // The second part is zero (all padding elements are 0).
+            // The first part: padded[j] == unpadded[j] for j < nblocks, so equals partial_sum(unpadded, lo, clamped_hi).
+            // unpadded has bounded partial sums.
+
+            // Split at clamped boundaries
+            if lo >= nblocks as int {
+                // Entire range is in padding (zeros)
+                lemma_zero_partial_sum(block_sums@, lo, hi, nblocks as int);
+            } else if hi <= nblocks as int {
+                // Entire range is in original
+                lemma_original_partial_sum(block_sums@, original_block_sums, lo, hi, nblocks as int);
+            } else {
+                // Split at nblocks
+                lemma_sum_split::<int>(|j: int| block_sums@[j] as int, lo, nblocks as int, hi);
+                lemma_original_partial_sum(block_sums@, original_block_sums, lo, nblocks as int, nblocks as int);
+                lemma_zero_partial_sum(block_sums@, nblocks as int, hi, nblocks as int);
+            }
+        }
+    }
+
+    blelloch_exclusive_scan_exec(&mut block_sums, padded_nblocks);
+
+    // Bridge: exclusive_scan of padded == exclusive_scan of original for indices < nblocks
+    proof {
+        assert forall|bi: int| 0 <= bi < nblocks as int implies
+            block_sums@[bi] as int == exclusive_scan_int(padded_block_sums)[bi]
+        by {}
+        // For bi < nblocks: exclusive_scan_int(padded)[bi] = sum(|j| padded[j] as int, 0, bi)
+        //   = sum(|j| unpadded[j] as int, 0, bi) = exclusive_scan_int(unpadded)[bi]
+        // because padded[j] == unpadded[j] for j < nblocks
+        assert forall|bi: int| 0 <= bi < nblocks as int implies
+            exclusive_scan_int(padded_block_sums)[bi]
+                == exclusive_scan_int(original_block_sums)[bi]
+        by {
+            assert forall|j: int| 0 <= j < bi implies
+                as_int_seq(padded_block_sums)[j] == as_int_seq(original_block_sums)[j]
+            by {
+                assert(padded_block_sums[j] == original_block_sums[j]);
+            }
+            lemma_sum_congruence::<int>(
+                |j: int| as_int_seq(padded_block_sums)[j],
+                |j: int| as_int_seq(original_block_sums)[j],
+                0, bi,
+            );
+        }
+    }
 
     // ============================================================
     // Phase 3: Add block prefix to each output element (in-place)
@@ -349,9 +619,12 @@ pub fn three_phase_inclusive_scan_exec(
         invariant
             oi <= n,
             output@.len() == n as nat,
-            block_sums@.len() == nblocks as nat,
+            block_sums@.len() == padded_nblocks as nat,
+            padded_nblocks >= nblocks,
             original_block_sums.len() == nblocks as nat, // needed for as_int_seq unfolding
-            n as int == nblocks as int * block_size as int,
+            nblocks as int * block_size as int >= n as int,
+            (nblocks as int - 1) * block_size as int < n as int,
+            nblocks > 0,
             data@.len() == n as nat,
             block_size > 0,
             all_partial_sums_bounded(data@),
@@ -359,7 +632,7 @@ pub fn three_phase_inclusive_scan_exec(
             nblocks <= i64::MAX as u64,
             n as int == data_len as int, // usize bridge
             int_data == as_int_seq(data@),
-            // block_sums holds exclusive scan of original
+            // block_sums holds exclusive scan of original (bridged through padding)
             forall|bi: int| 0 <= bi < nblocks as int ==>
                 #[trigger] block_sums@[bi] as int
                     == exclusive_scan_int(original_block_sums)[bi],
@@ -370,8 +643,9 @@ pub fn three_phase_inclusive_scan_exec(
             // processed elements are final inclusive scan
             forall|i: int| 0 <= i < oi as int ==>
                 #[trigger] output@[i] as int == inclusive_scan_int(data@)[i],
-            // unprocessed elements hold per-block inclusive scan
-            forall|bi: int, j: int| 0 <= bi < nblocks as int && 0 <= j < block_size as int
+            // unprocessed elements hold per-block inclusive scan (clamped to n)
+            forall|bi: int, j: int| 0 <= bi < nblocks as int && 0 <= j
+                && bi * block_size as int + j < n as int
                 && bi * block_size as int + j >= oi as int ==>
                 #[trigger] output@[(bi * block_size as int + j) as int] as int
                     == reduce::<int>(int_data,
@@ -394,7 +668,7 @@ pub fn three_phase_inclusive_scan_exec(
                 requires oi as int == block_size as int * block_id as int + local_j as int;
 
             assert(block_id < nblocks) by (nonlinear_arith)
-                requires oi < n, n as int == nblocks as int * block_size as int,
+                requires oi < n, nblocks as int * block_size as int >= n as int,
                          oi as int == block_size as int * block_id as int + local_j as int,
                          0 <= local_j as int, (local_j as int) < (block_size as int),
                          block_size > 0;
@@ -410,8 +684,10 @@ pub fn three_phase_inclusive_scan_exec(
             );
 
             // Bridge block_sums[block_id] to block_exclusive_prefix
+            // block_id * bs <= (nblocks-1) * bs < n = data.len
             assert(block_id as nat * block_size as nat <= data@.len()) by (nonlinear_arith)
-                requires block_id < nblocks, n as int == nblocks as int * block_size as int,
+                requires block_id < nblocks,
+                         (nblocks as int - 1) * block_size as int < n as int,
                          data@.len() == n as nat, block_size > 0;
             lemma_block_prefix_is_reduce_sum(int_data, block_size as nat, block_id as nat);
 
@@ -471,7 +747,8 @@ pub fn three_phase_inclusive_scan_exec(
             assert(n as int == data_len as int); // from invariant
             assert((oi as usize) as int == oi as int);
             assert((block_id as int) < (n as int)) by (nonlinear_arith)
-                requires (block_id as int) < (nblocks as int), n as int == nblocks as int * block_size as int,
+                requires (block_id as int) < (nblocks as int),
+                         (nblocks as int - 1) * block_size as int < n as int,
                          block_size > 0;
             assert((block_id as usize) as int == block_id as int);
 
@@ -506,7 +783,8 @@ pub fn three_phase_inclusive_scan_exec(
         proof {
             // Unprocessed invariant: set only changes output[oi], all other indices preserved
             assert forall|bi: int, j: int|
-                0 <= bi < nblocks as int && 0 <= j < block_size as int
+                0 <= bi < nblocks as int && 0 <= j
+                && bi * block_size as int + j < n as int
                 && bi * block_size as int + j >= oi as int + 1
             implies
                 #[trigger] output@[(bi * block_size as int + j) as int] as int
@@ -520,10 +798,8 @@ pub fn three_phase_inclusive_scan_exec(
                 assert(idx != (oi as usize) as int);
                 // bounds for Vec::set postcondition trigger
                 assert((0 <= idx) && (idx < output@.len() as int)) by (nonlinear_arith)
-                    requires bi >= 0, (bi as int) < (nblocks as int), j >= 0, (j as int) < (block_size as int),
-                             idx == bi * block_size as int + j,
-                             output@.len() == n as nat, n as int == nblocks as int * block_size as int,
-                             block_size > 0;
+                    requires bi >= 0, j >= 0, idx == bi * block_size as int + j,
+                             idx < n as int, output@.len() == n as nat;
             }
         }
 
