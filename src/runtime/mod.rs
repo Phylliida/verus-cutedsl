@@ -9,6 +9,7 @@ pub mod tiling;
 pub mod predication;
 pub mod gemm;
 pub mod contraction;
+pub mod scan;
 
 verus! {
 

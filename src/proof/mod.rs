@@ -15,3 +15,5 @@ pub mod predication_lemmas;
 pub mod compatibility_lemmas;
 pub mod permutation_lemmas;
 pub mod gemm_lemmas;
+pub mod scan_lemmas;
+pub mod scan_tree_lemmas;

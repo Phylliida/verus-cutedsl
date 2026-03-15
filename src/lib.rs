@@ -47,6 +47,12 @@ pub mod gemm;
 pub mod contraction;
 
 #[cfg(verus_keep_ghost)]
+pub mod scan;
+
+#[cfg(verus_keep_ghost)]
+pub mod scan_tree;
+
+#[cfg(verus_keep_ghost)]
 pub mod proof;
 
 #[cfg(verus_keep_ghost)]
