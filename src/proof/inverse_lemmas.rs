@@ -2481,6 +2481,72 @@ proof fn lemma_tractable_divisibility(
     }
 }
 
+/// Helper: prefix product property for prepended gap shape.
+/// Given raw_shape = [gap] ++ rest_shape where the rest satisfies the inductive hypothesis,
+/// proves shape_size(raw_shape.take(j+1)) * acc_size == stride[j] for all j < k.
+proof fn lemma_prefix_product_from_prepend(
+    raw_shape: Seq<nat>,
+    rest_shape: Seq<nat>,
+    stride: Seq<int>,
+    gap: nat,
+    acc_size: nat,
+    new_acc: nat,
+    k: nat,
+)
+    requires
+        k >= 2,
+        gap >= 1,
+        acc_size > 0,
+        new_acc == acc_size * gap,
+        raw_shape =~= seq![gap].add(rest_shape),
+        stride.len() >= k,
+        rest_shape.len() >= k,
+        gap * acc_size == stride[0] as nat,
+        // Inductive hypothesis (shifted to avoid +1 in trigger):
+        forall|j: int| 1 <= j < k ==>
+            shape_size(#[trigger] rest_shape.take(j)) * new_acc == stride[j] as nat,
+    ensures
+        forall|j: int| 0 <= j < k ==>
+            shape_size(raw_shape.take(j + 1)) * acc_size == #[trigger] stride[j] as nat,
+{
+    assert forall|j: int| 0 <= j < k
+        implies shape_size(raw_shape.take(j + 1)) * acc_size == #[trigger] stride[j] as nat
+    by {
+        if j == 0 {
+            assert(raw_shape.take(1) =~= seq![gap]);
+            reveal_with_fuel(shape_size, 2);
+            assert(shape_size(raw_shape.take(1)) == gap);
+            assert(gap * acc_size == stride[0] as nat);
+        } else {
+            let rt = rest_shape.take(j);
+            assert(raw_shape.take(j + 1) =~= seq![gap].add(rt)) by {
+                assert forall|l: int| 0 <= l < j + 1
+                    implies raw_shape.take(j + 1)[l] == seq![gap].add(rt)[l]
+                by {
+                    if l == 0 { }
+                    else {
+                        assert(raw_shape[l] == rest_shape[l - 1]);
+                        assert(rt[l - 1] == rest_shape[l - 1]);
+                    }
+                };
+            };
+            assert(shape_size(raw_shape.take(j + 1)) == gap * shape_size(rt)) by {
+                let s = raw_shape.take(j + 1);
+                assert(s.first() == gap);
+                assert(s.skip(1) =~= rt);
+            };
+            // Fire inductive hypothesis: rest_shape.take((j-1)+1) == rest_shape.take(j) == rt
+            assert(shape_size(rt) * new_acc == stride[j] as nat);
+            // gap * shape_size(rt) * acc_size = shape_size(rt) * (gap * acc_size)
+            //                                = shape_size(rt) * new_acc = stride[j]
+            vstd::arithmetic::mul::lemma_mul_is_commutative(
+                gap as int, shape_size(rt) as int);
+            vstd::arithmetic::mul::lemma_mul_is_associative(
+                shape_size(rt) as int, gap as int, acc_size as int);
+        }
+    };
+}
+
 /// Structural characterization of left_inverse_build for sorted tractable positive strides.
 proof fn lemma_left_inverse_build_structure(
     shape: Seq<nat>, stride: Seq<int>, preprod: Seq<nat>, acc_size: nat,
@@ -2617,44 +2683,15 @@ proof fn lemma_left_inverse_build_structure(
             };
         };
 
-        // Prefix product property
-        assert forall|j: int| 0 <= j < k
-            implies shape_size(raw.shape.take(j + 1)) * acc_size == #[trigger] stride[j] as nat
+        // Prefix product property — bridge inductive hypothesis for helper
+        assert forall|j: int| 1 <= j < k implies
+            shape_size(#[trigger] rest_raw.shape.take(j)) * new_acc == stride[j] as nat
         by {
-            if j == 0 {
-                assert(raw.shape.take(1) =~= seq![gap]);
-                reveal_with_fuel(shape_size, 2);
-                assert(shape_size(raw.shape.take(1)) == gap);
-                assert(gap * acc_size == d);
-            } else {
-                let rt = rest_raw.shape.take(j);
-                assert(raw.shape.take(j + 1) =~= seq![gap].add(rt)) by {
-                    assert forall|l: int| 0 <= l < j + 1
-                        implies raw.shape.take(j + 1)[l] == seq![gap].add(rt)[l]
-                    by {
-                        if l == 0 { }
-                        else {
-                            assert(raw.shape[l] == rest_raw.shape[l - 1]);
-                            assert(rt[l - 1] == rest_raw.shape[l - 1]);
-                        }
-                    };
-                };
-                assert(shape_size(raw.shape.take(j + 1)) == gap * shape_size(rt)) by {
-                    let s = raw.shape.take(j + 1);
-                    assert(s.first() == gap);
-                    assert(s.skip(1) =~= rt);
-                };
-                // By induction: shape_size(rt) * new_acc == stride[j] as nat
-                assert(rest_stride[j - 1] == stride[j]);
-                assert(shape_size(rt) * new_acc == stride[j] as nat);
-                // gap * shape_size(rt) * acc_size = shape_size(rt) * (gap * acc_size)
-                //                                = shape_size(rt) * new_acc = stride[j]
-                vstd::arithmetic::mul::lemma_mul_is_commutative(
-                    gap as int, shape_size(rt) as int);
-                vstd::arithmetic::mul::lemma_mul_is_associative(
-                    shape_size(rt) as int, gap as int, acc_size as int);
-            }
+            assert(rest_stride[j - 1] == stride[j]);
         };
+        lemma_prefix_product_from_prepend(
+            raw.shape, rest_raw.shape, stride, gap, acc_size, new_acc, k,
+        );
 
         // Last element
         assert(raw.shape[k as int] == rest_raw.shape[(k - 1) as int]);
