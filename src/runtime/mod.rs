@@ -10,6 +10,7 @@ pub mod predication;
 pub mod gemm;
 pub mod contraction;
 pub mod scan;
+pub mod scan_multiblock;
 
 verus! {
 

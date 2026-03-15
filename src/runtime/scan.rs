@@ -1055,4 +1055,473 @@ pub fn blelloch_exclusive_scan_exec(data: &mut Vec<i64>, n: u64)
     }
 }
 
+// ============================================================
+// Brent-Kung inclusive scan
+// ============================================================
+
+/// Whether position j is active at Brent-Kung down-sweep level with given stride.
+/// Active = (j+1) is an odd multiple of stride, and j >= stride.
+pub open spec fn bk_active(j: int, stride: int, step: int) -> bool {
+    (j + 1) % step == stride && j >= stride
+}
+
+/// Whether position j has been processed in the Brent-Kung inner loop.
+pub open spec fn bk_pair_processed(j: int, ri: int, stride: int, step: int) -> bool {
+    bk_active(j, stride, step) && j < ri
+}
+
+/// Brent-Kung inner loop invariant: processed positions match next state, others match prev.
+pub open spec fn bk_inner_inv(
+    data_view: Seq<i64>, j: int, ri: int, stride: int, step: int,
+    prev: Seq<int>, next: Seq<int>,
+) -> bool {
+    if bk_pair_processed(j, ri, stride, step) {
+        data_view[j] as int == next[j]
+    } else {
+        data_view[j] as int == prev[j]
+    }
+}
+
+
+/// Brent-Kung inclusive scan. In-place, modifies data.
+/// O(n) work, O(2 log n) depth. Requires power-of-2 sized input.
+pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
+    requires
+        old(data)@.len() == n as nat,
+        n > 0,
+        is_power_of_2(n as nat),
+        all_partial_sums_bounded(old(data)@),
+        n <= i64::MAX as u64,
+    ensures
+        data@.len() == n as nat,
+        forall|i: int| 0 <= i < n as int ==>
+            data@[i] as int == inclusive_scan_int(old(data)@)[i],
+{
+    let ghost original_data = old(data)@;
+    let ghost original_int = as_int_seq(original_data);
+    let levels = log2_ceil_exec(n);
+    let data_len = data.len();
+
+    // Handle n = 1: inclusive_scan[0] = data[0]
+    if n == 1 {
+        proof {
+            lemma_sum_single::<int>(|j: int| as_int_seq(original_data)[j], 0);
+            assert forall|j: int| 0 <= j < 1 implies
+                as_int_seq(original_data)[j] == original_data[j] as int by {}
+            lemma_sum_congruence::<int>(
+                |j: int| as_int_seq(original_data)[j],
+                |j: int| original_data[j] as int,
+                0, 1,
+            );
+        }
+        return;
+    }
+
+    // n >= 2, so levels >= 1
+    proof {
+        lemma_pow2_log2_ceil_exact(n as nat);
+    }
+
+    let ghost total_levels = levels as nat;
+
+    // ============================================================
+    // UP-SWEEP (identical to Blelloch up-sweep)
+    // ============================================================
+    let mut d: u64 = 0;
+    let mut stride: u64 = 1;
+    while d < levels
+        invariant
+            d <= levels,
+            stride as nat == pow2(d as nat),
+            data@.len() == n as nat,
+            levels as nat == log2_ceil(n as nat),
+            n > 1,
+            n <= i64::MAX as u64,
+            n as int == data_len as int,
+            is_power_of_2(n as nat),
+            pow2(total_levels) == n as nat,
+            all_partial_sums_bounded(original_data),
+            original_data.len() == n as nat,
+            original_int == as_int_seq(original_data),
+            total_levels == levels as nat,
+            forall|j: int| 0 <= j < n as int ==>
+                data@[j] as int == tree_reduce_state(original_int, n as nat, d as nat)[j],
+        decreases levels - d,
+    {
+        proof {
+            lemma_pow2_lt_for_sub_levels(n as nat, d as nat);
+            crate::proof::swizzle_lemmas::lemma_pow2_positive(d as nat);
+        }
+
+        let ghost prev_state = tree_reduce_state(original_int, n as nat, d as nat);
+        let ghost next_state = tree_reduce_state(original_int, n as nat, (d + 1) as nat);
+        let step: u64 = 2 * stride;
+
+        let mut i: u64 = 0;
+        while i < n
+            invariant
+                i <= n,
+                data@.len() == n as nat,
+                stride as nat == pow2(d as nat),
+                stride > 0,
+                stride < n,
+                step == 2 * stride,
+                d < levels,
+                levels as nat == log2_ceil(n as nat),
+                n > 1,
+                n <= i64::MAX as u64,
+                n as int == data_len as int,
+                is_power_of_2(n as nat),
+                pow2(total_levels) == n as nat,
+                all_partial_sums_bounded(original_data),
+                original_data.len() == n as nat,
+                original_int == as_int_seq(original_data),
+                total_levels == levels as nat,
+                prev_state == tree_reduce_state(original_int, n as nat, d as nat),
+                next_state == tree_reduce_state(original_int, n as nat, (d + 1) as nat),
+                forall|j: int| 0 <= j < i as int ==>
+                    data@[j] as int == next_state[j],
+                forall|j: int| i as int <= j < n as int ==>
+                    data@[j] as int == prev_state[j],
+            decreases n - i,
+        {
+            if (i + 1) % step == 0 && i >= stride {
+                let partner = (i - stride) as usize;
+
+                proof {
+                    let pi = partner as int + 1;
+                    assert(pi == i as int + 1 - stride as int);
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod((i + 1) as int, step as int);
+                    let q = ((i + 1) as int) / (step as int);
+                    assert(i as int + 1 == step as int * q);
+                    assert(q >= 1) by (nonlinear_arith)
+                        requires i as int + 1 == step as int * q, step > 0, i as int + 1 > 0;
+                    assert(pi == stride as int * (2 * q - 1)) by (nonlinear_arith)
+                        requires pi == i as int + 1 - stride as int,
+                                 i as int + 1 == step as int * q, step == 2 * stride;
+                    assert(pi == step as int * (q - 1) + stride as int) by (nonlinear_arith)
+                        requires pi == stride as int * (2 * q - 1), step == 2 * stride;
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+                        pi, step as int, q - 1, stride as int
+                    );
+                    assert(pi % (step as int) != 0) by (nonlinear_arith)
+                        requires pi % (step as int) == stride as int, stride > 0;
+                    assert(pow2((d + 1) as nat) == 2 * pow2(d as nat));
+                    assert(next_state[partner as int] == prev_state[partner as int]);
+
+                    lemma_upsweep_overflow_bound(
+                        original_data, original_int, n as nat, total_levels,
+                        d as nat, i as int,
+                    );
+                }
+
+                let val = data[i as usize] + data[partner];
+                data.set(i as usize, val);
+            } else {
+                proof {
+                    assert(pow2((d + 1) as nat) == 2 * pow2(d as nat));
+                }
+            }
+
+            i = i + 1;
+        }
+
+        proof {
+            assert(pow2((d + 1) as nat) == 2 * pow2(d as nat));
+        }
+        stride = stride * 2;
+        d = d + 1;
+    }
+
+    // ============================================================
+    // DOWN-SWEEP (Brent-Kung specific)
+    // ============================================================
+    // At this point, data matches tree_reduce_state(original_int, n, total_levels)
+    // which is bk_downsweep_state(original_int, n, total_levels, 0).
+
+    proof {
+        use crate::proof::scan_brent_kung_lemmas::*;
+        lemma_bk_downsweep_base(original_int, n as nat, total_levels);
+    }
+
+    if levels <= 1 {
+        // n == 2, levels == 1, no down-sweep needed (0 iterations of k < levels - 1)
+        // bk_result = bk_downsweep_state at k = 0 = tree_reduce_state
+        // For n=2: tree_reduce_state[0] = data[0], tree_reduce_state[1] = data[0]+data[1]
+        // inclusive_scan[0] = data[0], inclusive_scan[1] = data[0]+data[1] ✓
+        proof {
+            use crate::proof::scan_brent_kung_lemmas::*;
+            lemma_bk_correct(original_int, n as nat, total_levels);
+            let result = crate::scan_brent_kung::bk_result(original_int, n as nat, total_levels);
+            assert forall|j: int| 0 <= j < n as int
+            implies data@[j] as int == inclusive_scan_int(original_data)[j]
+            by {
+                assert(data@[j] as int == tree_reduce_state(original_int, n as nat, total_levels)[j]);
+                assert forall|k: int| 0 <= k < n as int implies
+                    as_int_seq(original_data)[k] == original_data[k] as int by {}
+                lemma_sum_congruence::<int>(
+                    |k: int| as_int_seq(original_data)[k],
+                    |k: int| original_data[k] as int,
+                    0, j + 1,
+                );
+            }
+        }
+        return;
+    }
+
+    // levels >= 2, run down-sweep levels 0..levels-2
+    let mut dk: u64 = 0;
+    let mut ds_stride: u64 = n / 4;  // pow2(total_levels - 2)
+    proof {
+        crate::proof::swizzle_lemmas::lemma_pow2_positive((total_levels - 2) as nat);
+        assert(pow2(total_levels) == 2 * pow2((total_levels - 1) as nat));
+        assert(pow2((total_levels - 1) as nat) == 2 * pow2((total_levels - 2) as nat));
+        assert(pow2(total_levels) == 4 * pow2((total_levels - 2) as nat)) by (nonlinear_arith)
+            requires pow2(total_levels) == 2 * pow2((total_levels - 1) as nat),
+                     pow2((total_levels - 1) as nat) == 2 * pow2((total_levels - 2) as nat);
+        assert(ds_stride as nat == pow2((total_levels - 2) as nat)) by (nonlinear_arith)
+            requires
+                pow2(total_levels) == n as nat,
+                pow2(total_levels) == 4 * pow2((total_levels - 2) as nat),
+                ds_stride == n / 4,
+                n > 1;
+    }
+
+    while dk < levels - 1
+        invariant
+            dk <= levels - 1,
+            dk < levels - 1 ==> ds_stride as nat == pow2((total_levels - dk - 2) as nat),
+            data@.len() == n as nat,
+            levels as nat == log2_ceil(n as nat),
+            n > 1,
+            n <= i64::MAX as u64,
+            n as int == data_len as int,
+            is_power_of_2(n as nat),
+            pow2(total_levels) == n as nat,
+            all_partial_sums_bounded(original_data),
+            original_data.len() == n as nat,
+            original_int == as_int_seq(original_data),
+            total_levels == levels as nat,
+            total_levels > 1,
+            crate::scan_brent_kung::bk_downsweep_invariant(original_int, n as nat, total_levels, dk as nat),
+            forall|j: int| 0 <= j < n as int ==>
+                data@[j] as int == crate::scan_brent_kung::bk_downsweep_state(
+                    original_int, n as nat, total_levels, dk as nat)[j],
+        decreases levels - 1 - dk,
+    {
+        let ghost prev_bk = crate::scan_brent_kung::bk_downsweep_state(
+            original_int, n as nat, total_levels, dk as nat);
+        let ghost next_bk = crate::scan_brent_kung::bk_downsweep_state(
+            original_int, n as nat, total_levels, (dk + 1) as nat);
+        let stride = ds_stride;
+
+        proof {
+            crate::proof::swizzle_lemmas::lemma_pow2_positive((total_levels - dk - 2) as nat);
+            assert(pow2((total_levels - dk - 1) as nat) == 2 * pow2((total_levels - dk - 2) as nat));
+            crate::proof::swizzle_lemmas::lemma_pow2_monotone(
+                (total_levels - dk - 1) as nat, total_levels);
+            assert(2 * stride as nat <= n as nat);
+        }
+
+        let step: u64 = 2 * stride;
+
+        let mut i: u64 = 0;
+
+        proof {
+            assert forall|j: int| #![trigger data@[j]] 0 <= j < n as int
+            implies bk_inner_inv(data@, j, 0, stride as int, step as int, prev_bk, next_bk)
+            by {
+                assert(!bk_pair_processed(j, 0, stride as int, step as int));
+                assert(data@[j] as int == prev_bk[j]);
+            }
+        }
+
+        while i < n
+            invariant
+                i <= n,
+                data@.len() == n as nat,
+                stride as nat == pow2((total_levels - dk - 2) as nat),
+                stride > 0,
+                step == 2 * stride,
+                dk < levels - 1,
+                levels as nat == log2_ceil(n as nat),
+                n > 1,
+                n <= i64::MAX as u64,
+                n as int == data_len as int,
+                is_power_of_2(n as nat),
+                pow2(total_levels) == n as nat,
+                all_partial_sums_bounded(original_data),
+                original_data.len() == n as nat,
+                original_int == as_int_seq(original_data),
+                total_levels == levels as nat,
+                total_levels > 1,
+                prev_bk == crate::scan_brent_kung::bk_downsweep_state(
+                    original_int, n as nat, total_levels, dk as nat),
+                next_bk == crate::scan_brent_kung::bk_downsweep_state(
+                    original_int, n as nat, total_levels, (dk + 1) as nat),
+                crate::scan_brent_kung::bk_downsweep_invariant(
+                    original_int, n as nat, total_levels, dk as nat),
+                // Processed positions match next state, others match prev
+                forall|j: int| #![trigger data@[j]] 0 <= j < n as int ==>
+                    bk_inner_inv(data@, j, i as int, stride as int, step as int, prev_bk, next_bk),
+            decreases n - i,
+        {
+            if (i + 1) % step == stride && i >= stride {
+                // Active position: data[i] += data[i - stride]
+                let partner = (i - stride) as usize;
+
+                proof {
+                    // data[i] == prev_bk[i] (not yet processed)
+                    assert(!bk_pair_processed(i as int, i as int, stride as int, step as int));
+                    assert(data@[i as int] as int == prev_bk[i as int]);
+                    // data[partner] == ? We need prev_bk[partner]
+                    // partner < i, so it may have been processed.
+                    // If processed: data[partner] == next_bk[partner]
+                    // If not: data[partner] == prev_bk[partner]
+                    // But next_bk[partner] == prev_bk[partner] because partner is not active
+                    // at this level (only positions with (j+1)%step == stride are active).
+                    // Is partner active?
+                    // partner + 1 = i + 1 - stride. i+1 = step*q + stride (from activity condition).
+                    // partner + 1 = step*q. (partner+1) % step == 0 != stride. So partner is NOT active.
+                    // So next_bk[partner] == prev_bk[partner].
+                    // Therefore data[partner] == prev_bk[partner] regardless of processing status.
+                    let pi = partner as int;
+                    assert(pi + 1 == i as int + 1 - stride as int);
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod((i + 1) as int, step as int);
+                    let q = ((i + 1) as int) / (step as int);
+                    assert(i as int + 1 == step as int * q + stride as int);
+                    assert(pi + 1 == step as int * q) by (nonlinear_arith)
+                        requires pi + 1 == i as int + 1 - stride as int,
+                                 i as int + 1 == step as int * q + stride as int;
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+                        pi + 1, step as int, q, 0
+                    );
+                    assert((pi + 1) % (step as int) == 0);
+                    assert((pi + 1) % (step as int) != stride as int) by (nonlinear_arith)
+                        requires (pi + 1) % (step as int) == 0, stride > 0;
+                    assert(!bk_active(pi, stride as int, step as int));
+                    assert(next_bk[pi] == prev_bk[pi]);
+
+                    // If partner was processed: data == next_bk == prev_bk ✓
+                    // If not: data == prev_bk ✓
+
+                    // Overflow: next_bk[i] is a prefix sum of original data (bounded)
+                    // next_bk[i] = prev_bk[i] + prev_bk[partner] by BK definition
+                    // By BK invariant at dk+1: next_bk[i] = bk_expected(data, n, total_levels, dk+1, i)
+                    // bk_expected = sum(original_int, 0, i+1) = partial_sum(original_data, 0, i+1)
+                    crate::proof::scan_brent_kung_lemmas::lemma_bk_downsweep_step(
+                        original_int, n as nat, total_levels, dk as nat);
+                    let next_val = next_bk[i as int];
+                    // next_bk[i] = sum(original_int, 0, i+1) since (i+1)%stride==0
+                    assert((i as int + 1) % (stride as int) == 0) by {
+                        assert(i as int + 1 == step as int * q + stride as int);
+                        assert(i as int + 1 == stride as int * (2 * q + 1)) by (nonlinear_arith)
+                            requires i as int + 1 == step as int * q + stride as int, step == 2 * stride;
+                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+                            i as int + 1, stride as int, 2 * q + 1, 0
+                        );
+                    };
+                    // Bridge to partial_sum for overflow
+                    let hi = i as int + 1;
+                    assert forall|k: int| 0 <= k < hi implies
+                        original_int[k] == original_data[k] as int by {}
+                    lemma_sum_congruence::<int>(
+                        |k: int| original_int[k],
+                        |k: int| original_data[k] as int,
+                        0, hi,
+                    );
+                    assert(partial_sum(original_data, 0, hi) == next_val);
+                }
+
+                let val = data[i as usize] + data[partner];
+                data.set(i as usize, val);
+            }
+
+            proof {
+                // Re-establish invariant for all j
+                assert forall|j: int| #![trigger data@[j]] 0 <= j < n as int
+                implies bk_inner_inv(data@, j, (i + 1) as int, stride as int, step as int, prev_bk, next_bk)
+                by {
+                    if j == i as int {
+                        if bk_active(j, stride as int, step as int) {
+                            // Just processed: data == next_bk
+                            assert(bk_pair_processed(j, (i + 1) as int, stride as int, step as int));
+                        } else {
+                            // Not active, unchanged
+                            assert(!bk_pair_processed(j, (i + 1) as int, stride as int, step as int));
+                        }
+                    } else {
+                        // j < i: bk_pair_processed(j, i+1) == bk_pair_processed(j, i)
+                        // since only j == i could become newly processed
+                        if bk_active(i as int, stride as int, step as int) && j < i as int {
+                            // j was either already processed or not
+                            // bk_pair_processed(j, i+1) iff bk_active(j) && j < i+1
+                            // bk_pair_processed(j, i)   iff bk_active(j) && j < i
+                            // j < i < i+1, so both are the same for j < i
+                        }
+                        // j > i: unchanged, not processed at either i or i+1
+                    }
+                }
+            }
+
+            i = i + 1;
+        }
+
+        // After inner loop: all active positions processed, data matches next_bk
+        proof {
+            assert forall|j: int| 0 <= j < n as int
+            implies data@[j] as int == next_bk[j]
+            by {
+                if bk_active(j, stride as int, step as int) {
+                    assert(bk_pair_processed(j, n as int, stride as int, step as int));
+                } else {
+                    assert(!bk_pair_processed(j, n as int, stride as int, step as int));
+                    assert(next_bk[j] == prev_bk[j]);
+                }
+            }
+
+            crate::proof::scan_brent_kung_lemmas::lemma_bk_downsweep_step(
+                original_int, n as nat, total_levels, dk as nat);
+        }
+
+        dk = dk + 1;
+        if dk < levels - 1 {
+            proof {
+                assert(pow2((total_levels - dk - 2) as nat) == ds_stride as nat / 2) by {
+                    assert(pow2((total_levels - (dk - 1) - 2) as nat) == ds_stride as nat);
+                    assert((total_levels - (dk - 1) - 2) as nat == (total_levels - dk - 1) as nat);
+                    assert(pow2((total_levels - dk - 1) as nat) == 2 * pow2((total_levels - dk - 2) as nat));
+                    crate::proof::swizzle_lemmas::lemma_pow2_positive((total_levels - dk - 2) as nat);
+                };
+            }
+            ds_stride = ds_stride / 2;
+        }
+    }
+
+    // ============================================================
+    // FINAL: bk_result == inclusive_scan_int
+    // ============================================================
+    proof {
+        use crate::proof::scan_brent_kung_lemmas::lemma_bk_correct;
+        lemma_bk_correct(original_int, n as nat, total_levels);
+        let result = crate::scan_brent_kung::bk_result(original_int, n as nat, total_levels);
+
+        assert forall|j: int| 0 <= j < n as int
+        implies data@[j] as int == inclusive_scan_int(original_data)[j]
+        by {
+            assert(data@[j] as int == crate::scan_brent_kung::bk_downsweep_state(
+                original_int, n as nat, total_levels, (total_levels - 1) as nat)[j]);
+            assert(result[j] == inclusive_scan::<int>(original_int)[j]);
+            // Bridge inclusive_scan(original_int) to inclusive_scan_int(original_data)
+            assert forall|k: int| 0 <= k < n as int implies
+                as_int_seq(original_data)[k] == original_data[k] as int by {}
+            lemma_sum_congruence::<int>(
+                |k: int| as_int_seq(original_data)[k],
+                |k: int| original_data[k] as int,
+                0, j + 1,
+            );
+        }
+    }
+}
+
 } // verus!

@@ -18,3 +18,5 @@ pub mod gemm_lemmas;
 pub mod scan_lemmas;
 pub mod scan_tree_lemmas;
 pub mod scan_blelloch_lemmas;
+pub mod scan_brent_kung_lemmas;
+pub mod scan_multiblock_lemmas;

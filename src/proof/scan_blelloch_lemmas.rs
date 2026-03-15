@@ -72,7 +72,7 @@ pub proof fn lemma_tree_reduce_invariant_all(data: Seq<int>, n: nat, total_level
 }
 
 /// Non-active positions are stable across a range of tree_reduce levels.
-proof fn lemma_tree_reduce_stable_range(data: Seq<int>, n: nat, start: nat, end_level: nat, i: int)
+pub proof fn lemma_tree_reduce_stable_range(data: Seq<int>, n: nat, start: nat, end_level: nat, i: int)
     requires
         n == data.len(),
         start <= end_level,
@@ -91,7 +91,7 @@ proof fn lemma_tree_reduce_stable_range(data: Seq<int>, n: nat, start: nat, end_
 
 /// Value of tree_reduce_state at total_levels for a position whose exact
 /// divisibility level is d (i.e., pow2(d) | (i+1) but pow2(d+1) ∤ (i+1)).
-proof fn lemma_tree_reduce_value_at_exact_level(data: Seq<int>, n: nat, total_levels: nat, d: nat, i: int)
+pub proof fn lemma_tree_reduce_value_at_exact_level(data: Seq<int>, n: nat, total_levels: nat, d: nat, i: int)
     requires
         n == data.len(),
         n > 0,
