@@ -23,13 +23,16 @@ pub open spec fn as_nat_seq(data: Seq<u64>) -> Seq<nat> {
 }
 
 /// Single radix sort step: stable partition by bit at position `pos`.
-pub fn radix_step_exec(data: &Vec<u64>, output: &mut Vec<u64>, pos: u64)
+/// `shift` must equal pow2(pos) — threaded from the outer loop to avoid recomputation.
+pub fn radix_step_exec(data: &Vec<u64>, output: &mut Vec<u64>, pos: u64, shift: u64)
     requires
         old(output)@.len() == data@.len(),
         data@.len() > 0,
         is_power_of_2(data@.len()),
         data@.len() <= i64::MAX as nat,
         pos < 64,
+        shift as nat == pow2(pos as nat),
+        shift > 0,
     ensures
         output@.len() == data@.len(),
         forall|i: int| 0 <= i < data@.len() as int ==>
@@ -40,25 +43,6 @@ pub fn radix_step_exec(data: &Vec<u64>, output: &mut Vec<u64>, pos: u64)
 
     let ghost spec_data = as_nat_seq(data@);
     let ghost spec_pred = pred_bit(spec_data, pos as nat);
-
-    // Compute pow2(pos) as u64
-    let mut shift: u64 = 1;
-    let mut k: u64 = 0;
-    while k < pos
-        invariant
-            k <= pos, pos < 64,
-            shift as nat == pow2(k as nat),
-            shift > 0,
-        decreases pos - k,
-    {
-        proof {
-            assert(pow2((k + 1) as nat) == 2 * pow2(k as nat));
-            lemma_pow2_monotone((k + 1) as nat, 63);
-            assert(pow2(63) <= u64::MAX as nat) by (compute_only);
-        }
-        shift = shift * 2;
-        k = k + 1;
-    }
 
     // Step 1: Build pred_vec and pred_int
     let mut pred_vec: Vec<bool> = Vec::new();
@@ -456,6 +440,7 @@ pub fn radix_sort_exec(data: &mut Vec<u64>, num_bits: u64)
 
     // Process each bit position
     let mut step: u64 = 0;
+    let mut shift: u64 = 1; // pow2(0) = 1
     while step < num_bits
         invariant
             step <= num_bits,
@@ -468,6 +453,8 @@ pub fn radix_sort_exec(data: &mut Vec<u64>, num_bits: u64)
             num_bits > 0,
             original == as_nat_seq(old(data)@),
             original.len() == n as nat,
+            step < num_bits ==> shift as nat == pow2(step as nat),
+            step < num_bits ==> shift > 0,
             forall|i: int| 0 <= i < n as int ==>
                 (data@[i] as nat) == radix_sort_partial(original, step as nat)[i],
             forall|i: int| 0 <= i < n as int ==>
@@ -484,7 +471,7 @@ pub fn radix_sort_exec(data: &mut Vec<u64>, num_bits: u64)
             by {}
         }
 
-        radix_step_exec(data, &mut buf, step);
+        radix_step_exec(data, &mut buf, step, shift);
 
         // buf now has radix_step(step_input, step)
         // = radix_step(radix_sort_partial(original, step), step)
@@ -529,9 +516,18 @@ pub fn radix_sort_exec(data: &mut Vec<u64>, num_bits: u64)
                 assert(data@[i] == buf@[i]);
                 assert(buf@[i] as nat == radix_step(step_input, step as nat)[i]);
             }
+
         }
 
         step = step + 1;
+        if step < num_bits {
+            proof {
+                assert(pow2(step as nat) == 2 * pow2((step - 1) as nat));
+                lemma_pow2_monotone(step as nat, 63);
+                assert(pow2(63) <= u64::MAX as nat) by (compute_only);
+            }
+            shift = shift * 2;
+        }
     }
 
     // Final: result is sorted
