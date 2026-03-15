@@ -64,10 +64,11 @@ The key safety property: distinct indices map to distinct offsets.
 
 ## Phase 4: Division & Product Correctness
 
-### 4a. Division Correctness
+### 4a. Division Correctness ✅ (substantially complete)
+- Division offset/bijectivity theorems exist for rank-1 A, column-major A
+- `lemma_zipped_bijective` resolves complement surjectivity blocker
 - `lemma_divide_size(a, b)` — `size(logical_divide(a,b)) == size(a)`
 - `lemma_divide_offset(a, b, x)` — `logical_divide(a,b).offset(x) == a.offset(x)` (bijective rearrangement)
-  - Depends on complement bijectivity (Phase 1c)
 
 ### 4b. Product Correctness (partial) ✅
 - `lemma_product_valid(a, b)` ✅ — logical_product is valid
@@ -122,30 +123,29 @@ The key safety property: distinct indices map to distinct offsets.
 - `right_inverse_exec(layout) -> RuntimeLayout`
 - `left_inverse_exec(layout) -> RuntimeLayout`
 
-## Phase 8: Zipped/Tiled Divide & Product
+## Phase 8: Zipped/Tiled Divide & Product ✅ (substantially complete)
 
-These are structural rearrangements of logical_divide/product outputs.
+127 proof lemmas covering partition disjointness, SM80/SM90 atoms, pipeline soundness, and 3-level warp/register partitioning.
 
-### 8a. Zipped Divide
+### 8a. Zipped Divide ✅
 - `zipped_divide(a, b) -> (LayoutSpec, LayoutSpec)` — tile modes + rest modes separated
-  - Tile layout: first rank(B) modes from logical_divide
-  - Rest layout: remaining modes
+- `lemma_zipped_bijective` — complement surjectivity resolved
 
-### 8b. Tiled Divide
+### 8b. Tiled Divide ✅
 - `tiled_divide(a, b) -> (LayoutSpec, LayoutSpec)` — similar but flattened differently
 
-### 8c. Blocked/Raked Product
+### 8c. Blocked/Raked Product ✅
 - `blocked_product(a, b)` — contiguous block distribution
 - `raked_product(a, b)` — cyclic/interleaved distribution
 
-## Phase 9: verus-vulkan Integration
+## Phase 9: verus-vulkan Integration (in progress)
 
-- Use `RuntimeLayout` for GPU buffer access patterns
-- Prove no-aliasing for tile assignments (thread safety)
-- Map CuTe tiling hierarchy to Vulkan compute shader dispatches:
-  - WorkGroup <-> Thread Block tile
-  - Invocation <-> Thread partition
-- Verified bounds checking: offset < buffer_size
+Bridge CuTe abstract layout proofs to Vulkan's concrete dispatch API:
+- `parallel_dispatch.rs` — general parallel ↔ sequential equivalence theorem
+- `gemm_dispatch.rs` — CuTe ↔ Vulkan GEMM bridge (dispatch safety + master correctness)
+- `gemm_sm80.rs` — concrete SM80 m16n8k16 instantiation (BM=128, BN=128, BK=32)
+- Maps WorkGroup ↔ CTA tile, Invocation ↔ thread partition
+- Proves parallel GPU dispatch equals sequential execution via write disjointness
 
 ## Phase 10: Tiling DSL
 
