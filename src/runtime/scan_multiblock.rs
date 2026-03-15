@@ -119,9 +119,14 @@ pub fn three_phase_inclusive_scan_exec(
 
     proof {
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(n as int, block_size as int);
+        // fundamental_div_mod gives: n == block_size * nblocks + n % block_size
         assert(nblocks > 0) by (nonlinear_arith)
-            requires n > 0, (n as int) == nblocks as int * block_size as int + ((n as int) % (block_size as int)),
+            requires n > 0, (n as int) == block_size as int * nblocks as int + ((n as int) % (block_size as int)),
                      (n as int) % (block_size as int) == 0, block_size > 0;
+        // Also establish the commuted product form for loop invariant
+        assert(n as int == nblocks as int * block_size as int) by (nonlinear_arith)
+            requires (n as int) == block_size as int * nblocks as int + ((n as int) % (block_size as int)),
+                     (n as int) % (block_size as int) == 0;
     }
 
     // ============================================================
@@ -205,6 +210,7 @@ pub fn three_phase_inclusive_scan_exec(
                 output@.len() == (b as int * block_size as int + j2 as int) as nat,
                 scanned@.len() == block_size as nat,
                 bsi == b * block_size,
+                bsi as int + block_size as int <= n as int,
                 n as int == data_len as int, // usize bridge
                 block_size > 0,
                 // new elements are scanned values
@@ -213,7 +219,7 @@ pub fn three_phase_inclusive_scan_exec(
                 // old elements preserved
                 forall|k: int| 0 <= k < bsi as int ==>
                     output@[k] == output_before[k],
-                // scanned holds inclusive scan
+                // scanned holds inclusive scan of block_buf
                 forall|k: int| 0 <= k < block_size as int ==>
                     scanned@[k] as int == inclusive_scan_int(block_buf@)[k],
             decreases block_size - j2,
@@ -235,10 +241,12 @@ pub fn three_phase_inclusive_scan_exec(
             lemma_inclusive_scan_subrange(
                 data@, bsi as int, block_size as int, block_size as int - 1,
             );
-            // inclusive_scan_int(sub)[bs-1] == reduce(int_data, bsi, bsi+bs)
-            // scanned@[bs-1] as int == inclusive_scan_int(block_buf@)[bs-1]
-            //                       == inclusive_scan_int(sub)[bs-1]  (since block_buf@ =~= sub)
-            //                       == reduce(int_data, bsi, bsi+bs)
+
+            // Explicit chain: block_sum_val → scanned → inclusive_scan → reduce
+            assert(block_sum_val as int
+                == scanned@[(block_size as int - 1) as int] as int);
+            assert(scanned@[(block_size as int - 1) as int] as int
+                == inclusive_scan_int(block_buf@)[block_size as int - 1]);
 
             // Show block_end and block_start for unfolding block_reduce
             assert((b as nat + 1) * block_size as nat <= n as nat) by (nonlinear_arith)
@@ -247,8 +255,23 @@ pub fn three_phase_inclusive_scan_exec(
                 == (b as nat + 1) * block_size as nat);
             assert(block_start(block_size as nat, b as nat)
                 == b as nat * block_size as nat);
-            // block_reduce(int_data, bs, b) = reduce(int_data, b*bs, (b+1)*bs)
-            //                               = reduce(int_data, bsi, bsi+bs)
+
+            // Chain: inclusive_scan_int(block_buf@)[bs-1]
+            //   == reduce::<int>(int_data, bsi, bsi + bs)       [by lemma_inclusive_scan_subrange]
+            //   == reduce::<int>(int_data, block_start, block_end) [by above assertions]
+            //   == block_reduce(int_data, bs, b)                [by definition of block_reduce]
+            // block_end(n, bs, b) = (b+1)*bs when (b+1)*bs <= n
+            // Already proved: (b+1)*bs <= n
+            // Need: (b+1)*bs == b*bs + bs (nonlinear)
+            assert(((b as nat + 1) * block_size as nat) as int
+                == (b as nat * block_size as nat) as int + block_size as int)
+            by (nonlinear_arith)
+                requires b >= 0nat, block_size as nat >= 0nat;
+            assert(block_end(n as nat, block_size as nat, b as nat)
+                == (b as nat + 1) * block_size as nat);
+            // Now block_reduce unfolds correctly
+            assert(reduce::<int>(int_data, bsi as int, bsi as int + block_size as int)
+                == block_reduce(int_data, block_size as nat, b as nat));
             assert(block_sum_val as int
                 == block_reduce(int_data, block_size as nat, b as nat));
 
@@ -297,8 +320,23 @@ pub fn three_phase_inclusive_scan_exec(
         // Bridge nblocks to is_power_of_2
         assert(nblocks as int == (n as int) / (block_size as int));
         assert(is_power_of_2(nblocks as nat));
-        // Proof debt: block_sums partial sums bounded
-        assume(all_partial_sums_bounded(block_sums@));
+        // block_sums partial sums bounded (from original data being bounded)
+        assert(nblocks as nat * block_size as nat <= data@.len()) by (nonlinear_arith)
+            requires n as int == nblocks as int * block_size as int, data@.len() == n as nat;
+        lemma_block_sums_bounded(data@, block_size as nat, nblocks as nat);
+        // Bridge: the Seq::new in lemma matches our block_sums
+        let ghost lemma_seq: Seq<i64> = Seq::new(nblocks as nat, |i: int|
+            block_reduce(int_data, block_size as nat, i as nat) as i64);
+        assert(block_sums@ =~= lemma_seq) by {
+            assert(block_sums@.len() == lemma_seq.len());
+            assert forall|i: int| 0 <= i < block_sums@.len() as int implies
+                block_sums@[i] == lemma_seq[i]
+            by {
+                assert(block_sums@[i] as int == block_reduce(int_data, block_size as nat, i as nat));
+                assert(lemma_seq[i] == block_reduce(int_data, block_size as nat, i as nat) as i64);
+                // Both are i64 with same int value
+            }
+        }
     }
 
     blelloch_exclusive_scan_exec(&mut block_sums, nblocks);
@@ -312,12 +350,14 @@ pub fn three_phase_inclusive_scan_exec(
             oi <= n,
             output@.len() == n as nat,
             block_sums@.len() == nblocks as nat,
+            original_block_sums.len() == nblocks as nat, // needed for as_int_seq unfolding
             n as int == nblocks as int * block_size as int,
             data@.len() == n as nat,
             block_size > 0,
             all_partial_sums_bounded(data@),
             n <= i64::MAX as u64,
             nblocks <= i64::MAX as u64,
+            n as int == data_len as int, // usize bridge
             int_data == as_int_seq(data@),
             // block_sums holds exclusive scan of original
             forall|bi: int| 0 <= bi < nblocks as int ==>
@@ -395,6 +435,21 @@ pub fn three_phase_inclusive_scan_exec(
                 0, block_id as int,
             );
 
+            // eqv for int is ==, so sum_congruence gives actual equality
+            // reduce unfolds to sum with same closure, so these are equal
+            assert(
+                reduce::<int>(as_int_seq(original_block_sums), 0, block_id as int)
+                == reduce::<int>(block_reduces(int_data, block_size as nat, block_id as nat), 0, block_id as int)
+            );
+            // Chain: exclusive_scan_int → reduce → block_exclusive_prefix
+            assert(exclusive_scan_int(original_block_sums)[block_id as int]
+                == block_exclusive_prefix(int_data, block_size as nat, block_id as nat));
+
+            // prefix_val == block_sums[block_id] and block_sums holds exclusive scan
+            assert(block_sums@[block_id as int] as int
+                == exclusive_scan_int(original_block_sums)[block_id as int]);
+            // So prefix_val as int == block_exclusive_prefix(int_data, bs, block_id)
+
             // Overflow check
             lemma_phase3_overflow(
                 data@, block_size as nat, block_id as nat, local_j as int,
@@ -409,8 +464,68 @@ pub fn three_phase_inclusive_scan_exec(
 
         let prefix_val = block_sums[block_id as usize];
         let local_val = output[oi as usize];
+
+        proof {
+            // usize bridge: oi < n, block_id < n, n fits in usize (data_len)
+            assert(oi < n); // from loop guard, both u64
+            assert(n as int == data_len as int); // from invariant
+            assert((oi as usize) as int == oi as int);
+            assert((block_id as int) < (n as int)) by (nonlinear_arith)
+                requires (block_id as int) < (nblocks as int), n as int == nblocks as int * block_size as int,
+                         block_size > 0;
+            assert((block_id as usize) as int == block_id as int);
+
+            // Chain prefix_val → block_exclusive_prefix
+            assert(prefix_val as int == block_sums@[block_id as int] as int);
+            assert(prefix_val as int == exclusive_scan_int(original_block_sums)[block_id as int]);
+            assert(prefix_val as int == block_exclusive_prefix(int_data, block_size as nat, block_id as nat));
+
+            // Chain local_val → reduce
+            assert(local_val as int == output@[oi as int] as int);
+            assert(local_val as int == reduce::<int>(int_data,
+                block_id as int * block_size as int,
+                block_id as int * block_size as int + local_j as int + 1));
+
+            // From lemma_phase3_overflow: the sum fits in i64
+            // (block_id as nat * block_size as nat) = block_id * block_size
+            assert((block_id as nat * block_size as nat) as int == block_id as int * block_size as int) by (nonlinear_arith);
+        }
+
         let result_val: i64 = prefix_val + local_val;
+
+        proof {
+            // result_val = prefix + local = block_exclusive_prefix + local_reduce
+            // = inclusive_scan_int(data@)[oi]  [by lemma_three_phase_correct]
+            assert(result_val as int == prefix_val as int + local_val as int);
+            assert(result_val as int == inclusive_scan_int(data@)[oi as int]);
+        }
+
+        let ghost output_before_set = output@;
         output.set(oi as usize, result_val);
+
+        proof {
+            // Unprocessed invariant: set only changes output[oi], all other indices preserved
+            assert forall|bi: int, j: int|
+                0 <= bi < nblocks as int && 0 <= j < block_size as int
+                && bi * block_size as int + j >= oi as int + 1
+            implies
+                #[trigger] output@[(bi * block_size as int + j) as int] as int
+                    == reduce::<int>(int_data,
+                        bi * block_size as int,
+                        bi * block_size as int + j + 1)
+            by {
+                let idx = bi * block_size as int + j;
+                assert(idx != oi as int) by (nonlinear_arith)
+                    requires idx >= oi as int + 1;
+                assert(idx != (oi as usize) as int);
+                // bounds for Vec::set postcondition trigger
+                assert((0 <= idx) && (idx < output@.len() as int)) by (nonlinear_arith)
+                    requires bi >= 0, (bi as int) < (nblocks as int), j >= 0, (j as int) < (block_size as int),
+                             idx == bi * block_size as int + j,
+                             output@.len() == n as nat, n as int == nblocks as int * block_size as int,
+                             block_size > 0;
+            }
+        }
 
         oi = oi + 1;
     }
@@ -502,6 +617,7 @@ pub fn compact_exec(
             si <= n,
             output@.len() == n as nat,
             pred_int@.len() == n as nat,
+            original_pred_int.len() == n as nat, // needed for as_int_seq unfolding
             data@.len() == n as nat,
             pred@.len() == n as nat,
             n <= i64::MAX as u64,
@@ -540,10 +656,18 @@ pub fn compact_exec(
                 );
                 // So compact_indices(pred)[si] as int == pred_int[si] as int == scatter_idx as int
 
-                // Bounds: scatter_idx >= 0 and < n
+                // Now: scatter_idx as int == compact_indices(pred)[si] as int
+                // compact_indices values are nat (>= 0) and < n
+                // (they are counts of true values in prefix, hence < n)
+                assert(scatter_idx as int == compact_indices(pred@)[si as int] as int);
+                assert(0 <= compact_indices(pred@)[si as int]);
                 lemma_pred_partial_sums_bounded(pred@);
-                assert(0 <= scatter_idx as int);
-                assert((scatter_idx as int) < (n as int));
+                // compact_indices[si] = compact_size(pred.take(si)) <= pred.take(si).len() == si < n
+                lemma_compact_size_le_len(pred@.take(si as int));
+                assert(compact_indices(pred@)[si as int] == compact_size(pred@.take(si as int)));
+                assert(pred@.take(si as int).len() == si as nat);
+                assert(compact_indices(pred@)[si as int] <= si as nat);
+                assert((compact_indices(pred@)[si as int] as int) < (n as int));
 
                 // Disjointness: previous writes not clobbered by this set
                 assert forall|j: int| 0 <= j < si as int && pred@[j] implies
@@ -553,7 +677,42 @@ pub fn compact_exec(
                 }
             }
 
+            // scatter_idx is non-negative (equals a nat) and < n, so fits in usize
+            proof {
+                assert(scatter_idx >= 0i64);
+                assert((scatter_idx as int) < (n as int));
+            }
+            let ghost output_before_scatter = output@;
             output.set(scatter_idx as usize, data[si as usize]);
+
+            proof {
+                // (scatter_idx as usize) as int == scatter_idx as int (since 0 <= scatter_idx < n = data_len)
+                assert((scatter_idx as usize) as int == scatter_idx as int);
+                // New element: output[scatter_idx] == data[si]
+                assert(output@[scatter_idx as int] == data@[si as int]);
+                assert(scatter_idx as int == compact_indices(pred@)[si as int] as int);
+                // Old elements preserved: scatter_idx != compact_indices(pred)[j] for j < si
+                assert forall|j: int| 0 <= j < si as int && pred@[j] implies
+                    #[trigger] output@[compact_indices(pred@)[j] as int] == data@[j]
+                by {
+                    lemma_compact_scatter_disjoint(pred@, j, si as int);
+                    let ci_j = compact_indices(pred@)[j] as int;
+                    let ci_si = compact_indices(pred@)[si as int] as int;
+                    assert(ci_j != ci_si);
+                    assert(ci_si == scatter_idx as int);
+                    assert(ci_j != scatter_idx as int);
+                    assert(ci_j != (scatter_idx as usize) as int);
+                    // Vec::set preserves output@[ci_j] since ci_j != set index
+                    assert(0 <= ci_j && ci_j < output@.len() as int) by {
+                        lemma_compact_size_le_len(pred@.take(j));
+                        assert(compact_indices(pred@)[j] == compact_size(pred@.take(j)));
+                        assert(compact_indices(pred@)[j] <= j as nat);
+                    }
+                    assert(output@[ci_j] == output_before_scatter[ci_j]);
+                }
+            }
+        } else {
+            // pred[si] is false: no write, invariant trivially maintained
         }
         si = si + 1;
     }
@@ -594,6 +753,9 @@ pub fn compact_exec(
 }
 
 /// Helper lemma: scatter into compact_indices positions produces compact_result.
+/// Proved by induction on n: for each output index i < compact_size(pred),
+/// there is a unique true position j with compact_indices(pred)[j] == i,
+/// and output[i] == data[j] == compact_result(data, pred)[i].
 proof fn lemma_scatter_is_compact_result(
     data: Seq<i64>, pred: Seq<bool>, output: Seq<i64>, n: u64,
 )
@@ -608,9 +770,143 @@ proof fn lemma_scatter_is_compact_result(
         forall|i: int| 0 <= i < compact_size(pred) as int ==>
             output[i] == compact_result(data, pred)[i],
 {
-    // Correct by construction. The scatter places data[j] at compact_indices(pred)[j]
-    // for each true j, and compact_indices is a bijection from true positions to [0, compact_size).
-    assume(false);
+    // Prove by showing each true position j maps to the right compact_result index.
+    // For each i < compact_size(pred), we find the j such that compact_indices(pred)[j] == i
+    // and pred[j]. Then output[i] == data[j] (from requires) and
+    // compact_result(data, pred)[i] == data[j] (by definition of compact_result).
+    //
+    // The key bridge: compact_result(data, pred)[compact_indices(pred)[j]] == data[j]
+    // for all j where pred[j].
+    assert forall|i: int| 0 <= i < compact_size(pred) as int implies
+        output[i] == compact_result(data, pred)[i]
+    by {
+        // Find j such that compact_indices(pred)[j] == i and pred[j]
+        let j = lemma_compact_indices_surjective(data, pred, i);
+        // output[i] == output[compact_indices(pred)[j]] == data[j] (from requires)
+        assert(pred[j]);
+        assert(compact_indices(pred)[j] as int == i);
+        assert(output[i] == data[j]);
+        // compact_result(data, pred)[i] == data[j]
+        lemma_compact_result_at_index(data, pred, j);
+    }
+}
+
+/// For each i < compact_size(pred), find the unique j with pred[j] and compact_indices(pred)[j] == i.
+proof fn lemma_compact_indices_surjective(
+    data: Seq<i64>, pred: Seq<bool>, i: int,
+) -> (j: int)
+    requires
+        data.len() == pred.len(),
+        0 <= i,
+        i < compact_size(pred) as int,
+    ensures
+        0 <= j,
+        j < pred.len() as int,
+        pred[j],
+        compact_indices(pred)[j] as int == i,
+    decreases pred.len(),
+{
+    let n = pred.len() as int;
+    // compact_size of the full pred > i >= 0, so pred is non-empty
+    assert(pred.drop_last() =~= pred.take(n - 1));
+    if pred.last() && i == compact_size(pred) as int - 1 {
+        // The last element is true and maps to the last compact index
+        // compact_indices(pred)[n-1] = compact_size(pred.take(n-1))
+        //                            = compact_size(pred.drop_last())
+        //                            = compact_size(pred) - 1  [since pred.last() is true]
+        //                            = i
+        assert(compact_indices(pred)[(n - 1) as int]
+            == compact_size(pred.take(n - 1)));
+        assert(compact_size(pred) == compact_size(pred.drop_last()) + 1nat);
+        (n - 1) as int
+    } else {
+        // Either pred.last() is false (compact_size unchanged) or i < compact_size - 1
+        // In both cases, i < compact_size(pred.drop_last())
+        let cs_drop = compact_size(pred.drop_last());
+        if pred.last() {
+            // i < compact_size(pred) - 1 = cs_drop
+            assert(compact_size(pred) == cs_drop + 1nat);
+        } else {
+            // compact_size(pred) == cs_drop
+            assert(compact_size(pred) == cs_drop);
+        }
+        assert((i as int) < (cs_drop as int));
+        // Recurse on drop_last
+        let j = lemma_compact_indices_surjective(
+            data.drop_last(), pred.drop_last(), i,
+        );
+        // j < pred.drop_last().len() == n - 1 < n
+        // pred.drop_last()[j] == pred[j]
+        assert(pred[j] == pred.drop_last()[j]);
+        // compact_indices(pred.drop_last())[j] == compact_size(pred.drop_last().take(j))
+        //   == compact_size(pred.take(j))  [since j < n-1, take(j) is same]
+        //   == compact_indices(pred)[j]
+        assert(pred.drop_last().take(j) =~= pred.take(j));
+        assert(compact_indices(pred.drop_last())[j] == compact_indices(pred)[j]);
+        j
+    }
+}
+
+/// compact_result(data, pred)[compact_indices(pred)[j]] == data[j] when pred[j].
+proof fn lemma_compact_result_at_index(
+    data: Seq<i64>, pred: Seq<bool>, j: int,
+)
+    requires
+        data.len() == pred.len(),
+        0 <= j,
+        j < pred.len() as int,
+        pred[j],
+    ensures
+        compact_result(data, pred)[compact_indices(pred)[j] as int] == data[j],
+    decreases pred.len(),
+{
+    let n = pred.len() as int;
+    if j == n - 1 {
+        // j is the last element
+        // compact_indices(pred)[n-1] = compact_size(pred.take(n-1)) = compact_size(pred.drop_last())
+        assert(pred.take(n - 1) =~= pred.drop_last());
+        let ci = compact_indices(pred)[(n - 1) as int];
+        // pred.last() is true (since j == n-1 and pred[j])
+        // compact_result(data, pred) = compact_result(data.drop_last(), pred.drop_last()).push(data.last())
+        // compact_result(data, pred)[ci] where ci = compact_size(pred.drop_last())
+        //   = compact_result(data.drop_last(), pred.drop_last()).push(data.last())[ci]
+        //   = data.last() (since ci == length of rest)
+        let rest = compact_result(data.drop_last(), pred.drop_last());
+        lemma_compact_result_len(data.drop_last(), pred.drop_last());
+        // rest.len() == compact_size(pred.drop_last()) == compact_size(pred.take(n-1)) == ci
+        assert(ci == rest.len() as nat);
+        assert(compact_result(data, pred) =~= rest.push(data.last()));
+        assert(rest.push(data.last())[ci as int] == data.last());
+        assert(data.last() == data[j]);
+    } else {
+        // j < n - 1: recurse
+        let rest = compact_result(data.drop_last(), pred.drop_last());
+        // compact_indices(pred)[j] == compact_indices(pred.drop_last())[j]
+        assert(pred.drop_last().take(j) =~= pred.take(j));
+        assert(compact_indices(pred.drop_last())[j] == compact_indices(pred)[j]);
+        // IH: compact_result(data.drop_last(), pred.drop_last())[ci] == data.drop_last()[j]
+        lemma_compact_result_at_index(data.drop_last(), pred.drop_last(), j);
+        let ci = compact_indices(pred)[j];
+        // ci < compact_size(pred.drop_last()) == rest.len()
+        lemma_compact_result_len(data.drop_last(), pred.drop_last());
+        // ci = compact_size(pred.take(j)) < compact_size(pred.take(j+1)) <= compact_size(pred.drop_last())
+        lemma_compact_indices_step(pred, j);
+        // compact_indices(pred)[j+1] == ci + 1 (since pred[j])
+        // compact_indices(pred)[j+1] <= compact_indices(pred)[n-1] (nondecreasing)
+        lemma_compact_indices_nondecreasing(pred, j + 1, n - 1);
+        // compact_indices(pred)[n-1] == compact_size(pred.drop_last())
+        assert(pred.take((n - 1) as int) =~= pred.drop_last());
+        // So ci + 1 <= compact_size(pred.drop_last()), i.e. ci < compact_size(pred.drop_last())
+        assert((ci as int) < (compact_size(pred.drop_last()) as int));
+        if pred.last() {
+            assert(compact_result(data, pred) =~= rest.push(data.last()));
+            assert((ci as int) < (rest.len() as int));
+            assert(rest.push(data.last())[ci as int] == rest[ci as int]);
+        } else {
+            assert(compact_result(data, pred) =~= rest);
+        }
+        assert(data.drop_last()[j] == data[j]);
+    }
 }
 
 } // verus!

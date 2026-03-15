@@ -162,11 +162,150 @@ pub proof fn lemma_block_sums_bounded(
         all_partial_sums_bounded(block_sums_seq)
     }),
 {
-    // Each block reduce = partial_sum(original_data, b*bs, (b+1)*bs) which fits in i64
-    // Partial sum of block reduces = partial_sum(original_data, lo*bs, hi*bs) which fits in i64
-    // This is the core insight but proving it requires careful induction.
-    // For now, admit.
-    assume(false);
+    let int_data = as_int_seq(original_data);
+    let bs: int = block_size as int;
+    let nb: int = nblocks as int;
+    let block_sums_seq: Seq<i64> = Seq::new(nblocks, |i: int|
+        block_reduce(int_data, block_size, i as nat) as i64);
+
+    // Step 1: Each block_reduce fits in i64, so as i64 round-trip preserves value.
+    assert forall|j: int| 0 <= j < nb implies
+        (#[trigger] block_sums_seq[j] as int) == block_reduce(int_data, block_size, j as nat)
+    by {
+        lemma_block_reduce_bounded(original_data, int_data, block_size, nblocks, j);
+    }
+
+    // Step 2: partial_sum(block_sums_seq, lo, hi) == partial_sum(original_data, lo*bs, hi*bs)
+    assert forall|lo: int, hi: int| 0 <= lo <= hi <= block_sums_seq.len()
+    implies i64::MIN as int <= #[trigger] partial_sum(block_sums_seq, lo, hi)
+        && partial_sum(block_sums_seq, lo, hi) <= i64::MAX as int
+    by {
+        lemma_block_partial_sum_eq(original_data, int_data, block_sums_seq, block_size, nblocks, lo, hi);
+        let lo_idx = lo * bs;
+        let hi_idx = hi * bs;
+        assert(0 <= lo_idx && lo_idx <= hi_idx) by (nonlinear_arith)
+            requires lo >= 0, lo <= hi, bs > 0, lo_idx == lo * bs, hi_idx == hi * bs;
+        assert(hi_idx <= original_data.len() as int) by (nonlinear_arith)
+            requires hi <= nb, nb * bs <= original_data.len() as int, bs > 0,
+                     hi_idx == hi * bs;
+    }
+}
+
+/// Helper: block_reduce(int_data, bs, j) fits in i64, so as-i64 round-trips.
+proof fn lemma_block_reduce_bounded(
+    original_data: Seq<i64>, int_data: Seq<int>,
+    block_size: nat, nblocks: nat, j: int,
+)
+    requires
+        block_size > 0,
+        nblocks * block_size <= original_data.len(),
+        int_data == as_int_seq(original_data),
+        all_partial_sums_bounded(original_data),
+        0 <= j,
+        j < nblocks as int,
+    ensures
+        block_reduce(int_data, block_size, j as nat) as i64 as int
+            == block_reduce(int_data, block_size, j as nat),
+{
+    let bs: int = block_size as int;
+    let lo = j * bs;
+    let hi_raw = (j + 1) * bs;
+    assert(0 <= lo) by (nonlinear_arith) requires j >= 0, bs > 0, lo == j * bs;
+    assert(hi_raw <= original_data.len() as int) by (nonlinear_arith)
+        requires j + 1 <= nblocks as int, (nblocks as int) * bs <= original_data.len() as int,
+                 bs > 0, hi_raw == (j + 1) * bs;
+    assert(lo <= hi_raw) by (nonlinear_arith) requires bs > 0, lo == j * bs, hi_raw == (j + 1) * bs;
+
+    // block_start = j as nat * block_size (nat mult)
+    // We need: (j as nat * block_size) as int == lo == j * bs
+    // Since j >= 0: j as nat as int == j, so (j as nat * block_size) as int == j * block_size as int
+    assert(block_start(block_size, j as nat) as int == lo);
+    // block_end: (j+1)*bs <= data.len. Already proved hi_raw <= data.len (int).
+    // Bridge int to nat: hi_raw as nat == (j as nat + 1) * block_size
+    assert(hi_raw as nat == (j as nat + 1) * block_size);
+    assert((j as nat + 1) * block_size <= original_data.len());
+    assert(block_end(original_data.len(), block_size, j as nat) as int == hi_raw);
+
+    // block_reduce = reduce(int_data, lo, hi_raw) = sum(|k| int_data[k], lo, hi_raw)
+    // Bridge int_data to original_data
+    assert forall|k: int| lo <= k < hi_raw implies int_data[k] == original_data[k] as int by {}
+    lemma_sum_congruence::<int>(
+        |k: int| int_data[k], |k: int| original_data[k] as int, lo, hi_raw,
+    );
+    // partial_sum(original_data, lo, hi_raw) fits in i64
+    assert(i64::MIN as int <= partial_sum(original_data, lo, hi_raw)
+        && partial_sum(original_data, lo, hi_raw) <= i64::MAX as int);
+}
+
+/// Helper: partial_sum(block_sums_seq, lo, hi) == partial_sum(original_data, lo*bs, hi*bs).
+proof fn lemma_block_partial_sum_eq(
+    original_data: Seq<i64>, int_data: Seq<int>,
+    block_sums_seq: Seq<i64>,
+    block_size: nat, nblocks: nat,
+    lo: int, hi: int,
+)
+    requires
+        block_size > 0,
+        nblocks * block_size <= original_data.len(),
+        int_data == as_int_seq(original_data),
+        block_sums_seq.len() == nblocks,
+        all_partial_sums_bounded(original_data),
+        forall|j: int| 0 <= j < nblocks as int ==>
+            (#[trigger] block_sums_seq[j] as int) == block_reduce(int_data, block_size, j as nat),
+        0 <= lo <= hi,
+        hi <= nblocks as int,
+    ensures
+        partial_sum(block_sums_seq, lo, hi)
+            == partial_sum(original_data, lo * block_size as int, hi * block_size as int),
+    decreases hi - lo,
+{
+    let bs: int = block_size as int;
+    if lo >= hi {
+        lemma_sum_empty::<int>(|j: int| block_sums_seq[j] as int, lo, hi);
+        lemma_sum_empty::<int>(|j: int| original_data[j] as int, lo * bs, hi * bs);
+    } else {
+        lemma_block_partial_sum_eq(original_data, int_data, block_sums_seq,
+            block_size, nblocks, lo, hi - 1);
+        lemma_sum_peel_last::<int>(|j: int| block_sums_seq[j] as int, lo, hi);
+
+        let b = (hi - 1) as nat;
+        let b_lo = (hi - 1) * bs;
+        let b_hi = hi * bs;
+
+        // block_start(bs, b) = b * block_size (nat mult)
+        assert(block_start(block_size, b) as int == b_lo);
+        // block_end: (b+1) * block_size <= data.len since b+1 == hi <= nblocks
+        // b_hi = hi * bs <= nblocks * bs <= data.len (all int)
+        // Bridge nat product to int product for nonlinear_arith
+        assert((nblocks * block_size) as int == (nblocks as int) * bs);
+        assert(b_hi <= original_data.len() as int) by (nonlinear_arith)
+            requires hi <= nblocks as int, (nblocks as int) * bs <= original_data.len() as int,
+                     bs > 0, b_hi == hi * bs;
+        // Bridge int to nat for block_end
+        assert(b_hi as nat == (b + 1) * block_size);
+        assert((b + 1) * block_size <= original_data.len());
+        assert(block_end(original_data.len(), block_size, b) as int == b_hi);
+
+        // block_sums_seq[hi-1] as int == block_reduce(int_data, bs, b)
+        //   = reduce(int_data, b_lo, b_hi) = sum(|k| int_data[k], b_lo, b_hi)
+        // Bridge to partial_sum(original_data, b_lo, b_hi)
+        assert forall|k: int| b_lo <= k < b_hi implies int_data[k] == original_data[k] as int by {}
+        lemma_sum_congruence::<int>(
+            |k: int| int_data[k], |k: int| original_data[k] as int, b_lo, b_hi,
+        );
+
+        // Split original data sum
+        let orig_lo = lo * bs;
+        assert(0 <= orig_lo && orig_lo <= b_lo && b_lo <= b_hi) by (nonlinear_arith)
+            requires lo >= 0, lo <= hi - 1, bs > 0,
+                     orig_lo == lo * bs, b_lo == (hi - 1) * bs, b_hi == hi * bs;
+        assert(b_hi <= original_data.len() as int) by (nonlinear_arith)
+            requires hi <= nblocks as int, (nblocks as int) * bs <= original_data.len() as int,
+                     bs > 0, b_hi == hi * bs;
+        lemma_sum_split::<int>(
+            |k: int| original_data[k] as int, orig_lo, b_lo, b_hi,
+        );
+    }
 }
 
 // ============================================================
