@@ -106,133 +106,37 @@ pub proof fn lemma_gemm_c_offset_injective(
     ensures
         gemm_c_offset(c_layout, i1, j1) != gemm_c_offset(c_layout, i2, j2),
 {
-    // Map (i, j) to a linear index in the rank-2 layout
-    // linearize((i, j), shape) = i + j * shape[0]
-    // But offset uses delinearize, so we need to find x1, x2 such that
-    // c_layout.offset(x) gives the right result.
+    let shape = c_layout.shape;
+    let coords1 = seq![i1, j1];
+    let coords2 = seq![i2, j2];
 
-    // For a rank-2 layout, offset(x) = delinearize(x, shape) dot stride
-    // We need: gemm_c_offset(c_layout, i, j) = i*stride[0] + j*stride[1]
-    // This equals c_layout.offset(x) when delinearize(x, shape) = (i, j)
+    // coords_in_bounds for both coordinate tuples
+    assert forall|j: int| 0 <= j < coords1.len()
+        implies #[trigger] coords1[j] < shape[j]
+    by { if j == 0 {} else {} };
+    assert forall|j: int| 0 <= j < coords2.len()
+        implies #[trigger] coords2[j] < shape[j]
+    by { if j == 0 {} else {} };
 
-    // The linearization for column-major is x = i + j * shape[0]
-    let s0 = c_layout.shape[0];
-    let s1 = c_layout.shape[1];
-    let x1 = i1 + j1 * s0;
-    let x2 = i2 + j2 * s0;
+    // linearize produces in-bounds indices
+    lemma_linearize_bound(coords1, shape);
+    lemma_linearize_bound(coords2, shape);
 
-    // Bridge: c_layout.shape =~= seq![s0, s1]
-    assert(c_layout.shape =~= seq![s0, s1]) by {
-        assert(c_layout.shape.len() == 2);
-        assert(c_layout.shape[0] == s0);
-        assert(c_layout.shape[1] == s1);
-    };
+    let x1 = linearize(coords1, shape);
+    let x2 = linearize(coords2, shape);
 
-    // x1 < size = s0 * s1
-    lemma_shape_size_2(s0, s1);
-    assert(c_layout.size() == s0 * s1);
-    assert(x1 < s0 * s1) by (nonlinear_arith)
-        requires i1 < s0, j1 < s1, x1 == i1 + j1 * s0, s0 > 0, s1 > 0;
-    assert(x2 < s0 * s1) by (nonlinear_arith)
-        requires i2 < s0, j2 < s1, x2 == i2 + j2 * s0, s0 > 0, s1 > 0;
-
-    // x1 != x2
-    if i1 != i2 {
-        assert(x1 != x2) by (nonlinear_arith)
-            requires
-                i1 < s0, i2 < s0, j1 < s1, j2 < s1,
-                i1 != i2, s0 > 0,
-                x1 == i1 + j1 * s0, x2 == i2 + j2 * s0;
-    } else {
-        // i1 == i2, j1 != j2
-        assert(x1 != x2) by (nonlinear_arith)
-            requires
-                i1 == i2, j1 != j2, s0 > 0,
-                x1 == i1 + j1 * s0, x2 == i2 + j2 * s0;
+    // x1 != x2: if they were equal, roundtrip would give coords1 =~= coords2,
+    // contradicting i1 != i2 || j1 != j2
+    if x1 == x2 {
+        lemma_linearize_roundtrip(coords1, shape);
+        lemma_linearize_roundtrip(coords2, shape);
+        assert(coords1 =~= coords2);
+        assert(false);
     }
 
-    // By injectivity: c_layout.offset(x1) != c_layout.offset(x2)
+    // By injectivity: offset(x1) != offset(x2)
+    // gemm_c_offset is defined as c_layout.offset(linearize(seq![i, j], shape))
     assert(c_layout.offset(x1) != c_layout.offset(x2));
-
-    // delinearize(x, shape) for x = i + j*s0: first coord = x % s0 = i, second = x / s0 = j
-    // Use div_mod_decompose from integer_helpers
-    // lemma gives (a + d * b) % d == a, but x1 = i1 + j1 * s0 = i1 + s0 * j1
-    vstd::arithmetic::mul::lemma_mul_is_commutative(j1 as int, s0 as int);
-    vstd::arithmetic::mul::lemma_mul_is_commutative(j2 as int, s0 as int);
-    assert(x1 == i1 + s0 * j1);
-    assert(x2 == i2 + s0 * j2);
-    crate::proof::integer_helpers::lemma_div_mod_decompose(i1, j1, s0);
-    crate::proof::integer_helpers::lemma_div_mod_decompose(i2, j2, s0);
-    assert(x1 % s0 == i1);
-    assert(x1 / s0 == j1);
-    assert(x2 % s0 == i2);
-    assert(x2 / s0 == j2);
-
-    // Unfold offset for rank-2 layout
-    crate::proof::tiling_lemmas::lemma_offset_rank2(c_layout, x1);
-    crate::proof::tiling_lemmas::lemma_offset_rank2(c_layout, x2);
-
-    // Show delinearize(x1, shape) = (i1, j1)
-    let shape = c_layout.shape;
-    let coords1 = delinearize(x1, shape);
-    let coords2 = delinearize(x2, shape);
-
-    // Unfold delinearize for 2-element shape:
-    // delinearize(x, [s0, s1]) = [x % s0] ++ delinearize(x / s0, [s1])
-    // delinearize(x / s0, [s1]) = [(x / s0) % s1] ++ delinearize((x/s0)/s1, [])
-    // = [(x / s0) % s1]
-    assert(shape.first() == s0);
-    assert(shape.skip(1) =~= seq![s1]);
-    assert(seq![s1].first() == s1);
-    assert(seq![s1].skip(1) =~= Seq::<nat>::empty());
-
-    // coords1[0] = x1 % s0 = i1
-    assert(coords1[0] == x1 % s0);
-    assert(coords1[0] == i1);
-
-    // For coords1[1]: delinearize(x1 / s0, [s1]) = [j1 % s1]
-    // Since j1 < s1, j1 % s1 = j1
-    let inner1 = delinearize(x1 / s0, seq![s1]);
-    assert(x1 / s0 == j1);
-    assert(inner1 =~= seq![j1 % s1].add(delinearize(j1 / s1, Seq::<nat>::empty())));
-    assert(j1 % s1 == j1) by {
-        vstd::arithmetic::div_mod::lemma_small_mod(j1, s1);
-    };
-    assert(coords1 =~= seq![i1, j1]);
-
-    // Same for coords2
-    assert(coords2[0] == x2 % s0);
-    assert(coords2[0] == i2);
-    let inner2 = delinearize(x2 / s0, seq![s1]);
-    assert(x2 / s0 == j2);
-    assert(inner2 =~= seq![j2 % s1].add(delinearize(j2 / s1, Seq::<nat>::empty())));
-    assert(j2 % s1 == j2) by {
-        vstd::arithmetic::div_mod::lemma_small_mod(j2, s1);
-    };
-    assert(coords2 =~= seq![i2, j2]);
-
-    // Bridge: x1 == linearize(seq![i1, j1], shape) and x2 == linearize(seq![i2, j2], shape)
-    // linearize(seq![i1, j1], seq![s0, s1]) = i1 + s0 * linearize(seq![j1], seq![s1])
-    //                                       = i1 + s0 * j1
-    assert(seq![s1].skip(1) =~= Seq::<nat>::empty());
-    assert(seq![j1].skip(1) =~= Seq::<nat>::empty());
-    assert(linearize(Seq::<nat>::empty(), Seq::<nat>::empty()) == 0nat);
-    assert(s1 * 0nat == 0nat);
-    assert(linearize(seq![j1], seq![s1]) == j1);
-    assert(seq![j2].skip(1) =~= Seq::<nat>::empty());
-    assert(linearize(seq![j2], seq![s1]) == j2);
-    assert(seq![i1, j1].first() == i1);
-    assert(seq![i1, j1].skip(1) =~= seq![j1]);
-    assert(seq![i2, j2].first() == i2);
-    assert(seq![i2, j2].skip(1) =~= seq![j2]);
-    vstd::arithmetic::mul::lemma_mul_is_commutative(s0 as int, j1 as int);
-    vstd::arithmetic::mul::lemma_mul_is_commutative(s0 as int, j2 as int);
-    assert(linearize(seq![i1, j1], c_layout.shape) == x1);
-    assert(linearize(seq![i2, j2], c_layout.shape) == x2);
-
-    // Now gemm_c_offset(c_layout, i1, j1) = c_layout.offset(linearize(seq![i1, j1], shape)) = c_layout.offset(x1)
-    assert(c_layout.offset(x1) == gemm_c_offset(c_layout, i1, j1));
-    assert(c_layout.offset(x2) == gemm_c_offset(c_layout, i2, j2));
 }
 
 /// Helper: shape_size of a 2-element shape.
