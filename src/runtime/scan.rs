@@ -13,6 +13,99 @@ use crate::proof::scan_lemmas::*;
 
 verus! {
 
+// ============================================================
+// ExecRing trait: bridges exec-level operations to spec-level Ring
+// ============================================================
+
+/// Trait for exec-level ring elements that map to a spec-level Ring type.
+///
+/// Provides the three operations needed by scan algorithms:
+/// - `exec_add`: addition with overflow guard via `is_representable`
+/// - `exec_zero`: the additive identity
+/// - `exec_clone`: copy/clone (needed since Verus doesn't auto-clone tracked types)
+///
+/// Overflow handling uses `is_representable`: a predicate on spec values R
+/// that says whether a value can be stored as a T. The `exec_add` requires
+/// both operand views and their sum view to be representable.
+pub trait ExecRing<R: Ring>: Sized {
+    /// View: map an exec element to its spec counterpart.
+    spec fn view(&self) -> R;
+
+    /// Whether a spec value can be represented as this exec type.
+    /// For i64: i64::MIN <= v <= i64::MAX. For Rational: always true.
+    spec fn is_representable(v: R) -> bool;
+
+    /// is_representable respects eqv: if a.eqv(b) and is_representable(a), then is_representable(b).
+    proof fn lemma_representable_congruence(a: R, b: R)
+        requires a.eqv(b), Self::is_representable(a),
+        ensures Self::is_representable(b);
+
+    /// exec addition. Requires operands and result to be representable.
+    fn exec_add(&self, other: &Self) -> (result: Self)
+        requires
+            Self::is_representable(self.view()),
+            Self::is_representable(other.view()),
+            Self::is_representable(self.view().add(other.view())),
+        ensures result.view().eqv(self.view().add(other.view()));
+
+    /// exec zero.
+    fn exec_zero() -> (result: Self)
+        ensures result.view().eqv(R::zero());
+
+    /// exec clone.
+    fn exec_clone(&self) -> (result: Self)
+        ensures result.view().eqv(self.view());
+}
+
+/// Partial sum of viewed data.
+pub open spec fn partial_sum_generic<T: ExecRing<R>, R: Ring>(data: Seq<T>, lo: int, hi: int) -> R {
+    sum::<R>(|j: int| data[j].view(), lo, hi)
+}
+
+/// All partial sums of data (viewed through ExecRing) are representable.
+pub open spec fn all_partial_sums_representable<T: ExecRing<R>, R: Ring>(data: Seq<T>) -> bool {
+    forall|lo: int, hi: int| 0 <= lo <= hi <= data.len() ==>
+        T::is_representable(#[trigger] partial_sum_generic::<T, R>(data, lo, hi))
+}
+
+// ============================================================
+// i64 implementation of ExecRing<int>
+// ============================================================
+
+impl ExecRing<int> for i64 {
+    #[verifier::inline]
+    open spec fn view(&self) -> int {
+        *self as int
+    }
+
+    #[verifier::inline]
+    open spec fn is_representable(v: int) -> bool {
+        i64::MIN as int <= v && v <= i64::MAX as int
+    }
+
+    proof fn lemma_representable_congruence(a: int, b: int)
+    {
+        // For int: eqv is ==, so a == b. is_representable(a) implies is_representable(b).
+    }
+
+    fn exec_add(&self, other: &Self) -> (result: Self)
+    {
+        // is_representable(self + other) means i64::MIN <= self+other <= i64::MAX
+        // a.add(b) == a + b for int, so this is safe
+        *self + *other
+    }
+
+    fn exec_zero() -> (result: Self)
+    {
+        0i64
+    }
+
+    fn exec_clone(&self) -> (result: Self)
+    {
+        *self
+    }
+}
+
 /// Hillis-Steele element value: what element i should hold after `level` levels.
 /// This is sum(f, max(0, i+1-pow2(level)), i+1).
 pub open spec fn hs_value(data: Seq<i64>, i: int, level: nat) -> int {
@@ -104,6 +197,437 @@ pub fn log2_ceil_exec(n: u64) -> (result: u64)
         // r < n, so 1 + r doesn't overflow u64
     }
     1 + r
+}
+
+// ============================================================
+// Generic Hillis-Steele specs and lemmas
+// ============================================================
+
+/// Generic hs_value: what element i should hold after `level` levels.
+pub open spec fn hs_value_generic<T: ExecRing<R>, R: Ring>(data: Seq<T>, i: int, level: nat) -> R {
+    let lo = if i + 1 - pow2(level) as int > 0 { i + 1 - pow2(level) as int } else { 0int };
+    sum::<R>(|j: int| data[j].view(), lo, i + 1)
+}
+
+/// Generic hs_value addition lemma.
+proof fn lemma_hs_addition_generic<T: ExecRing<R>, R: Ring>(data: Seq<T>, i: int, d: nat, n: nat)
+    requires
+        n as int == data.len(),
+        0 <= i < n as int,
+        i >= pow2(d) as int,
+    ensures
+        hs_value_generic::<T, R>(data, i, d).add(
+            hs_value_generic::<T, R>(data, i - pow2(d) as int, d)
+        ).eqv(hs_value_generic::<T, R>(data, i, (d + 1) as nat)),
+{
+    let stride = pow2(d);
+    let partner = i - stride as int;
+    let prev_lo = i + 1 - stride as int;
+    let partner_lo = if partner + 1 - stride as int > 0 { partner + 1 - stride as int } else { 0int };
+    let next_lo = if i + 1 - pow2((d + 1) as nat) as int > 0 { i + 1 - pow2((d + 1) as nat) as int } else { 0int };
+
+    assert(pow2((d + 1) as nat) == 2 * pow2(d));
+    assert(partner + 1 == prev_lo);
+    assert(partner_lo == next_lo);
+    assert(next_lo <= prev_lo);
+
+    // sum(f, next_lo, i+1) = sum(f, next_lo, prev_lo) + sum(f, prev_lo, i+1)
+    //                       = hs(partner, d) + hs(i, d)
+    lemma_sum_split::<R>(|j: int| data[j].view(), next_lo, prev_lo, i + 1);
+    // sum_split gives: sum(f, next_lo, i+1).eqv(sum(f, next_lo, prev_lo).add(sum(f, prev_lo, i+1)))
+    // which is: hs(i, d+1).eqv(hs(partner, d).add(hs(i, d)))
+    // We need: hs(i, d).add(hs(partner, d)).eqv(hs(i, d+1))
+    // By commutativity: a.add(b).eqv(b.add(a))
+    R::axiom_add_commutative(
+        hs_value_generic::<T, R>(data, i, d),
+        hs_value_generic::<T, R>(data, partner, d),
+    );
+    // Now chain: hs(i,d).add(hs(partner,d)).eqv(hs(partner,d).add(hs(i,d)))
+    //        and hs(partner,d).add(hs(i,d)).eqv(hs(i,d+1))
+    R::axiom_eqv_symmetric(
+        hs_value_generic::<T, R>(data, i, (d + 1) as nat),
+        hs_value_generic::<T, R>(data, partner, d).add(
+            hs_value_generic::<T, R>(data, i, d)
+        ),
+    );
+    R::axiom_eqv_transitive(
+        hs_value_generic::<T, R>(data, i, d).add(
+            hs_value_generic::<T, R>(data, partner, d)
+        ),
+        hs_value_generic::<T, R>(data, partner, d).add(
+            hs_value_generic::<T, R>(data, i, d)
+        ),
+        hs_value_generic::<T, R>(data, i, (d + 1) as nat),
+    );
+}
+
+/// Generic hs_value is unchanged when i < stride.
+proof fn lemma_hs_no_change_generic<T: ExecRing<R>, R: Ring>(data: Seq<T>, i: int, d: nat, n: nat)
+    requires
+        n as int == data.len(),
+        0 <= i < n as int,
+        i < pow2(d) as int,
+    ensures
+        hs_value_generic::<T, R>(data, i, d).eqv(
+            hs_value_generic::<T, R>(data, i, (d + 1) as nat)
+        ),
+{
+    assert(pow2((d + 1) as nat) == 2 * pow2(d));
+    // Both have lo = 0, so both = sum(f, 0, i+1). Reflexive.
+    R::axiom_eqv_reflexive(hs_value_generic::<T, R>(data, i, d));
+}
+
+/// Generic hs_value at sufficient level equals inclusive_scan.
+proof fn lemma_hs_equals_inclusive_scan_generic<T: ExecRing<R>, R: Ring>(
+    data: Seq<T>, i: int, level: nat,
+)
+    requires
+        0 <= i < data.len() as int,
+        pow2(level) >= data.len(),
+    ensures
+        hs_value_generic::<T, R>(data, i, level).eqv(
+            inclusive_scan::<R>(Seq::new(data.len(), |j: int| data[j].view()))[i]
+        ),
+{
+    // pow2(level) >= n > i+1, so lo = 0
+    // hs_value = sum(|j| data[j].view(), 0, i+1)
+    // inclusive_scan(view_seq)[i] = sum(|j| view_seq[j], 0, i+1)
+    // view_seq[j] = data[j].view(), so congruence gives equality
+    let view_seq = Seq::new(data.len(), |j: int| data[j].view());
+    assert forall|j: int| 0 <= j < data.len() as int implies
+        view_seq[j].eqv(data[j].view()) by {
+        R::axiom_eqv_reflexive(data[j].view());
+    }
+    lemma_sum_congruence::<R>(
+        |j: int| data[j].view(),
+        |j: int| view_seq[j],
+        0, i + 1,
+    );
+}
+
+/// Generic Hillis-Steele inclusive scan.
+pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
+    data: &Vec<T>, n: u64,
+) -> (output: Vec<T>)
+    requires
+        data@.len() == n as nat,
+        n > 0,
+        all_partial_sums_representable::<T, R>(data@),
+        n <= u64::MAX / 2,
+    ensures
+        output@.len() == n as nat,
+        forall|i: int| 0 <= i < n as int ==>
+            output@[i].view().eqv(
+                inclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i]
+            ),
+{
+    let levels = log2_ceil_exec(n);
+    let data_len = data.len();
+
+    // Initialize current buffer from data
+    let mut current: Vec<T> = Vec::new();
+    let mut idx: u64 = 0;
+    while idx < n
+        invariant
+            idx <= n,
+            current@.len() == idx as nat,
+            data@.len() == n as nat,
+            n as int == data_len as int,
+            forall|j: int| 0 <= j < idx as int ==> current@[j].view().eqv(data@[j].view()),
+        decreases n - idx,
+    {
+        let clone = data[idx as usize].exec_clone();
+        current.push(clone);
+        idx = idx + 1;
+    }
+
+    proof {
+        // Base case: at level 0, current[i].view().eqv(data[i].view())
+        //   = hs_value_generic(data, i, 0)  (which is sum(f, i, i+1) = data[i].view())
+        assert forall|i: int| 0 <= i < n as int implies
+            current@[i].view().eqv(
+                #[trigger] hs_value_generic::<T, R>(data@, i, 0)
+            )
+        by {
+            // hs_value_generic(data, i, 0) = sum(f, i, i+1) = data[i].view()
+            lemma_sum_single::<R>(|j: int| data@[j].view(), i);
+            // sum_single: sum(f, i, i+1).eqv(f(i)) = data[i].view()
+            // current[i].view().eqv(data[i].view()) from invariant
+            // By transitivity: current[i].view().eqv(hs_value(i, 0))
+            R::axiom_eqv_symmetric(
+                sum::<R>(|j: int| data@[j].view(), i, i + 1),
+                data@[i].view(),
+            );
+            R::axiom_eqv_transitive(
+                current@[i].view(),
+                data@[i].view(),
+                hs_value_generic::<T, R>(data@, i, 0),
+            );
+        }
+    }
+
+    // Apply Hillis-Steele levels
+    let mut d: u64 = 0;
+    let mut stride: u64 = 1;
+    while d < levels
+        invariant
+            d <= levels,
+            stride as nat == pow2(d as nat),
+            current@.len() == n as nat,
+            levels as nat == log2_ceil(n as nat),
+            n > 0,
+            n <= u64::MAX / 2,
+            n as int == data_len as int,
+            data@.len() == n as nat,
+            all_partial_sums_representable::<T, R>(data@),
+            forall|i: int| 0 <= i < n as int ==>
+                current@[i].view().eqv(
+                    #[trigger] hs_value_generic::<T, R>(data@, i, d as nat)
+                ),
+        decreases levels - d,
+    {
+        proof {
+            if n as nat > 1 {
+                lemma_pow2_lt_for_sub_levels(n as nat, d as nat);
+            } else {
+                assert(false);
+            }
+        }
+
+        let mut next: Vec<T> = Vec::new();
+        let mut i: u64 = 0;
+        while i < n
+            invariant
+                i <= n,
+                next@.len() == i as nat,
+                current@.len() == n as nat,
+                stride as nat == pow2(d as nat),
+                stride < n,
+                d < levels,
+                levels as nat == log2_ceil(n as nat),
+                n > 0,
+                n <= u64::MAX / 2,
+                n as int == data_len as int,
+                data@.len() == n as nat,
+                all_partial_sums_representable::<T, R>(data@),
+                forall|k: int| 0 <= k < n as int ==>
+                    current@[k].view().eqv(
+                        #[trigger] hs_value_generic::<T, R>(data@, k, d as nat)
+                    ),
+                forall|k: int| 0 <= k < i as int ==>
+                    next@[k].view().eqv(
+                        #[trigger] hs_value_generic::<T, R>(data@, k, (d + 1) as nat)
+                    ),
+            decreases n - i,
+        {
+            if i >= stride {
+                let partner = (i - stride) as usize;
+
+                proof {
+                    let ghost ii = i as int;
+                    let ghost pi = ii - stride as int;
+                    let ghost hs_i = hs_value_generic::<T, R>(data@, ii, d as nat);
+                    let ghost hs_p = hs_value_generic::<T, R>(data@, pi, d as nat);
+                    let ghost hs_next = hs_value_generic::<T, R>(data@, ii, (d + 1) as nat);
+
+                    // hs(i,d).add(hs(partner,d)).eqv(hs(i,d+1))
+                    lemma_hs_addition_generic::<T, R>(data@, ii, d as nat, n as nat);
+
+                    // hs_i, hs_p, hs_next are all partial sums, hence representable
+                    // Trigger all_partial_sums_representable by referencing partial_sum_generic
+                    let hs_i_lo = if ii + 1 - pow2(d as nat) as int > 0 {
+                        ii + 1 - pow2(d as nat) as int
+                    } else { 0int };
+                    let hs_p_lo = if pi + 1 - pow2(d as nat) as int > 0 {
+                        pi + 1 - pow2(d as nat) as int
+                    } else { 0int };
+                    let hs_next_lo = if ii + 1 - pow2((d + 1) as nat) as int > 0 {
+                        ii + 1 - pow2((d + 1) as nat) as int
+                    } else { 0int };
+                    assert(0 <= hs_i_lo && ii + 1 <= n as int);
+                    assert(0 <= hs_p_lo && pi + 1 <= n as int);
+                    assert(0 <= hs_next_lo && ii + 1 <= n as int);
+                    // Bridge hs_value to partial_sum_generic for trigger
+                    assert(hs_i.eqv(partial_sum_generic::<T, R>(data@, hs_i_lo, ii + 1))) by {
+                        R::axiom_eqv_reflexive(hs_i);
+                    }
+                    assert(hs_p.eqv(partial_sum_generic::<T, R>(data@, hs_p_lo, pi + 1))) by {
+                        R::axiom_eqv_reflexive(hs_p);
+                    }
+                    assert(hs_next.eqv(partial_sum_generic::<T, R>(data@, hs_next_lo, ii + 1))) by {
+                        R::axiom_eqv_reflexive(hs_next);
+                    }
+                    // Now Z3 knows is_representable for hs_i, hs_p, hs_next via trigger
+
+                    // current views are eqv to hs values, bridge to is_representable
+                    R::axiom_eqv_symmetric(current@[ii].view(), hs_i);
+                    T::lemma_representable_congruence(hs_i, current@[ii].view());
+                    R::axiom_eqv_symmetric(current@[pi].view(), hs_p);
+                    T::lemma_representable_congruence(hs_p, current@[pi].view());
+
+                    // current[i].view().add(current[partner].view()) is eqv to hs_i.add(hs_p)
+                    use verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence;
+                    lemma_add_congruence::<R>(
+                        current@[ii].view(), hs_i,
+                        current@[pi].view(), hs_p,
+                    );
+                    // hs_i.add(hs_p).eqv(hs_next)
+                    R::axiom_eqv_transitive(
+                        current@[ii].view().add(current@[pi].view()),
+                        hs_i.add(hs_p),
+                        hs_next,
+                    );
+                    // is_representable(current[i].view().add(current[partner].view()))
+                    R::axiom_eqv_symmetric(
+                        current@[ii].view().add(current@[pi].view()),
+                        hs_next,
+                    );
+                    T::lemma_representable_congruence(hs_next, current@[ii].view().add(current@[pi].view()));
+                }
+
+                let val = current[i as usize].exec_add(&current[partner]);
+                proof {
+                    let ghost ii = i as int;
+                    let ghost hs_next = hs_value_generic::<T, R>(data@, ii, (d + 1) as nat);
+                    // val.view().eqv(current[i].view().add(current[partner].view()))
+                    // current[i].view().add(current[partner].view()).eqv(hs_next)
+                    R::axiom_eqv_transitive(
+                        val.view(),
+                        current@[ii].view().add(current@[(ii - stride as int) as int].view()),
+                        hs_next,
+                    );
+                }
+                next.push(val);
+            } else {
+                let clone = current[i as usize].exec_clone();
+                next.push(clone);
+
+                proof {
+                    let ghost ii = i as int;
+                    lemma_hs_no_change_generic::<T, R>(data@, ii, d as nat, n as nat);
+                    // hs(i,d).eqv(hs(i,d+1))
+                    // current[i].view().eqv(hs(i,d))
+                    // clone.view().eqv(current[i].view())
+                    R::axiom_eqv_transitive(
+                        clone.view(),
+                        current@[ii].view(),
+                        hs_value_generic::<T, R>(data@, ii, d as nat),
+                    );
+                    R::axiom_eqv_transitive(
+                        clone.view(),
+                        hs_value_generic::<T, R>(data@, ii, d as nat),
+                        hs_value_generic::<T, R>(data@, ii, (d + 1) as nat),
+                    );
+                }
+            }
+
+            i = i + 1;
+        }
+
+        current = next;
+
+        proof {
+            assert(pow2((d + 1) as nat) == 2 * pow2(d as nat));
+        }
+
+        stride = stride * 2;
+        d = d + 1;
+    }
+
+    proof {
+        lemma_log2_ceil_pow2(n as nat);
+        assert forall|i: int| 0 <= i < n as int implies
+            current@[i].view().eqv(
+                inclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i]
+            )
+        by {
+            // current[i].view().eqv(hs(i, levels))
+            lemma_hs_equals_inclusive_scan_generic::<T, R>(data@, i, levels as nat);
+            // hs(i, levels).eqv(inclusive_scan(view_seq)[i])
+            R::axiom_eqv_transitive(
+                current@[i].view(),
+                hs_value_generic::<T, R>(data@, i, levels as nat),
+                inclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i],
+            );
+        }
+    }
+
+    current
+}
+
+/// Generic exclusive scan via Hillis-Steele + shift.
+/// result[0] = zero, result[i] = inclusive_scan(data)[i-1] for i > 0.
+/// O(n log n) work, O(log n) depth. No power-of-2 requirement.
+pub fn exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
+    data: &Vec<T>, n: u64,
+) -> (output: Vec<T>)
+    requires
+        data@.len() == n as nat,
+        n > 0,
+        all_partial_sums_representable::<T, R>(data@),
+        n <= u64::MAX / 2,
+    ensures
+        output@.len() == n as nat,
+        forall|i: int| 0 <= i < n as int ==>
+            output@[i].view().eqv(
+                exclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i]
+            ),
+{
+    let incl = hillis_steele_generic_exec::<T, R>(data, n);
+    let ghost view_seq = Seq::new(data@.len(), |j: int| data@[j].view());
+
+    let incl_len = incl.len();
+
+    let mut output: Vec<T> = Vec::new();
+    // output[0] = zero
+    let z = T::exec_zero();
+    proof {
+        use crate::proof::scan_lemmas::lemma_exclusive_from_inclusive;
+        lemma_exclusive_from_inclusive::<R>(view_seq, 0);
+        // exclusive_scan(view_seq)[0] == R::zero()
+        // z.view().eqv(R::zero()) from exec_zero ensures
+        // R::zero() == exclusive_scan(view_seq)[0]
+        R::axiom_eqv_reflexive(exclusive_scan::<R>(view_seq)[0]);
+    }
+    output.push(z);
+
+    // output[i] = incl[i-1] for i > 0
+    let mut i: u64 = 1;
+    while i < n
+        invariant
+            1 <= i <= n,
+            output@.len() == i as nat,
+            data@.len() == n as nat,
+            n > 0,
+            n as int == incl_len as int,
+            incl@.len() == n as nat,
+            view_seq == Seq::new(data@.len(), |j: int| data@[j].view()),
+            forall|k: int| 0 <= k < n as int ==>
+                incl@[k].view().eqv(inclusive_scan::<R>(view_seq)[k]),
+            forall|k: int| 0 <= k < i as int ==>
+                output@[k].view().eqv(exclusive_scan::<R>(view_seq)[k]),
+        decreases n - i,
+    {
+        let prev_usize: usize = (i - 1) as usize;
+        let clone = incl[prev_usize].exec_clone();
+        proof {
+            use crate::proof::scan_lemmas::lemma_exclusive_from_inclusive;
+            let pi = (i - 1) as int;
+            lemma_exclusive_from_inclusive::<R>(view_seq, i as int);
+            // clone.view().eqv(incl@[pi].view()) — from exec_clone
+            // incl@[pi].view().eqv(inclusive_scan(view_seq)[pi]) — from invariant
+            R::axiom_eqv_transitive(
+                clone.view(),
+                incl@[pi].view(),
+                inclusive_scan::<R>(view_seq)[pi],
+            );
+            // exclusive_scan(view_seq)[i] == inclusive_scan(view_seq)[i-1] (== for spec values)
+        }
+        output.push(clone);
+        i = i + 1;
+    }
+
+    output
 }
 
 /// Hillis-Steele inclusive scan. Creates a new output Vec.
@@ -1301,6 +1825,8 @@ pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
                     assert(pi + 1 == step as int * q) by (nonlinear_arith)
                         requires pi + 1 == i as int + 1 - stride as int,
                                  i as int + 1 == step as int * q + stride as int;
+                    assert(pi + 1 == q * step as int) by (nonlinear_arith)
+                        requires pi + 1 == step as int * q;
                     vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
                         pi + 1, step as int, q, 0
                     );

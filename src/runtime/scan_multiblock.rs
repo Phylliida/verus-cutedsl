@@ -186,7 +186,8 @@ pub fn three_phase_inclusive_scan_exec(
         assert(nblocks > 0) by (nonlinear_arith)
             requires n > 0, block_size > 1,
                      n as int == block_size as int * full_blocks + rem,
-                     0 <= rem, rem < block_size as int;
+                     0 <= rem, rem < block_size as int,
+                     nblocks as int == (n as int + block_size as int - 1) / block_size as int;
 
         // (nblocks - 1) * block_size < n <= nblocks * block_size
         assert(nblocks as int * block_size as int >= n as int) by (nonlinear_arith)
@@ -195,7 +196,7 @@ pub fn three_phase_inclusive_scan_exec(
                      nblocks as int == (n as int + block_size as int - 1) / block_size as int,
                      block_size > 0;
 
-        assert((nblocks as int - 1) * block_size as int < n as int) by (nonlinear_arith)
+        assert(((nblocks as int - 1) * (block_size as int)) < (n as int)) by (nonlinear_arith)
             requires n as int == block_size as int * full_blocks + rem,
                      0 <= rem, rem < block_size as int,
                      nblocks as int == (n as int + block_size as int - 1) / block_size as int,
@@ -205,8 +206,9 @@ pub fn three_phase_inclusive_scan_exec(
         assert(nblocks as int <= (n as int + 1) / 2) by (nonlinear_arith)
             requires nblocks as int == (n as int + block_size as int - 1) / block_size as int,
                      block_size > 1;
-        assert(nblocks <= i64::MAX as u64) by (nonlinear_arith)
-            requires nblocks as int <= (n as int + 1) / 2, n <= i64::MAX as u64;
+        assert(nblocks as int <= i64::MAX as int) by (nonlinear_arith)
+            requires nblocks as int <= (n as int + 1) / 2, n as int <= i64::MAX as int;
+        assert(nblocks <= i64::MAX as u64);
     }
 
     // ============================================================
@@ -225,7 +227,7 @@ pub fn three_phase_inclusive_scan_exec(
             block_sums@.len() == b as nat,
             data@.len() == n as nat,
             nblocks as int * block_size as int >= n as int,
-            (nblocks as int - 1) * block_size as int < n as int,
+            ((nblocks as int - 1) * (block_size as int)) < (n as int),
             n > 0,
             n as int == data_len as int, // usize bridge
             block_size > 1,
@@ -237,13 +239,14 @@ pub fn three_phase_inclusive_scan_exec(
             all_partial_sums_bounded(data@),
             int_data == as_int_seq(data@),
             // For b < nblocks: b*bs < n (all processed blocks are full)
-            b < nblocks ==> b as int * block_size as int < n as int,
+            b < nblocks ==> (b as int) * (block_size as int) < (n as int),
             // block sums correct
             forall|bi: int| 0 <= bi < b as int ==>
                 #[trigger] block_sums@[bi] as int
                     == block_reduce(int_data, block_size as nat, bi as nat),
-            // output holds per-block inclusive scans (clamped to n)
+            // output holds per-block inclusive scans (within each block, clamped to n)
             forall|bi: int, j: int| 0 <= bi < b as int && 0 <= j
+                && j < block_size as int
                 && bi * block_size as int + j < n as int ==>
                 #[trigger] output@[(bi * block_size as int + j) as int] as int
                     == reduce::<int>(int_data,
@@ -257,14 +260,14 @@ pub fn three_phase_inclusive_scan_exec(
 
         proof {
             // bsi < n (from b < nblocks invariant)
-            assert(bsi as int < n as int) by (nonlinear_arith)
-                requires b < nblocks, (nblocks as int - 1) * block_size as int < n as int,
-                         block_size > 0;
-            assert(this_block_len > 0) by (nonlinear_arith)
-                requires bsi as int < n as int;
+            assert((bsi as int) < (n as int)) by (nonlinear_arith)
+                requires b < nblocks, ((nblocks as int - 1) * (block_size as int)) < (n as int),
+                         block_size > 0, bsi == b * block_size;
+            // this_block_len > 0: either block_size > 0 (full block) or n - bsi > 0 (short block, since bsi < n)
+            assert(this_block_len > 0);
             assert(bsi as int + this_block_len as int <= n as int);
             assert(bsi as int <= i64::MAX as int) by (nonlinear_arith)
-                requires bsi as int < n as int, n <= i64::MAX as u64;
+                requires (bsi as int) < (n as int), n <= i64::MAX as u64;
             // this_block_len <= block_size
             assert(this_block_len <= block_size);
         }
@@ -389,24 +392,26 @@ pub fn three_phase_inclusive_scan_exec(
                 lemma_inclusive_scan_subrange(data@, bsi as int, this_block_len as int, ji);
             }
             // Since this_block_len <= block_size and bsi + this_block_len <= n,
-            // this covers all j where b*bs + j < n (for this block)
-            assert forall|ji: int| 0 <= ji
+            // this covers all j in [0, block_size) where b*bs + j < n
+            assert forall|ji: int| 0 <= ji && ji < block_size as int
                 && b as int * block_size as int + ji < n as int implies
                 #[trigger] output@[(b as int * block_size as int + ji) as int] as int
                     == reduce::<int>(int_data,
                         b as int * block_size as int,
                         b as int * block_size as int + ji + 1)
             by {
-                // ji < n - b*bs = n - bsi <= this_block_len
-                assert(ji < this_block_len as int) by (nonlinear_arith)
-                    requires b as int * block_size as int + ji < n as int,
-                             bsi as int + this_block_len as int <= n as int,
-                             bsi as int >= b as int * block_size as int;
+                // ji < this_block_len: ji < block_size (from quantifier) and ji < n - bsi (from index bound)
+                if bsi + block_size <= n {
+                    assert(this_block_len == block_size);
+                } else {
+                    assert(this_block_len == n - bsi);
+                }
+                assert(ji < this_block_len as int);
             }
 
-            // Preserve old blocks
+            // Preserve old blocks (ji < block_size keeps us within the block)
             assert forall|bi: int, ji: int|
-                0 <= bi < b as int && 0 <= ji
+                0 <= bi < b as int && 0 <= ji && ji < block_size as int
                 && bi * block_size as int + ji < n as int
             implies
                 #[trigger] output@[(bi * block_size as int + ji) as int] as int
@@ -414,9 +419,10 @@ pub fn three_phase_inclusive_scan_exec(
                         bi * block_size as int,
                         bi * block_size as int + ji + 1)
             by {
+                // bi < b and ji < block_size → bi*bs + ji < (bi+1)*bs <= b*bs = bsi
                 assert(bi * block_size as int + ji < bsi as int) by (nonlinear_arith)
-                    requires bi < b as int, 0 <= ji, bi * block_size as int + ji < n as int,
-                             bsi as int == b as int * block_size as int, block_size > 0;
+                    requires bi < b as int, 0 <= ji, ji < block_size as int,
+                             bsi == b * block_size, block_size > 0;
                 assert(output@[(bi * block_size as int + ji) as int]
                     == output_before[(bi * block_size as int + ji) as int]);
             }
@@ -440,9 +446,9 @@ pub fn three_phase_inclusive_scan_exec(
 
             // b+1 < nblocks ==> (b+1)*bs < n (for next iteration's invariant)
             assert((b as int + 1) < nblocks as int ==>
-                (b as int + 1) * block_size as int < n as int)
+                ((b as int + 1) * (block_size as int)) < (n as int))
             by (nonlinear_arith)
-                requires (nblocks as int - 1) * block_size as int < n as int, block_size > 0;
+                requires ((nblocks as int - 1) * (block_size as int)) < (n as int), block_size > 0;
         }
 
         b = b + 1;
@@ -460,10 +466,7 @@ pub fn three_phase_inclusive_scan_exec(
         assert(output@.len() == n as nat);
 
         // block_sums partial sums bounded (from original data being bounded)
-        // lemma_block_sums_bounded needs nblocks * block_size <= data.len()
-        // With ceil_div, nblocks * block_size >= n = data.len(). So we need >=.
-        // Actually lemma_block_sums_bounded uses block_end which clamps, so it's fine
-        // as long as we pass the right bound.
+        // lemma_block_sums_bounded needs (nblocks-1)*bs < n (satisfied by ceil_div)
         lemma_block_sums_bounded(data@, block_size as nat, nblocks as nat);
         // Bridge: the Seq::new in lemma matches our block_sums
         let ghost lemma_seq: Seq<i64> = Seq::new(nblocks as nat, |i: int|
@@ -492,12 +495,12 @@ pub fn three_phase_inclusive_scan_exec(
         assert(nblocks as int <= (n as int + 1) / 2) by (nonlinear_arith)
             requires nblocks as int == (n as int + block_size as int - 1) / block_size as int,
                      block_size > 1;
-        assert(nblocks as int <= (i64::MAX as int) / 2) by (nonlinear_arith)
-            requires nblocks as int <= (n as int + 1) / 2, n <= i64::MAX as u64;
-        assert(pow2(62) >= nblocks as nat) by {
-            assert(pow2(62) >= 4611686018427387903nat) by (compute_only);
-            assert((i64::MAX as int) / 2 == 4611686018427387903int);
-        }
+        // (n+1)/2 <= (i64::MAX+1)/2 = pow2(62) = 4611686018427387904
+        assert(i64::MAX as int == 9223372036854775807int) by (compute_only);
+        assert((9223372036854775807int + 1) / 2 == 4611686018427387904int);
+        assert(pow2(62) == 4611686018427387904nat) by (compute_only);
+        assert(nblocks as int <= 4611686018427387904int) by (nonlinear_arith)
+            requires nblocks as int <= (n as int + 1) / 2, n as int <= 9223372036854775807int;
         lemma_log2_ceil_upper_bound(nblocks as nat, 62);
     }
 
@@ -623,7 +626,7 @@ pub fn three_phase_inclusive_scan_exec(
             padded_nblocks >= nblocks,
             original_block_sums.len() == nblocks as nat, // needed for as_int_seq unfolding
             nblocks as int * block_size as int >= n as int,
-            (nblocks as int - 1) * block_size as int < n as int,
+            ((nblocks as int - 1) * (block_size as int)) < (n as int),
             nblocks > 0,
             data@.len() == n as nat,
             block_size > 0,
@@ -643,8 +646,9 @@ pub fn three_phase_inclusive_scan_exec(
             // processed elements are final inclusive scan
             forall|i: int| 0 <= i < oi as int ==>
                 #[trigger] output@[i] as int == inclusive_scan_int(data@)[i],
-            // unprocessed elements hold per-block inclusive scan (clamped to n)
+            // unprocessed elements hold per-block inclusive scan (within each block)
             forall|bi: int, j: int| 0 <= bi < nblocks as int && 0 <= j
+                && j < block_size as int
                 && bi * block_size as int + j < n as int
                 && bi * block_size as int + j >= oi as int ==>
                 #[trigger] output@[(bi * block_size as int + j) as int] as int
@@ -687,7 +691,7 @@ pub fn three_phase_inclusive_scan_exec(
             // block_id * bs <= (nblocks-1) * bs < n = data.len
             assert(block_id as nat * block_size as nat <= data@.len()) by (nonlinear_arith)
                 requires block_id < nblocks,
-                         (nblocks as int - 1) * block_size as int < n as int,
+                         ((nblocks as int - 1) * (block_size as int)) < (n as int),
                          data@.len() == n as nat, block_size > 0;
             lemma_block_prefix_is_reduce_sum(int_data, block_size as nat, block_id as nat);
 
@@ -748,7 +752,7 @@ pub fn three_phase_inclusive_scan_exec(
             assert((oi as usize) as int == oi as int);
             assert((block_id as int) < (n as int)) by (nonlinear_arith)
                 requires (block_id as int) < (nblocks as int),
-                         (nblocks as int - 1) * block_size as int < n as int,
+                         ((nblocks as int - 1) * (block_size as int)) < (n as int),
                          block_size > 0;
             assert((block_id as usize) as int == block_id as int);
 
@@ -784,6 +788,7 @@ pub fn three_phase_inclusive_scan_exec(
             // Unprocessed invariant: set only changes output[oi], all other indices preserved
             assert forall|bi: int, j: int|
                 0 <= bi < nblocks as int && 0 <= j
+                && j < block_size as int
                 && bi * block_size as int + j < n as int
                 && bi * block_size as int + j >= oi as int + 1
             implies
@@ -807,6 +812,429 @@ pub fn three_phase_inclusive_scan_exec(
     }
 
     output
+}
+
+// ============================================================
+// Generic three-phase inclusive scan
+// ============================================================
+
+/// Generic three-phase inclusive scan for arbitrary-length arrays.
+/// Uses ExecRing trait for type-generic operation.
+/// Phase 1: per-block Hillis-Steele inclusive scan.
+/// Phase 2: exclusive scan of block sums.
+/// Phase 3: add block prefix to each element.
+pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
+    data: &Vec<T>, block_size: u64,
+) -> (output: Vec<T>)
+    requires
+        data@.len() > 0,
+        block_size > 1,
+        all_partial_sums_representable::<T, R>(data@),
+        data@.len() <= u64::MAX as nat / 2,
+        block_size <= u64::MAX / 2,
+    ensures
+        output@.len() == data@.len(),
+        forall|i: int| 0 <= i < data@.len() as int ==>
+            output@[i].view().eqv(
+                inclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i]
+            ),
+{
+    let n: u64 = data.len() as u64;
+    let ghost view_f = |j: int| data@[j].view();
+    let ghost view_seq: Seq<R> = Seq::new(data@.len(), view_f);
+
+    // Compute nblocks = ceil_div(n, block_size)
+    let nblocks: u64 = (n + block_size - 1) / block_size;
+
+    proof {
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(n as int, block_size as int);
+        let full_blocks: int = n as int / block_size as int;
+        let rem: int = n as int % block_size as int;
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+            (n as int + block_size as int - 1), block_size as int);
+        assert(nblocks > 0) by (nonlinear_arith)
+            requires n > 0, block_size > 1,
+                     n as int == block_size as int * full_blocks + rem,
+                     0 <= rem, rem < block_size as int,
+                     nblocks as int == (n as int + block_size as int - 1) / block_size as int;
+        assert(nblocks as int * block_size as int >= n as int) by (nonlinear_arith)
+            requires n as int == block_size as int * full_blocks + rem,
+                     0 <= rem, rem < block_size as int,
+                     nblocks as int == (n as int + block_size as int - 1) / block_size as int,
+                     block_size > 0;
+    }
+
+    // ============================================================
+    // Phase 1: Per-block inclusive scan → build output + block_sums
+    // ============================================================
+    let mut output: Vec<T> = Vec::new();
+    let mut block_sums: Vec<T> = Vec::new();
+    let mut b: u64 = 0;
+
+    while b < nblocks
+        invariant
+            b <= nblocks,
+            nblocks > 0,
+            nblocks as int * block_size as int >= n as int,
+            data@.len() == n as nat,
+            n > 0,
+            block_size > 1,
+            block_sums@.len() == b as nat,
+            all_partial_sums_representable::<T, R>(data@),
+            view_f == (|j: int| data@[j].view()),
+            view_seq == Seq::new(data@.len(), view_f),
+            // Output length = min(b * block_size, n)
+            output@.len() == (if (b as int * block_size as int) <= (n as int) {
+                (b as int * block_size as int) as nat } else { n as nat }),
+            // Output correctness: within-block inclusive scan
+            forall|bi: int, j: int|
+                0 <= bi < b as int && 0 <= j < block_size as int
+                && (bi * block_size as int + j) < (n as int)
+                ==> output@[bi * block_size as int + j].view().eqv(
+                    sum::<R>(view_f, bi * block_size as int, #[trigger](bi * block_size as int + j + 1))
+                ),
+            // Block sums: each is the reduce of its block
+            forall|bi: int| 0 <= bi < b as int ==>
+                #[trigger] block_sums@[bi].view().eqv(
+                    sum::<R>(view_f,
+                        block_start(block_size as nat, bi as nat) as int,
+                        block_end(n as nat, block_size as nat, bi as nat) as int)
+                ),
+        decreases nblocks - b,
+    {
+        // Block start and end indices
+        let bsi: u64 = b * block_size;
+        let this_block_len: u64 = if bsi + block_size <= n { block_size } else { n - bsi };
+
+        // Extract block elements into sub-vector
+        let mut block_data: Vec<T> = Vec::new();
+        let mut j: u64 = 0;
+        while j < this_block_len
+            invariant
+                j <= this_block_len,
+                block_data@.len() == j as nat,
+                this_block_len > 0,
+                this_block_len <= block_size,
+                bsi == b * block_size,
+                bsi + this_block_len <= n,
+                data@.len() == n as nat,
+                all_partial_sums_representable::<T, R>(data@),
+                view_f == (|j: int| data@[j].view()),
+                forall|k: int| 0 <= k < j as int ==>
+                    block_data@[k].view().eqv(data@[(bsi as int + k) as int].view()),
+            decreases this_block_len - j,
+        {
+            let clone = data[(bsi + j) as usize].exec_clone();
+            block_data.push(clone);
+            j = j + 1;
+        }
+
+        // all_partial_sums_representable for sub-block
+        proof {
+            assert forall|lo: int, hi: int| 0 <= lo <= hi <= block_data@.len() implies
+                T::is_representable(#[trigger] partial_sum_generic::<T, R>(block_data@, lo, hi))
+            by {
+                // block_data[k].view().eqv(data[bsi+k].view())
+                // so partial_sum_generic(block_data, lo, hi) ≡ sum(view_f, bsi+lo, bsi+hi)
+                // which is representable from data's all_partial_sums_representable
+                assert forall|k: int| lo <= k < hi implies
+                    block_data@[k].view().eqv(data@[(bsi as int + k) as int].view()) by {}
+                lemma_sum_congruence::<R>(
+                    |k: int| block_data@[k].view(),
+                    |k: int| data@[(bsi as int + k) as int].view(),
+                    lo, hi,
+                );
+                // sum(|k| data[bsi+k].view(), lo, hi) == sum(view_f, bsi+lo, bsi+hi)
+                // by index shift
+                lemma_sum_reindex::<R>(view_f, bsi as int + lo, bsi as int + hi, bsi as int);
+                // sum(|k| view_f(bsi+k), lo, hi).eqv(sum(view_f, bsi+lo, bsi+hi))
+                // partial_sum_generic(block_data, lo, hi) is eqv to sum(view_f, bsi+lo, bsi+hi)
+                // which is a partial sum of data, hence representable
+                T::lemma_representable_congruence(
+                    partial_sum_generic::<T, R>(data@, bsi as int + lo, bsi as int + hi),
+                    partial_sum_generic::<T, R>(block_data@, lo, hi),
+                );
+            }
+        }
+
+        // Inclusive scan of block
+        let scan = hillis_steele_generic_exec::<T, R>(&block_data, this_block_len);
+        let ghost incl_view = Seq::new(block_data@.len(), |k: int| block_data@[k].view());
+
+        // Append scan results to output
+        let mut j2: u64 = 0;
+        while j2 < this_block_len
+            invariant
+                j2 <= this_block_len,
+                this_block_len > 0,
+                this_block_len <= block_size,
+                bsi == b * block_size,
+                bsi + this_block_len <= n,
+                scan@.len() == this_block_len as nat,
+                block_data@.len() == this_block_len as nat,
+                data@.len() == n as nat,
+                view_f == (|j: int| data@[j].view()),
+                view_seq == Seq::new(data@.len(), view_f),
+                incl_view == Seq::new(block_data@.len(), |k: int| block_data@[k].view()),
+                output@.len() == (bsi as int + j2 as int) as nat,
+                forall|k: int| 0 <= k < block_data@.len() as int ==>
+                    block_data@[k].view().eqv(data@[(bsi as int + k) as int].view()),
+                forall|k: int| 0 <= k < scan@.len() as int ==>
+                    scan@[k].view().eqv(inclusive_scan::<R>(incl_view)[k]),
+                // Existing output elements preserved
+                forall|bi: int, ji: int|
+                    0 <= bi < b as int && 0 <= ji < block_size as int
+                    && (bi * block_size as int + ji) < (n as int)
+                    ==> output@[bi * block_size as int + ji].view().eqv(
+                        sum::<R>(view_f, bi * block_size as int, #[trigger](bi * block_size as int + ji + 1))
+                    ),
+                // New elements from current block
+                forall|k: int| 0 <= k < j2 as int ==>
+                    output@[(bsi as int + k) as int].view().eqv(
+                        sum::<R>(view_f, bsi as int, #[trigger](bsi as int + k + 1))
+                    ),
+            decreases this_block_len - j2,
+        {
+            let clone = scan[j2 as usize].exec_clone();
+            proof {
+                // clone.view().eqv(scan[j2].view())
+                // scan[j2].view().eqv(inclusive_scan(incl_view)[j2])
+                // inclusive_scan(incl_view)[j2] = sum(|k| block_data[k].view(), 0, j2+1)
+                // = sum(|k| data[bsi+k].view(), 0, j2+1)  (by congruence)
+                // = sum(view_f, bsi, bsi+j2+1)  (by shift)
+                R::axiom_eqv_transitive(
+                    clone.view(),
+                    scan@[j2 as int].view(),
+                    inclusive_scan::<R>(incl_view)[j2 as int],
+                );
+                // Bridge: inclusive_scan(incl_view)[j2] to sum(view_f, bsi, bsi+j2+1)
+                // incl_view[k] = block_data[k].view() eqv data[bsi+k].view()
+                assert forall|k: int| 0 <= k < block_data@.len() as int implies
+                    incl_view[k].eqv(data@[(bsi as int + k) as int].view()) by {
+                    R::axiom_eqv_reflexive(block_data@[k].view());
+                    R::axiom_eqv_transitive(
+                        incl_view[k],
+                        block_data@[k].view(),
+                        data@[(bsi as int + k) as int].view(),
+                    );
+                }
+                lemma_sum_congruence::<R>(
+                    |k: int| incl_view[k],
+                    |k: int| data@[(bsi as int + k) as int].view(),
+                    0, j2 as int + 1,
+                );
+                lemma_sum_reindex::<R>(view_f, bsi as int, bsi as int + j2 as int + 1, bsi as int);
+                // sum(|k| data[bsi+k].view(), 0, j2+1).eqv(sum(view_f, bsi, bsi+j2+1))
+                R::axiom_eqv_transitive(
+                    clone.view(),
+                    inclusive_scan::<R>(incl_view)[j2 as int],
+                    sum::<R>(view_f, bsi as int, bsi as int + j2 as int + 1),
+                );
+            }
+            output.push(clone);
+            j2 = j2 + 1;
+        }
+
+        // block_sums[b] = last element of scan (= reduce of block)
+        let last_clone = scan[(this_block_len - 1) as usize].exec_clone();
+        proof {
+            let be = bsi as int + this_block_len as int;
+            R::axiom_eqv_transitive(
+                last_clone.view(),
+                scan@[(this_block_len - 1) as int].view(),
+                inclusive_scan::<R>(incl_view)[(this_block_len - 1) as int],
+            );
+            // Bridge to sum(view_f, bsi, be)
+            assert forall|k: int| 0 <= k < block_data@.len() as int implies
+                incl_view[k].eqv(data@[(bsi as int + k) as int].view()) by {
+                R::axiom_eqv_reflexive(block_data@[k].view());
+                R::axiom_eqv_transitive(
+                    incl_view[k], block_data@[k].view(), data@[(bsi as int + k) as int].view(),
+                );
+            }
+            lemma_sum_congruence::<R>(
+                |k: int| incl_view[k],
+                |k: int| data@[(bsi as int + k) as int].view(),
+                0, this_block_len as int,
+            );
+            lemma_sum_reindex::<R>(view_f, bsi as int, bsi as int + this_block_len as int, bsi as int);
+            R::axiom_eqv_transitive(
+                last_clone.view(),
+                inclusive_scan::<R>(incl_view)[(this_block_len - 1) as int],
+                sum::<R>(view_f, bsi as int, be),
+            );
+        }
+        block_sums.push(last_clone);
+
+        b = b + 1;
+    }
+
+    // ============================================================
+    // Phase 2: Exclusive scan of block_sums
+    // ============================================================
+    let block_prefixes = exclusive_scan_generic_exec::<T, R>(&block_sums, nblocks);
+
+    // ============================================================
+    // Phase 3: Add block prefix to each element
+    // ============================================================
+    let mut result: Vec<T> = Vec::new();
+    let mut b3: u64 = 0;
+
+    while b3 < nblocks
+        invariant
+            b3 <= nblocks,
+            nblocks > 0,
+            nblocks as int * block_size as int >= n as int,
+            data@.len() == n as nat,
+            n > 0,
+            block_size > 1,
+            view_f == (|j: int| data@[j].view()),
+            view_seq == Seq::new(data@.len(), view_f),
+            all_partial_sums_representable::<T, R>(data@),
+            output@.len() == n as nat,
+            block_prefixes@.len() == nblocks as nat,
+            block_sums@.len() == nblocks as nat,
+            result@.len() == (if (b3 as int * block_size as int) <= (n as int) {
+                (b3 as int * block_size as int) as nat } else { n as nat }),
+            // Output elements are within-block inclusive scans
+            forall|bi: int, j: int|
+                0 <= bi < nblocks as int && 0 <= j < block_size as int
+                && (bi * block_size as int + j) < (n as int)
+                ==> output@[bi * block_size as int + j].view().eqv(
+                    sum::<R>(view_f, bi * block_size as int, #[trigger](bi * block_size as int + j + 1))
+                ),
+            // Block sums
+            forall|bi: int| 0 <= bi < nblocks as int ==>
+                #[trigger] block_sums@[bi].view().eqv(
+                    sum::<R>(view_f,
+                        block_start(block_size as nat, bi as nat) as int,
+                        block_end(n as nat, block_size as nat, bi as nat) as int)
+                ),
+            // Block prefixes are exclusive scan of block sums
+            forall|bi: int| 0 <= bi < nblocks as int ==>
+                block_prefixes@[bi].view().eqv(
+                    exclusive_scan::<R>(Seq::new(block_sums@.len(),
+                        |k: int| block_sums@[k].view()))[bi]
+                ),
+            // Completed result elements are global inclusive scan
+            forall|i: int| 0 <= i < result@.len() as int ==>
+                result@[i].view().eqv(
+                    inclusive_scan::<R>(view_seq)[i]
+                ),
+        decreases nblocks - b3,
+    {
+        let bsi3: u64 = b3 * block_size;
+        let this_block_len3: u64 = if bsi3 + block_size <= n { block_size } else { n - bsi3 };
+
+        let mut j3: u64 = 0;
+        while j3 < this_block_len3
+            invariant
+                j3 <= this_block_len3,
+                this_block_len3 > 0,
+                this_block_len3 <= block_size,
+                bsi3 == b3 * block_size,
+                bsi3 + this_block_len3 <= n,
+                b3 < nblocks,
+                nblocks as int * block_size as int >= n as int,
+                data@.len() == n as nat,
+                n > 0,
+                block_size > 1,
+                view_f == (|j: int| data@[j].view()),
+                view_seq == Seq::new(data@.len(), view_f),
+                all_partial_sums_representable::<T, R>(data@),
+                output@.len() == n as nat,
+                block_prefixes@.len() == nblocks as nat,
+                result@.len() == (bsi3 as int + j3 as int) as nat,
+                // Output invariant
+                forall|bi: int, ji: int|
+                    0 <= bi < nblocks as int && 0 <= ji < block_size as int
+                    && (bi * block_size as int + ji) < (n as int)
+                    ==> output@[bi * block_size as int + ji].view().eqv(
+                        sum::<R>(view_f, bi * block_size as int, #[trigger](bi * block_size as int + ji + 1))
+                    ),
+                // Block prefix for b3
+                block_prefixes@[b3 as int].view().eqv(
+                    sum::<R>(view_f, 0, bsi3 as int)
+                ),
+                // Completed prior blocks
+                forall|i: int| 0 <= i < (b3 as int * block_size as int) && i < n as int ==>
+                    result@[i].view().eqv(inclusive_scan::<R>(view_seq)[i]),
+                // Current block progress
+                forall|k: int| 0 <= k < j3 as int ==>
+                    result@[(bsi3 as int + k) as int].view().eqv(
+                        inclusive_scan::<R>(view_seq)[(bsi3 as int + k) as int]
+                    ),
+            decreases this_block_len3 - j3,
+        {
+            let idx: usize = (bsi3 + j3) as usize;
+            // result[bsi3+j3] = block_prefix[b3] + output[bsi3+j3]
+            proof {
+                let gi = bsi3 as int + j3 as int;
+                // output[gi].view() eqv sum(view_f, bsi3, gi+1) — within-block scan
+                // block_prefix[b3].view() eqv sum(view_f, 0, bsi3) — exclusive prefix
+                // sum(view_f, 0, bsi3).add(sum(view_f, bsi3, gi+1)) eqv sum(view_f, 0, gi+1)
+                //   by lemma_sum_split
+                // sum(view_f, 0, gi+1) = inclusive_scan(view_seq)[gi]
+
+                // Prove is_representable for prefix and element views
+                let prefix_view = block_prefixes@[b3 as int].view();
+                let elem_view = output@[gi].view();
+                // prefix_view eqv sum(view_f, 0, bsi3) — representable
+                R::axiom_eqv_symmetric(prefix_view, sum::<R>(view_f, 0, bsi3 as int));
+                T::lemma_representable_congruence(
+                    sum::<R>(view_f, 0, bsi3 as int),
+                    prefix_view,
+                );
+                // elem_view eqv sum(view_f, bsi3, gi+1) — representable
+                R::axiom_eqv_symmetric(elem_view, sum::<R>(view_f, bsi3 as int, gi + 1));
+                T::lemma_representable_congruence(
+                    sum::<R>(view_f, bsi3 as int, gi + 1),
+                    elem_view,
+                );
+                // prefix_view.add(elem_view) eqv sum(view_f, 0, bsi3).add(sum(view_f, bsi3, gi+1))
+                use verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence;
+                lemma_add_congruence::<R>(
+                    prefix_view, sum::<R>(view_f, 0, bsi3 as int),
+                    elem_view, sum::<R>(view_f, bsi3 as int, gi + 1),
+                );
+                // sum(view_f, 0, bsi3).add(sum(view_f, bsi3, gi+1)) eqv sum(view_f, 0, gi+1)
+                lemma_sum_split::<R>(view_f, 0, bsi3 as int, gi + 1);
+                R::axiom_eqv_symmetric(
+                    sum::<R>(view_f, 0, gi + 1),
+                    sum::<R>(view_f, 0, bsi3 as int).add(sum::<R>(view_f, bsi3 as int, gi + 1)),
+                );
+                // Chain: prefix.add(elem) eqv sum(0, bsi).add(sum(bsi, gi+1)) eqv sum(0, gi+1)
+                R::axiom_eqv_transitive(
+                    prefix_view.add(elem_view),
+                    sum::<R>(view_f, 0, bsi3 as int).add(sum::<R>(view_f, bsi3 as int, gi + 1)),
+                    sum::<R>(view_f, 0, gi + 1),
+                );
+                // is_representable(prefix_view.add(elem_view))
+                T::lemma_representable_congruence(
+                    sum::<R>(view_f, 0, gi + 1),
+                    prefix_view.add(elem_view),
+                );
+            }
+            let added = block_prefixes[b3 as usize].exec_add(&output[idx]);
+            proof {
+                let gi = bsi3 as int + j3 as int;
+                // added.view() eqv block_prefixes[b3].view().add(output[gi].view())
+                // which is eqv to sum(view_f, 0, gi+1)
+                R::axiom_eqv_transitive(
+                    added.view(),
+                    block_prefixes@[b3 as int].view().add(output@[gi].view()),
+                    sum::<R>(view_f, 0, gi + 1),
+                );
+            }
+            result.push(added);
+
+            j3 = j3 + 1;
+        }
+
+        b3 = b3 + 1;
+    }
+
+    result
 }
 
 // ============================================================
