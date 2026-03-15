@@ -26,17 +26,19 @@ pub open spec fn shape_prefix_products(shape: Seq<nat>) -> Seq<nat>
     }
 }
 
-/// Find the index of the first element equal to target, or -1 if not found.
-pub open spec fn find_value(s: Seq<int>, target: int) -> int
+/// Find the index of the first element equal to target, or None if not found.
+pub open spec fn find_value(s: Seq<int>, target: int) -> Option<nat>
     decreases s.len(),
 {
     if s.len() == 0 {
-        -1
+        None
     } else if s.first() == target {
-        0
+        Some(0nat)
     } else {
-        let rest = find_value(s.skip(1), target);
-        if rest < 0 { -1int } else { rest + 1 }
+        match find_value(s.skip(1), target) {
+            None => None,
+            Some(idx) => Some(idx + 1),
+        }
     }
 }
 
@@ -67,45 +69,55 @@ pub open spec fn right_inverse_coords(
     if shape.len() == 0 {
         seq![]
     } else {
-        let idx = find_value(stride, cursor as int);
-        if idx < 0 || idx >= shape.len() as int {
-            Seq::new(shape.len(), |_i: int| 0nat)
-        } else {
-            let m = shape[idx];
-            let j0 = j % m;
-            let j1 = j / m;
-            let rest = right_inverse_coords(
-                remove_at_nat(shape, idx),
-                remove_at_int(stride, idx),
-                m * cursor, j1,
-            );
-            Seq::new(shape.len(), |k: int|
-                if k == idx { j0 }
-                else if k < idx { rest[k] }
-                else { rest[(k - 1) as int] }
-            )
+        match find_value(stride, cursor as int) {
+            None => Seq::new(shape.len(), |_i: int| 0nat),
+            Some(idx) => {
+                if idx >= shape.len() {
+                    Seq::new(shape.len(), |_i: int| 0nat)
+                } else {
+                    let m = shape[idx as int];
+                    let j0 = j % m;
+                    let j1 = j / m;
+                    let rest = right_inverse_coords(
+                        remove_at_nat(shape, idx as int),
+                        remove_at_int(stride, idx as int),
+                        m * cursor, j1,
+                    );
+                    Seq::new(shape.len(), |k: int|
+                        if k == idx as int { j0 }
+                        else if k < idx as int { rest[k] }
+                        else { rest[(k - 1) as int] }
+                    )
+                }
+            }
         }
     }
 }
 
-/// Find the index of the element with smallest positive value, or -1 if none.
-pub open spec fn find_min_positive(s: Seq<int>) -> int
+/// Find the index of the element with smallest positive value, or None if none.
+pub open spec fn find_min_positive(s: Seq<int>) -> Option<nat>
     decreases s.len(),
 {
     if s.len() == 0 {
-        -1int
+        None
     } else {
         let rest_idx = find_min_positive(s.skip(1));
         if s.first() > 0 {
-            if rest_idx < 0 {
-                0
-            } else if s.first() <= s[rest_idx + 1] {
-                0
-            } else {
-                rest_idx + 1
+            match rest_idx {
+                None => Some(0nat),
+                Some(ri) => {
+                    if s.first() <= s[(ri + 1) as int] {
+                        Some(0nat)
+                    } else {
+                        Some(ri + 1)
+                    }
+                }
             }
         } else {
-            if rest_idx < 0 { -1int } else { rest_idx + 1 }
+            match rest_idx {
+                None => None,
+                Some(ri) => Some(ri + 1),
+            }
         }
     }
 }
@@ -113,19 +125,6 @@ pub open spec fn find_min_positive(s: Seq<int>) -> int
 // ══════════════════════════════════════════════════════════════
 // Right inverse
 // ══════════════════════════════════════════════════════════════
-
-/// If find_value returns a non-negative index, it's within bounds.
-pub open spec fn find_value_in_bounds(s: Seq<int>, target: int) -> bool
-    decreases s.len(),
-{
-    if s.len() == 0 {
-        true
-    } else if s.first() == target {
-        true
-    } else {
-        find_value_in_bounds(s.skip(1), target)
-    }
-}
 
 /// Core right_inverse builder.
 ///
@@ -149,23 +148,29 @@ pub open spec fn right_inverse_build(
     if shape.len() == 0 {
         LayoutSpec { shape: seq![], stride: seq![] }
     } else {
-        let idx = find_value(stride, cursor as int);
-        if idx < 0 || idx >= shape.len() as int {
-            // No mode with matching stride; chain broken
-            LayoutSpec { shape: seq![], stride: seq![] }
-        } else {
-            let m = shape[idx];
-            let pp = preprod[idx];
-            let next_cursor = m * cursor;
-            let rest = right_inverse_build(
-                remove_at_nat(shape, idx),
-                remove_at_int(stride, idx),
-                remove_at_nat(preprod, idx),
-                next_cursor,
-            );
-            LayoutSpec {
-                shape: seq![m].add(rest.shape),
-                stride: seq![pp as int].add(rest.stride),
+        match find_value(stride, cursor as int) {
+            None => {
+                // No mode with matching stride; chain broken
+                LayoutSpec { shape: seq![], stride: seq![] }
+            }
+            Some(idx) => {
+                if idx >= shape.len() {
+                    LayoutSpec { shape: seq![], stride: seq![] }
+                } else {
+                    let m = shape[idx as int];
+                    let pp = preprod[idx as int];
+                    let next_cursor = m * cursor;
+                    let rest = right_inverse_build(
+                        remove_at_nat(shape, idx as int),
+                        remove_at_int(stride, idx as int),
+                        remove_at_nat(preprod, idx as int),
+                        next_cursor,
+                    );
+                    LayoutSpec {
+                        shape: seq![m].add(rest.shape),
+                        stride: seq![pp as int].add(rest.stride),
+                    }
+                }
             }
         }
     }
@@ -216,34 +221,40 @@ pub open spec fn left_inverse_build(
     if shape.len() == 0 {
         LayoutSpec { shape: seq![], stride: seq![] }
     } else {
-        let idx = find_min_positive(stride);
-        if idx < 0 || idx >= shape.len() as int {
-            // No positive-stride modes left
-            LayoutSpec { shape: seq![], stride: seq![] }
-        } else {
-            let d = stride[idx] as nat;
-            let m = shape[idx];
-            let pp = preprod[idx];
-            let gap = d / acc_size;
+        match find_min_positive(stride) {
+            None => {
+                // No positive-stride modes left
+                LayoutSpec { shape: seq![], stride: seq![] }
+            }
+            Some(idx) => {
+                if idx >= shape.len() {
+                    LayoutSpec { shape: seq![], stride: seq![] }
+                } else {
+                    let d = stride[idx as int] as nat;
+                    let m = shape[idx as int];
+                    let pp = preprod[idx as int];
+                    let gap = d / acc_size;
 
-            let rest_shape = remove_at_nat(shape, idx);
-            let rest_stride = remove_at_int(stride, idx);
-            let rest_preprod = remove_at_nat(preprod, idx);
+                    let rest_shape = remove_at_nat(shape, idx as int);
+                    let rest_stride = remove_at_int(stride, idx as int);
+                    let rest_preprod = remove_at_nat(preprod, idx as int);
 
-            if shape.len() == 1 {
-                // Last mode: emit gap and final shape
-                LayoutSpec {
-                    shape: seq![gap, m],
-                    stride: seq![pp as int],
-                }
-            } else {
-                let rest = left_inverse_build(
-                    rest_shape, rest_stride, rest_preprod,
-                    acc_size * gap,
-                );
-                LayoutSpec {
-                    shape: seq![gap].add(rest.shape),
-                    stride: seq![pp as int].add(rest.stride),
+                    if shape.len() == 1 {
+                        // Last mode: emit gap and final shape
+                        LayoutSpec {
+                            shape: seq![gap, m],
+                            stride: seq![pp as int],
+                        }
+                    } else {
+                        let rest = left_inverse_build(
+                            rest_shape, rest_stride, rest_preprod,
+                            acc_size * gap,
+                        );
+                        LayoutSpec {
+                            shape: seq![gap].add(rest.shape),
+                            stride: seq![pp as int].add(rest.stride),
+                        }
+                    }
                 }
             }
         }

@@ -347,13 +347,13 @@ pub fn right_inverse_exec(layout: &RuntimeLayout) -> (result: RuntimeLayout)
                 assert(cursor as i64 as int == cursor as int);  // from cursor <= i64::MAX
                 crate::proof::inverse_lemmas::lemma_find_value_correspondence(
                     rem_stride@, cursor as i64, idx);
-                // lemma gives: find_value(strides_to_int_seq(rem_stride@), (cursor as i64) as int) < 0
+                // lemma gives: find_value(...).is_none()
                 // Since (cursor as i64) as int == cursor as int:
                 let rem_s = shape_to_nat_seq(rem_shape@);
                 let rem_d = strides_to_int_seq(rem_stride@);
                 let rem_p = shape_to_nat_seq(rem_preprod@);
-                assert(find_value(rem_d, cursor as int) < 0);
-                // right_inverse_build: find_value < 0 means idx < 0, returns empty
+                assert(find_value(rem_d, cursor as int).is_none());
+                // right_inverse_build: find_value is None → returns empty
                 assert(right_inverse_build(rem_s, rem_d, rem_p, cursor as nat)
                     == LayoutSpec { shape: seq![], stride: seq![] });
             }
@@ -378,7 +378,7 @@ pub fn right_inverse_exec(layout: &RuntimeLayout) -> (result: RuntimeLayout)
                 let rem_s = shape_to_nat_seq(old_rem_shape);
                 let rem_d = strides_to_int_seq(old_rem_stride);
                 let rem_p = shape_to_nat_seq(old_rem_preprod);
-                assert(find_value(rem_d, cursor as int) == idx as int);
+                assert(find_value(rem_d, cursor as int) == Some(idx as nat));
 
                 // Step 2: right_inverse_build unfolds one level
                 let rem_build = right_inverse_build(rem_s, rem_d, rem_p, cursor as nat);
@@ -783,8 +783,8 @@ pub fn left_inverse_exec(layout: &RuntimeLayout) -> (result: RuntimeLayout)
                 let rem_s = shape_to_nat_seq(rem_shape@);
                 let rem_d = strides_to_int_seq(rem_stride@);
                 let rem_p = shape_to_nat_seq(rem_preprod@);
-                assert(find_min_positive(rem_d) < 0);
-                // left_inverse_build: shape nonempty → find_min_positive < 0 → idx < 0 → empty
+                assert(find_min_positive(rem_d).is_none());
+                // left_inverse_build: shape nonempty → find_min_positive is None → empty
                 assert(rem_s.len() > 0);
                 assert(left_inverse_build(rem_s, rem_d, rem_p, acc_size as nat)
                     == LayoutSpec { shape: seq![], stride: seq![] });
@@ -838,7 +838,7 @@ pub fn left_inverse_exec(layout: &RuntimeLayout) -> (result: RuntimeLayout)
                 let rem_s = shape_to_nat_seq(old_rem_shape);
                 let rem_d = strides_to_int_seq(old_rem_stride);
                 let rem_p = shape_to_nat_seq(old_rem_preprod);
-                assert(find_min_positive(rem_d) == idx as int);
+                assert(find_min_positive(rem_d) == Some(idx as nat));
 
                 // Step 2: Unfold left_inverse_build one level
                 let old_rem_build = left_inverse_build(

@@ -127,7 +127,7 @@ proof fn lemma_coalesce_single_mode(m: nat, d: int)
 /// find_value on a singleton seq finds the element if it matches.
 proof fn lemma_find_value_singleton(val: int, target: int)
     ensures
-        find_value(seq![val], target) == (if val == target { 0int } else { -1int }),
+        find_value(seq![val], target) == (if val == target { Some(0nat) } else { None::<nat> }),
 {
     let s = seq![val];
     assert(s.len() == 1);
@@ -136,7 +136,7 @@ proof fn lemma_find_value_singleton(val: int, target: int)
         let rest = s.skip(1);
         assert(rest.len() == 0);
         assert(rest =~= Seq::<int>::empty());
-        assert(find_value(rest, target) == -1int);
+        assert(find_value(rest, target).is_none());
     }
 }
 
@@ -159,9 +159,9 @@ pub proof fn lemma_right_inverse_1d_identity(m: nat)
     let d = seq![1int];
     let pp_arg = seq![1nat];
 
-    // find_value(seq![1], 1) == 0
+    // find_value(seq![1], 1) == Some(0)
     lemma_find_value_singleton(1, 1);
-    assert(find_value(d, 1) == 0);
+    assert(find_value(d, 1) == Some(0nat));
 
     // remove_at on singletons gives empty
     assert(remove_at_nat(s, 0).len() == 0);
@@ -529,7 +529,7 @@ pub proof fn lemma_right_inverse_column_major(shape: Seq<nat>)
 
     // right_inverse_build(seq![n], seq![1], seq![1], 1) = make_identity(n)
     lemma_find_value_singleton(1, 1);
-    assert(find_value(seq![1int], 1) == 0);
+    assert(find_value(seq![1int], 1) == Some(0nat));
 
     let rem_s = remove_at_nat(seq![n], 0);
     let rem_d = remove_at_int(seq![1int], 0);
@@ -564,9 +564,9 @@ pub proof fn lemma_find_value_correspondence(
             forall|j: int| 0 <= j < v.len() ==> v[j] != target_i64,
     ensures
         exec_result < v.len() ==>
-            find_value(strides_to_int_seq(v), target_i64 as int) == exec_result as int,
+            find_value(strides_to_int_seq(v), target_i64 as int) == Some(exec_result as nat),
         exec_result == v.len() ==>
-            find_value(strides_to_int_seq(v), target_i64 as int) < 0,
+            find_value(strides_to_int_seq(v), target_i64 as int).is_none(),
     decreases v.len(),
 {
     let s = strides_to_int_seq(v);
@@ -576,7 +576,7 @@ pub proof fn lemma_find_value_correspondence(
         // First element matches
         assert(v[0] == target_i64);
         assert(s.first() == target_i64 as int);
-        assert(find_value(s, target_i64 as int) == 0);
+        assert(find_value(s, target_i64 as int) == Some(0nat));
     } else if exec_result < v.len() {
         // Match at exec_result > 0, v[0] doesn't match
         assert(v[0] != target_i64);
@@ -784,53 +784,59 @@ pub proof fn lemma_right_inverse_build_valid(
     if shape.len() == 0 {
         // Empty result: vacuously valid
     } else {
-        let idx = find_value(stride, cursor as int);
-        if idx < 0 || idx >= shape.len() as int {
-            // Empty result: vacuously valid
-        } else {
-            let m = shape[idx];
-            let rest_shape = remove_at_nat(shape, idx);
-            let rest_stride = remove_at_int(stride, idx);
-            let rest_preprod = remove_at_nat(preprod, idx);
+        match find_value(stride, cursor as int) {
+            None => {
+                // Empty result: vacuously valid
+            }
+            Some(idx) => {
+                if idx >= shape.len() {
+                    // Empty result: vacuously valid
+                } else {
+                    let m = shape[idx as int];
+                    let rest_shape = remove_at_nat(shape, idx as int);
+                    let rest_stride = remove_at_int(stride, idx as int);
+                    let rest_preprod = remove_at_nat(preprod, idx as int);
 
-            // rest has matching lengths
-            assert(rest_shape.len() == shape.len() - 1);
-            assert(rest_stride.len() == stride.len() - 1);
-            assert(rest_preprod.len() == preprod.len() - 1);
+                    // rest has matching lengths
+                    assert(rest_shape.len() == shape.len() - 1);
+                    assert(rest_stride.len() == stride.len() - 1);
+                    assert(rest_preprod.len() == preprod.len() - 1);
 
-            // shape_valid(rest_shape): removing one element preserves validity
-            assert(shape_valid(rest_shape)) by {
-                assert forall|j: int| 0 <= j < rest_shape.len()
-                    implies #[trigger] rest_shape[j] > 0
-                by {
-                    if j < idx {
-                        assert(rest_shape[j] == shape[j]);
-                    } else {
-                        assert(rest_shape[j] == shape[j + 1]);
-                    }
-                };
-            };
+                    // shape_valid(rest_shape): removing one element preserves validity
+                    assert(shape_valid(rest_shape)) by {
+                        assert forall|j: int| 0 <= j < rest_shape.len()
+                            implies #[trigger] rest_shape[j] > 0
+                        by {
+                            if j < idx as int {
+                                assert(rest_shape[j] == shape[j]);
+                            } else {
+                                assert(rest_shape[j] == shape[j + 1]);
+                            }
+                        };
+                    };
 
-            lemma_right_inverse_build_valid(
-                rest_shape, rest_stride, rest_preprod, m * cursor);
+                    lemma_right_inverse_build_valid(
+                        rest_shape, rest_stride, rest_preprod, m * cursor);
 
-            let rest = right_inverse_build(
-                rest_shape, rest_stride, rest_preprod, m * cursor);
-            let result = right_inverse_build(shape, stride, preprod, cursor);
+                    let rest = right_inverse_build(
+                        rest_shape, rest_stride, rest_preprod, m * cursor);
+                    let result = right_inverse_build(shape, stride, preprod, cursor);
 
-            // result.shape = seq![m].add(rest.shape), m = shape[idx] > 0
-            assert(m > 0);
-            assert(shape_valid(result.shape)) by {
-                assert forall|j: int| 0 <= j < result.shape.len()
-                    implies #[trigger] result.shape[j] > 0
-                by {
-                    if j == 0 {
-                        assert(result.shape[0] == m);
-                    } else {
-                        assert(result.shape[j] == rest.shape[j - 1]);
-                    }
-                };
-            };
+                    // result.shape = seq![m].add(rest.shape), m = shape[idx] > 0
+                    assert(m > 0);
+                    assert(shape_valid(result.shape)) by {
+                        assert forall|j: int| 0 <= j < result.shape.len()
+                            implies #[trigger] result.shape[j] > 0
+                        by {
+                            if j == 0 {
+                                assert(result.shape[0] == m);
+                            } else {
+                                assert(result.shape[j] == rest.shape[j - 1]);
+                            }
+                        };
+                    };
+                }
+            }
         }
     }
 }
@@ -889,20 +895,24 @@ pub proof fn lemma_left_inverse_build_valid(
     if shape.len() == 0 {
         // Empty: left_inverse_build returns {[], []}
     } else {
-        let idx = find_min_positive(stride);
-        if idx < 0 || idx >= shape.len() as int {
-            // No positive stride: returns {[], []}
-        } else {
-            let d = stride[idx] as nat;
-            let m = shape[idx];
-            let pp = preprod[idx];
+        match find_min_positive(stride) {
+            None => {
+                // No positive stride: returns {[], []}
+            }
+            Some(idx) => {
+                if idx >= shape.len() {
+                    // Out of bounds: returns {[], []}
+                } else {
+            let d = stride[idx as int] as nat;
+            let m = shape[idx as int];
+            let pp = preprod[idx as int];
             let gap = d / acc_size;
 
             // Prove gap > 0
             // d >= acc_size (from precondition, since stride[idx] > 0)
             lemma_find_min_positive_positive(stride, idx);
-            assert(stride[idx] > 0);
-            assert(stride[idx] >= acc_size as int);
+            assert(stride[idx as int] > 0);
+            assert(stride[idx as int] >= acc_size as int);
             assert(d >= acc_size);
             assert(gap >= 1) by {
                 vstd::arithmetic::div_mod::lemma_fundamental_div_mod(d as int, acc_size as int);
@@ -930,9 +940,9 @@ pub proof fn lemma_left_inverse_build_valid(
                     assert(result.shape[1] == m);
                 };
             } else {
-                let rest_shape = remove_at_nat(shape, idx);
-                let rest_stride = remove_at_int(stride, idx);
-                let rest_preprod = remove_at_nat(preprod, idx);
+                let rest_shape = remove_at_nat(shape, idx as int);
+                let rest_stride = remove_at_int(stride, idx as int);
+                let rest_preprod = remove_at_nat(preprod, idx as int);
                 let new_acc = acc_size * gap;
 
                 // new_acc > 0 (acc_size > 0, gap > 0)
@@ -952,7 +962,7 @@ pub proof fn lemma_left_inverse_build_valid(
                     assert forall|j: int| 0 <= j < rest_shape.len()
                         implies #[trigger] rest_shape[j] > 0
                     by {
-                        if j < idx { assert(rest_shape[j] == shape[j]); }
+                        if j < idx as int { assert(rest_shape[j] == shape[j]); }
                         else { assert(rest_shape[j] == shape[j + 1]); }
                     };
                 };
@@ -961,7 +971,7 @@ pub proof fn lemma_left_inverse_build_valid(
                 assert forall|j: int| 0 <= j < rest_stride.len() && rest_stride[j] > 0
                     implies rest_stride[j] >= new_acc as int
                 by {
-                    let orig_j = if j < idx { j } else { j + 1 };
+                    let orig_j = if j < idx as int { j } else { j + 1 };
                     assert(rest_stride[j] == stride[orig_j]);
                     assert(stride[orig_j] > 0);
                     lemma_find_min_positive_is_min(stride, idx, orig_j);
@@ -1006,18 +1016,19 @@ pub proof fn lemma_left_inverse_build_valid(
                     };
                 }
             }
+                }
+            }
         }
     }
 }
 
-/// find_min_positive returns a positive-stride index when >= 0.
-proof fn lemma_find_min_positive_positive(stride: Seq<int>, idx: int)
+/// find_min_positive returns a positive-stride index when Some.
+proof fn lemma_find_min_positive_positive(stride: Seq<int>, idx: nat)
     requires
-        idx == find_min_positive(stride),
-        0 <= idx,
+        find_min_positive(stride) == Some(idx),
         idx < stride.len(),
     ensures
-        stride[idx] > 0,
+        stride[idx as int] > 0,
     decreases stride.len(),
 {
     if stride.len() == 0 {
@@ -1025,28 +1036,35 @@ proof fn lemma_find_min_positive_positive(stride: Seq<int>, idx: int)
         let rest_idx = find_min_positive(stride.skip(1));
         lemma_find_min_positive_in_bounds(stride.skip(1));
         if stride.first() > 0 {
-            if rest_idx < 0 {
-                assert(idx == 0);
-            } else if stride.first() <= stride[rest_idx + 1] {
-                assert(idx == 0);
-            } else {
-                assert(idx == rest_idx + 1);
-                lemma_find_min_positive_positive(stride.skip(1), rest_idx);
+            match rest_idx {
+                None => {
+                    assert(idx == 0nat);
+                }
+                Some(ri) => {
+                    if stride.first() <= stride[(ri + 1) as int] {
+                        assert(idx == 0nat);
+                    } else {
+                        assert(idx == ri + 1);
+                        lemma_find_min_positive_positive(stride.skip(1), ri);
+                    }
+                }
             }
         } else {
-            if rest_idx < 0 {
-            } else {
-                assert(idx == rest_idx + 1);
-                lemma_find_min_positive_positive(stride.skip(1), rest_idx);
+            match rest_idx {
+                None => {}
+                Some(ri) => {
+                    assert(idx == ri + 1);
+                    lemma_find_min_positive_positive(stride.skip(1), ri);
+                }
             }
         }
     }
 }
 
-/// find_min_positive returns a value < s.len() when non-negative.
+/// find_min_positive returns a value < s.len() when Some.
 proof fn lemma_find_min_positive_in_bounds(s: Seq<int>)
     ensures
-        find_min_positive(s) >= 0 ==> find_min_positive(s) < s.len(),
+        find_min_positive(s).is_some() ==> find_min_positive(s).unwrap() < s.len(),
     decreases s.len(),
 {
     if s.len() == 0 {
@@ -1056,16 +1074,15 @@ proof fn lemma_find_min_positive_in_bounds(s: Seq<int>)
 }
 
 /// find_min_positive returns the minimum positive element's index.
-proof fn lemma_find_min_positive_is_min(stride: Seq<int>, idx: int, j: int)
+proof fn lemma_find_min_positive_is_min(stride: Seq<int>, idx: nat, j: int)
     requires
-        idx == find_min_positive(stride),
-        0 <= idx,
+        find_min_positive(stride) == Some(idx),
         idx < stride.len(),
         0 <= j,
         j < stride.len(),
         stride[j] > 0,
     ensures
-        stride[idx] <= stride[j],
+        stride[idx as int] <= stride[j],
     decreases stride.len(),
 {
     if stride.len() == 0 {
@@ -1073,41 +1090,46 @@ proof fn lemma_find_min_positive_is_min(stride: Seq<int>, idx: int, j: int)
         let rest_idx = find_min_positive(stride.skip(1));
         lemma_find_min_positive_in_bounds(stride.skip(1));
         if stride.first() > 0 {
-            if rest_idx < 0 {
-                assert(idx == 0);
-                if j == 0 {
-                } else {
-                    lemma_find_min_positive_none_means_all_nonpositive(
-                        stride.skip(1), rest_idx, j - 1);
-                    assert(stride.skip(1)[j - 1] == stride[j]);
-                }
-            } else if stride.first() <= stride[rest_idx + 1] {
-                assert(idx == 0);
-                if j == 0 {
-                } else {
-                    assert(stride.skip(1)[j - 1] == stride[j]);
-                    if stride.skip(1)[j - 1] > 0 {
-                        lemma_find_min_positive_is_min(stride.skip(1), rest_idx, j - 1);
+            match rest_idx {
+                None => {
+                    assert(idx == 0nat);
+                    if j == 0 {
+                    } else {
+                        lemma_find_min_positive_none_means_all_nonpositive(
+                            stride.skip(1), j - 1);
+                        assert(stride.skip(1)[j - 1] == stride[j]);
                     }
-                    // stride.first() <= stride[rest_idx+1], and stride[rest_idx+1] <= stride[j]
-                    // or stride[j] <= 0 (contradiction with stride[j] > 0)
                 }
-            } else {
-                assert(idx == rest_idx + 1);
-                if j == 0 {
-                } else {
-                    assert(stride.skip(1)[j - 1] == stride[j]);
-                    lemma_find_min_positive_is_min(stride.skip(1), rest_idx, j - 1);
+                Some(ri) => {
+                    if stride.first() <= stride[(ri + 1) as int] {
+                        assert(idx == 0nat);
+                        if j == 0 {
+                        } else {
+                            assert(stride.skip(1)[j - 1] == stride[j]);
+                            if stride.skip(1)[j - 1] > 0 {
+                                lemma_find_min_positive_is_min(stride.skip(1), ri, j - 1);
+                            }
+                        }
+                    } else {
+                        assert(idx == ri + 1);
+                        if j == 0 {
+                        } else {
+                            assert(stride.skip(1)[j - 1] == stride[j]);
+                            lemma_find_min_positive_is_min(stride.skip(1), ri, j - 1);
+                        }
+                    }
                 }
             }
         } else {
-            if rest_idx < 0 {
-            } else {
-                assert(idx == rest_idx + 1);
-                if j == 0 {
-                } else {
-                    assert(stride.skip(1)[j - 1] == stride[j]);
-                    lemma_find_min_positive_is_min(stride.skip(1), rest_idx, j - 1);
+            match rest_idx {
+                None => {}
+                Some(ri) => {
+                    assert(idx == ri + 1);
+                    if j == 0 {
+                    } else {
+                        assert(stride.skip(1)[j - 1] == stride[j]);
+                        lemma_find_min_positive_is_min(stride.skip(1), ri, j - 1);
+                    }
                 }
             }
         }
@@ -1116,13 +1138,12 @@ proof fn lemma_find_min_positive_is_min(stride: Seq<int>, idx: int, j: int)
 
 /// find_min_positive returns the FIRST (leftmost) minimum positive index.
 /// All elements before it are non-positive or strictly larger.
-proof fn lemma_find_min_positive_is_first(stride: Seq<int>, idx: int)
+proof fn lemma_find_min_positive_is_first(stride: Seq<int>, idx: nat)
     requires
-        idx == find_min_positive(stride),
-        0 <= idx,
+        find_min_positive(stride) == Some(idx),
         idx < stride.len(),
     ensures
-        forall|j: int| 0 <= j < idx ==> stride[j] <= 0 || stride[j] > stride[idx],
+        forall|j: int| 0 <= j < idx as int ==> stride[j] <= 0 || stride[j] > stride[idx as int],
     decreases stride.len(),
 {
     if stride.len() == 0 {
@@ -1130,43 +1151,51 @@ proof fn lemma_find_min_positive_is_first(stride: Seq<int>, idx: int)
         let rest_idx = find_min_positive(stride.skip(1));
         lemma_find_min_positive_in_bounds(stride.skip(1));
         if stride.first() > 0 {
-            if rest_idx < 0 {
-                assert(idx == 0);
-                // forall j < 0: vacuous
-            } else if stride.first() <= stride[rest_idx + 1] {
-                assert(idx == 0);
-                // forall j < 0: vacuous
-            } else {
-                assert(idx == rest_idx + 1);
-                lemma_find_min_positive_is_first(stride.skip(1), rest_idx);
-                assert forall|j: int| 0 <= j < idx
-                    implies stride[j] <= 0 || stride[j] > stride[idx]
-                by {
-                    if j == 0 {
-                        // stride.first() > stride[rest_idx + 1] = stride[idx]
+            match rest_idx {
+                None => {
+                    assert(idx == 0nat);
+                    // forall j < 0: vacuous
+                }
+                Some(ri) => {
+                    if stride.first() <= stride[(ri + 1) as int] {
+                        assert(idx == 0nat);
+                        // forall j < 0: vacuous
                     } else {
-                        assert(stride.skip(1)[j - 1] == stride[j]);
-                        assert(stride.skip(1)[rest_idx] == stride[rest_idx + 1]);
+                        assert(idx == ri + 1);
+                        lemma_find_min_positive_is_first(stride.skip(1), ri);
+                        assert forall|j: int| 0 <= j < idx as int
+                            implies stride[j] <= 0 || stride[j] > stride[idx as int]
+                        by {
+                            if j == 0 {
+                                // stride.first() > stride[(ri + 1) as int] = stride[idx]
+                            } else {
+                                assert(stride.skip(1)[j - 1] == stride[j]);
+                                assert(stride.skip(1)[ri as int] == stride[(ri + 1) as int]);
+                            }
+                        };
                     }
-                };
+                }
             }
         } else {
-            if rest_idx < 0 {
-                // idx = -1, contradicts idx >= 0
-            } else {
-                assert(idx == rest_idx + 1);
-                lemma_find_min_positive_is_first(stride.skip(1), rest_idx);
-                assert forall|j: int| 0 <= j < idx
-                    implies stride[j] <= 0 || stride[j] > stride[idx]
-                by {
-                    if j == 0 {
-                        assert(stride[0] == stride.first());
-                        assert(stride.first() <= 0);
-                    } else {
-                        assert(stride.skip(1)[j - 1] == stride[j]);
-                        assert(stride.skip(1)[rest_idx] == stride[rest_idx + 1]);
-                    }
-                };
+            match rest_idx {
+                None => {
+                    // find_min_positive == None, contradicts Some(idx)
+                }
+                Some(ri) => {
+                    assert(idx == ri + 1);
+                    lemma_find_min_positive_is_first(stride.skip(1), ri);
+                    assert forall|j: int| 0 <= j < idx as int
+                        implies stride[j] <= 0 || stride[j] > stride[idx as int]
+                    by {
+                        if j == 0 {
+                            assert(stride[0] == stride.first());
+                            assert(stride.first() <= 0);
+                        } else {
+                            assert(stride.skip(1)[j - 1] == stride[j]);
+                            assert(stride.skip(1)[ri as int] == stride[(ri + 1) as int]);
+                        }
+                    };
+                }
             }
         }
     }
@@ -1192,81 +1221,81 @@ pub proof fn lemma_find_min_positive_correspondence(
             forall|j: int| 0 <= j < v.len() ==> v[j] <= 0i64,
     ensures
         exec_result < v.len() ==>
-            find_min_positive(strides_to_int_seq(v)) == exec_result as int,
+            find_min_positive(strides_to_int_seq(v)) == Some(exec_result as nat),
         exec_result == v.len() ==>
-            find_min_positive(strides_to_int_seq(v)) < 0,
+            find_min_positive(strides_to_int_seq(v)).is_none(),
 {
     let s = strides_to_int_seq(v);
     if exec_result == v.len() {
         // All non-positive
         lemma_find_min_positive_in_bounds(s);
-        let spec_idx = find_min_positive(s);
-        if spec_idx >= 0 {
-            lemma_find_min_positive_positive(s, spec_idx);
-            // s[spec_idx] > 0, but s[spec_idx] = v[spec_idx] as int
-            // and v[spec_idx] <= 0i64. Contradiction.
-            assert(s[spec_idx] == v[spec_idx as int] as int);
-            assert(v[spec_idx as int] <= 0i64);
-            assert(false);
+        match find_min_positive(s) {
+            None => {}
+            Some(si) => {
+                lemma_find_min_positive_positive(s, si);
+                // s[si] > 0, but s[si] = v[si] as int
+                // and v[si] <= 0i64. Contradiction.
+                assert(s[si as int] == v[si as int] as int);
+                assert(v[si as int] <= 0i64);
+                assert(false);
+            }
         }
     } else {
         // exec_result < v.len(), v[exec_result] > 0
         lemma_find_min_positive_in_bounds(s);
-        let spec_idx = find_min_positive(s);
 
-        // s has a positive element at exec_result, so find_min_positive >= 0
-        if spec_idx < 0 {
-            lemma_find_min_positive_none_means_all_nonpositive(
-                s, spec_idx, exec_result as int);
-            assert(s[exec_result as int] == v[exec_result as int] as int);
-            assert(v[exec_result as int] > 0i64);
-            assert(s[exec_result as int] > 0);
-            assert(false);
-        }
-        assert(spec_idx >= 0 && spec_idx < s.len() as int);
+        // s has a positive element at exec_result, so find_min_positive must be Some
+        match find_min_positive(s) {
+            None => {
+                lemma_find_min_positive_none_means_all_nonpositive(
+                    s, exec_result as int);
+                assert(s[exec_result as int] == v[exec_result as int] as int);
+                assert(v[exec_result as int] > 0i64);
+                assert(s[exec_result as int] > 0);
+                assert(false);
+            }
+            Some(spec_idx) => {
+                assert(spec_idx < s.len());
 
-        lemma_find_min_positive_positive(s, spec_idx);
-        lemma_find_min_positive_is_first(s, spec_idx);
+                lemma_find_min_positive_positive(s, spec_idx);
+                lemma_find_min_positive_is_first(s, spec_idx);
 
-        // Now prove spec_idx == exec_result by showing neither < nor > is possible
-        if spec_idx < exec_result as int {
-            // From exec "first minimum": v[spec_idx] <= 0 || v[spec_idx] > v[exec_result]
-            assert(s[spec_idx] == v[spec_idx] as int);
-            assert(s[spec_idx] > 0); // from spec positive
-            assert(v[spec_idx] > 0i64);
-            // So v[spec_idx] > v[exec_result]
-            // But from spec "is_min": s[spec_idx] <= s[exec_result]
-            // i.e., v[spec_idx] as int <= v[exec_result] as int
-            lemma_find_min_positive_is_min(s, spec_idx, exec_result as int);
-            assert(s[exec_result as int] == v[exec_result as int] as int);
-            assert(s[exec_result as int] > 0);
-            // s[spec_idx] <= s[exec_result], v[spec_idx] > v[exec_result]
-            // But s values = v values as int, so contradiction
-            assert(false);
+                // Now prove spec_idx == exec_result by showing neither < nor > is possible
+                if (spec_idx as int) < exec_result as int {
+                    // From exec "first minimum": v[spec_idx] <= 0 || v[spec_idx] > v[exec_result]
+                    assert(s[spec_idx as int] == v[spec_idx as int] as int);
+                    assert(s[spec_idx as int] > 0); // from spec positive
+                    assert(v[spec_idx as int] > 0i64);
+                    // So v[spec_idx] > v[exec_result]
+                    // But from spec "is_min": s[spec_idx] <= s[exec_result]
+                    lemma_find_min_positive_is_min(s, spec_idx, exec_result as int);
+                    assert(s[exec_result as int] == v[exec_result as int] as int);
+                    assert(s[exec_result as int] > 0);
+                    assert(false);
+                }
+                if (spec_idx as int) > exec_result as int {
+                    // From spec "is_first": s[exec_result] <= 0 || s[exec_result] > s[spec_idx]
+                    assert(s[exec_result as int] == v[exec_result as int] as int);
+                    assert(v[exec_result as int] > 0i64);
+                    assert(s[exec_result as int] > 0);
+                    // So s[exec_result] > s[spec_idx]
+                    // But from exec "is_min": v[exec_result] <= v[spec_idx]
+                    assert(s[spec_idx as int] == v[spec_idx as int] as int);
+                    assert(v[spec_idx as int] > 0i64);
+                    assert(false);
+                }
+                assert(spec_idx == exec_result as nat);
+            }
         }
-        if spec_idx > exec_result as int {
-            // From spec "is_first": s[exec_result] <= 0 || s[exec_result] > s[spec_idx]
-            assert(s[exec_result as int] == v[exec_result as int] as int);
-            assert(v[exec_result as int] > 0i64);
-            assert(s[exec_result as int] > 0);
-            // So s[exec_result] > s[spec_idx]
-            // But from exec "is_min": v[exec_result] <= v[spec_idx]
-            // i.e., s[exec_result] <= s[spec_idx]. Contradiction.
-            assert(s[spec_idx] == v[spec_idx] as int);
-            assert(v[spec_idx] > 0i64);
-            assert(false);
-        }
-        assert(spec_idx == exec_result as int);
     }
 }
 
-/// When find_min_positive returns < 0, all elements are <= 0.
+/// When find_min_positive returns None, all elements are <= 0.
 proof fn lemma_find_min_positive_none_means_all_nonpositive(
-    stride: Seq<int>, idx: int, j: int,
+    stride: Seq<int>, j: int,
 )
     requires
-        idx == find_min_positive(stride),
-        idx < 0,
+        find_min_positive(stride).is_none(),
         0 <= j < stride.len(),
     ensures
         stride[j] <= 0,
@@ -1276,20 +1305,22 @@ proof fn lemma_find_min_positive_none_means_all_nonpositive(
     } else {
         let rest_idx = find_min_positive(stride.skip(1));
         if stride.first() > 0 {
-            // idx would be 0 or rest_idx + 1, both >= 0. Contradiction.
+            // find_min_positive would be Some(0) or Some(ri+1). Contradiction with None.
         } else {
             // stride.first() <= 0
-            if rest_idx < 0 {
-                // idx = -1
-                if j == 0 {
-                    assert(stride[j] == stride.first());
-                } else {
-                    assert(stride.skip(1)[j - 1] == stride[j]);
-                    lemma_find_min_positive_none_means_all_nonpositive(
-                        stride.skip(1), rest_idx, j - 1);
+            match rest_idx {
+                None => {
+                    if j == 0 {
+                        assert(stride[j] == stride.first());
+                    } else {
+                        assert(stride.skip(1)[j - 1] == stride[j]);
+                        lemma_find_min_positive_none_means_all_nonpositive(
+                            stride.skip(1), j - 1);
+                    }
                 }
-            } else {
-                // idx = rest_idx + 1 >= 1 >= 0, contradicts idx < 0
+                Some(_ri) => {
+                    // find_min_positive would be Some(ri + 1), contradicts None
+                }
             }
         }
     }
@@ -1385,22 +1416,23 @@ pub proof fn lemma_left_inverse_build_positive_strides(
 {
     if shape.len() == 0 {
     } else {
-        let idx = find_min_positive(stride);
         lemma_find_min_positive_in_bounds(stride);
         // All strides positive → find_min_positive must succeed
-        if idx < 0 {
-            lemma_find_min_positive_none_means_all_nonpositive(stride, idx, 0);
-            assert(stride[0] > 0);
-            assert(false);
-        }
-        assert(0 <= idx && idx < stride.len() as int);
+        match find_min_positive(stride) {
+            None => {
+                lemma_find_min_positive_none_means_all_nonpositive(stride, 0);
+                assert(stride[0] > 0);
+                assert(false);
+            }
+            Some(idx) => {
+        assert(idx < stride.len());
 
-        let d = stride[idx] as nat;
-        let m = shape[idx];
+        let d = stride[idx as int] as nat;
+        let m = shape[idx as int];
         let gap = d / acc_size;
 
         lemma_find_min_positive_positive(stride, idx);
-        assert(stride[idx] >= acc_size as int);
+        assert(stride[idx as int] >= acc_size as int);
         assert(gap >= 1) by {
             vstd::arithmetic::div_mod::lemma_fundamental_div_mod(d as int, acc_size as int);
             vstd::arithmetic::div_mod::lemma_mod_bound(d as int, acc_size as int);
@@ -1424,9 +1456,9 @@ pub proof fn lemma_left_inverse_build_positive_strides(
                 assert(result.shape[1] == m);
             };
         } else {
-            let rest_shape = remove_at_nat(shape, idx);
-            let rest_stride = remove_at_int(stride, idx);
-            let rest_preprod = remove_at_nat(preprod, idx);
+            let rest_shape = remove_at_nat(shape, idx as int);
+            let rest_stride = remove_at_int(stride, idx as int);
+            let rest_preprod = remove_at_nat(preprod, idx as int);
             let new_acc = acc_size * gap;
 
             assert(new_acc > 0) by {
@@ -1442,7 +1474,7 @@ pub proof fn lemma_left_inverse_build_positive_strides(
             assert forall|j: int| 0 <= j < rest_stride.len()
                 implies rest_stride[j] > 0
             by {
-                let orig_j = if j < idx { j } else { j + 1 };
+                let orig_j = if j < idx as int { j } else { j + 1 };
                 assert(rest_stride[j] == stride[orig_j]);
             };
 
@@ -1450,7 +1482,7 @@ pub proof fn lemma_left_inverse_build_positive_strides(
             assert forall|j: int| 0 <= j < rest_stride.len() && rest_stride[j] > 0
                 implies rest_stride[j] >= new_acc as int
             by {
-                let orig_j = if j < idx { j } else { j + 1 };
+                let orig_j = if j < idx as int { j } else { j + 1 };
                 assert(rest_stride[j] == stride[orig_j]);
                 lemma_find_min_positive_is_min(stride, idx, orig_j);
             };
@@ -1460,7 +1492,7 @@ pub proof fn lemma_left_inverse_build_positive_strides(
                 assert forall|j: int| 0 <= j < rest_shape.len()
                     implies #[trigger] rest_shape[j] > 0
                 by {
-                    if j < idx { assert(rest_shape[j] == shape[j]); }
+                    if j < idx as int { assert(rest_shape[j] == shape[j]); }
                     else { assert(rest_shape[j] == shape[j + 1]); }
                 };
             };
@@ -1485,6 +1517,8 @@ pub proof fn lemma_left_inverse_build_positive_strides(
                     else { assert(result.shape[j] == rest.shape[j - 1]); }
                 };
             };
+        }
+            }
         }
     }
 }
@@ -1532,21 +1566,23 @@ pub proof fn lemma_left_inverse_valid(layout: &LayoutSpec)
 // Helper lemmas for right_inverse_correct
 // ══════════════════════════════════════════════════════════════
 
-/// find_value returns a valid index when >= 0, and s[result] == target.
+/// find_value returns a valid index when Some, and s[result] == target.
 proof fn lemma_find_value_hit(s: Seq<int>, target: int)
     ensures
-        find_value(s, target) >= 0 ==> (
-            find_value(s, target) < s.len() as int
-            && s[find_value(s, target)] == target
+        find_value(s, target).is_some() ==> (
+            find_value(s, target).unwrap() < s.len()
+            && s[find_value(s, target).unwrap() as int] == target
         ),
     decreases s.len(),
 {
     if s.len() > 0 && s.first() != target {
         lemma_find_value_hit(s.skip(1), target);
-        let rest = find_value(s.skip(1), target);
-        if rest >= 0 {
-            assert(s.skip(1)[rest] == target);
-            assert(s[rest + 1] == s.skip(1)[rest]);
+        match find_value(s.skip(1), target) {
+            None => {}
+            Some(rest) => {
+                assert(s.skip(1)[rest as int] == target);
+                assert(s[(rest + 1) as int] == s.skip(1)[rest as int]);
+            }
         }
     }
 }
@@ -1859,30 +1895,36 @@ proof fn lemma_right_inverse_build_size_split(
         shape_valid(shape),
         shape.len() > 0,
     ensures ({
-        let idx = find_value(stride, cursor as int);
         let R = right_inverse_build(shape, stride, preprod, cursor);
-        (idx >= 0 && idx < shape.len() as int) ==> ({
-            let m = shape[idx];
-            let rest_R = right_inverse_build(
-                remove_at_nat(shape, idx), remove_at_int(stride, idx),
-                remove_at_nat(preprod, idx), m * cursor);
-            R.size() == m * rest_R.size()
+        find_value(stride, cursor as int).is_some() ==> ({
+            let idx = find_value(stride, cursor as int).unwrap();
+            idx < shape.len() ==> ({
+                let m = shape[idx as int];
+                let rest_R = right_inverse_build(
+                    remove_at_nat(shape, idx as int), remove_at_int(stride, idx as int),
+                    remove_at_nat(preprod, idx as int), m * cursor);
+                R.size() == m * rest_R.size()
+            })
         })
     }),
 {
-    let idx = find_value(stride, cursor as int);
     let R = right_inverse_build(shape, stride, preprod, cursor);
-    if idx >= 0 && idx < shape.len() as int {
-        let m = shape[idx];
-        let rest_R = right_inverse_build(
-            remove_at_nat(shape, idx), remove_at_int(stride, idx),
-            remove_at_nat(preprod, idx), m * cursor);
-        // R.shape = seq![m].add(rest_R.shape)
-        // R.size() = shape_size(R.shape) = m * shape_size(rest_R.shape)
-        let rshape = seq![m as nat].add(rest_R.shape);
-        assert(R.shape =~= rshape);
-        assert(rshape.first() == m);
-        assert(rshape.skip(1) =~= rest_R.shape);
+    match find_value(stride, cursor as int) {
+        None => {}
+        Some(idx) => {
+            if idx < shape.len() {
+                let m = shape[idx as int];
+                let rest_R = right_inverse_build(
+                    remove_at_nat(shape, idx as int), remove_at_int(stride, idx as int),
+                    remove_at_nat(preprod, idx as int), m * cursor);
+                // R.shape = seq![m].add(rest_R.shape)
+                // R.size() = shape_size(R.shape) = m * shape_size(rest_R.shape)
+                let rshape = seq![m as nat].add(rest_R.shape);
+                assert(R.shape =~= rshape);
+                assert(rshape.first() == m);
+                assert(rshape.skip(1) =~= rest_R.shape);
+            }
+        }
     }
 }
 

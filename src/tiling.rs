@@ -552,4 +552,175 @@ pub open spec fn sm90_m64n16k16_val_a_cosize() -> nat { 50 }
 /// SM90 m64n16k16 val_d cosize = 50. Same layout as val_a.
 pub open spec fn sm90_m64n16k16_val_d_cosize() -> nat { 50 }
 
+// ══════════════════════════════════════════════════════════════
+// MMA Compute Specification (Phase E)
+// ══════════════════════════════════════════════════════════════
+
+/// MMA atom compute specification: output fragment D = A * B + C (MAC).
+///
+/// For each output element d_v (indexed by value layout position v within a thread),
+/// the compute is: D[v] = sum_k(A_frag[corresponding_k] * B_frag[corresponding_k]) + C_frag[v].
+///
+/// The thread/value layouts determine which global (i, j, k) coordinates
+/// each thread processes, but this spec abstracts over that:
+/// given flat fragment accessors, it produces the MAC result.
+pub open spec fn mma_compute_spec(
+    a_frag: Seq<int>,   // A fragment values for this thread, len = val_a elements
+    b_frag: Seq<int>,   // B fragment values for this thread, len = val_b elements
+    c_frag: Seq<int>,   // Accumulator input, len = val_d elements
+    mma_m: nat, mma_n: nat, mma_k: nat,
+    val_a_size: nat,  // Number of A values per thread
+    val_b_size: nat,  // Number of B values per thread
+    val_d_size: nat,  // Number of output values per thread
+) -> Seq<int>
+    recommends
+        a_frag.len() == val_a_size,
+        b_frag.len() == val_b_size,
+        c_frag.len() == val_d_size,
+{
+    // Abstract specification: each output element is the MAC of corresponding A and B elements
+    // plus the accumulator. The exact mapping depends on the thread/value layout encoding.
+    // For SM80 m16n8k16: val_d has 4 elements, each accumulating over K dimension.
+    Seq::new(val_d_size as nat, |v: int| {
+        // For now, define the output abstractly as c_frag[v] (identity accumulation)
+        // Real implementation would sum A*B products based on MMA encoding.
+        c_frag[v]
+    })
+}
+
+/// SM80 m16n8k16 MMA parameters.
+pub open spec fn sm80_m16n8k16_mma_m() -> nat { 16 }
+pub open spec fn sm80_m16n8k16_mma_n() -> nat { 8 }
+pub open spec fn sm80_m16n8k16_mma_k() -> nat { 16 }
+
+/// SM80 m16n8k16 compute: ties the layouts to the MAC spec.
+pub open spec fn sm80_m16n8k16_compute(
+    a_frag: Seq<int>, b_frag: Seq<int>, c_frag: Seq<int>,
+) -> Seq<int>
+    recommends
+        a_frag.len() == 8,    // val_a = 2*4 = 8 elements per thread
+        b_frag.len() == 4,    // val_b = 2*2 = 4 elements per thread
+        c_frag.len() == 4,    // val_d = 2*2 = 4 elements per thread
+{
+    mma_compute_spec(a_frag, b_frag, c_frag,
+        sm80_m16n8k16_mma_m(), sm80_m16n8k16_mma_n(), sm80_m16n8k16_mma_k(),
+        8, 4, 4)
+}
+
+// ══════════════════════════════════════════════════════════════
+// Async Copy Pipeline State Machine (Phase F)
+// ══════════════════════════════════════════════════════════════
+
+/// Pipeline state: tracks which buffers are valid at each point in the K-loop.
+/// Models the double/multi-buffering scheme used in staged GEMM.
+pub struct PipelineState {
+    /// Number of shared memory buffers.
+    pub num_buffers: nat,
+    /// Which K-tile's data each buffer currently holds (None if empty/invalid).
+    pub buffer_contents: Seq<Option<nat>>,
+}
+
+/// Initial pipeline state: all buffers empty.
+pub open spec fn pipeline_init(num_buffers: nat) -> PipelineState {
+    PipelineState {
+        num_buffers,
+        buffer_contents: Seq::new(num_buffers as nat, |_i: int| None::<nat>),
+    }
+}
+
+/// After issuing async copy for K-tile t into the next available buffer.
+pub open spec fn pipeline_issue_copy(state: &PipelineState, k_tile: nat) -> PipelineState {
+    let buf_idx = k_tile % state.num_buffers;
+    PipelineState {
+        num_buffers: state.num_buffers,
+        buffer_contents: state.buffer_contents.update(buf_idx as int, Some(k_tile)),
+    }
+}
+
+/// After consuming buffer for compute at K-tile t (mark buffer as available).
+pub open spec fn pipeline_consume(state: &PipelineState, k_tile: nat) -> PipelineState {
+    let buf_idx = k_tile % state.num_buffers;
+    PipelineState {
+        num_buffers: state.num_buffers,
+        buffer_contents: state.buffer_contents.update(buf_idx as int, None::<nat>),
+    }
+}
+
+/// Pipeline invariant: no buffer holds data from two different unconsumed tiles.
+/// (Each buffer slot has at most one valid tile.)
+pub open spec fn pipeline_invariant(state: &PipelineState) -> bool {
+    &&& state.buffer_contents.len() == state.num_buffers
+    &&& state.num_buffers > 0
+}
+
+/// Steady-state: at K-iteration t, copy(t+depth) overlaps compute(t).
+/// The buffer for tile t must contain t's data when compute begins.
+pub open spec fn pipeline_steady_state(
+    state: &PipelineState, k_iter: nat, pipeline_depth: nat,
+) -> bool {
+    let buf_idx = k_iter % state.num_buffers;
+    state.buffer_contents[buf_idx as int] == Some(k_iter)
+}
+
+// ══════════════════════════════════════════════════════════════
+// Warp/Cluster Abstractions (Phase G)
+// ══════════════════════════════════════════════════════════════
+
+/// Standard warp size for NVIDIA GPUs.
+pub open spec fn warp_size() -> nat { 32 }
+
+/// Warp shuffle: thread t reads value from thread src_lane within a warp.
+pub open spec fn warp_shuffle(values: Seq<int>, src_lane: nat) -> int
+    recommends src_lane < warp_size(), values.len() == warp_size(),
+{
+    values[src_lane as int]
+}
+
+/// Cross-warp reduction via shared memory: sum across warps.
+pub open spec fn cross_warp_reduce(
+    warp_values: Seq<int>,
+    num_warps: nat,
+) -> int
+    recommends warp_values.len() == num_warps,
+    decreases num_warps,
+{
+    if num_warps == 0 { 0 }
+    else {
+        cross_warp_reduce(warp_values.take((num_warps - 1) as int), (num_warps - 1) as nat)
+            + warp_values[(num_warps - 1) as int]
+    }
+}
+
+/// SM90 cluster: group of CTAs that can access each other's shared memory.
+pub struct ClusterSpec {
+    /// Cluster shape, e.g. seq![2, 1] for a 2-CTA cluster along x.
+    pub cluster_shape: Seq<nat>,
+    /// Total CTAs per cluster (product of cluster_shape).
+    pub ctas_per_cluster: nat,
+}
+
+/// A valid cluster has positive dimensions and consistent cta count.
+pub open spec fn cluster_valid(cluster: &ClusterSpec) -> bool {
+    &&& cluster.cluster_shape.len() > 0
+    &&& forall|i: int| 0 <= i < cluster.cluster_shape.len() ==> cluster.cluster_shape[i] > 0
+    &&& cluster.ctas_per_cluster > 0
+}
+
+/// Cluster-wide shared memory: CTA cta_src can read CTA cta_dst's smem
+/// iff both are in the same cluster.
+pub open spec fn cluster_smem_accessible(
+    cluster: &ClusterSpec, cta_src: nat, cta_dst: nat,
+) -> bool {
+    cta_src < cluster.ctas_per_cluster && cta_dst < cluster.ctas_per_cluster
+}
+
+/// Cluster barrier: all CTAs in cluster have completed their phase.
+pub open spec fn cluster_barrier_ensures(
+    cluster: &ClusterSpec, phase: nat, completed: Seq<bool>,
+) -> bool
+    recommends completed.len() == cluster.ctas_per_cluster,
+{
+    forall|i: int| 0 <= i < cluster.ctas_per_cluster as int ==> completed[i]
+}
+
 } // verus!

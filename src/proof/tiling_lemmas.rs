@@ -342,8 +342,10 @@ pub proof fn lemma_predicated_divide_num_tiles(original_size: nat, tile_size: na
     crate::proof::predication_lemmas::lemma_num_tiles_is_padded(original_size, tile_size);
     let nt = num_tiles_ceil(original_size, tile_size);
     assert(nt * tile_size == padded);
-    vstd::arithmetic::div_mod::lemma_div_multiples_vanish(nt as int, tile_size as int);
-    assert(padded / tile_size == nt);
+    assert(tile_size > 0);
+    assert(padded / tile_size == nt) by (nonlinear_arith)
+        requires nt * tile_size == padded, tile_size > 0nat,
+    ;
 }
 
 /// Sum of valid element counts across all tiles equals original_size.
@@ -3290,6 +3292,57 @@ pub proof fn lemma_sm90_m64n16k16_thr_cosize()
     assert(thr.stride[1] == 4int);
     assert(thr.stride[0] as nat == 1nat);
     assert(thr.stride[1] as nat == 4nat);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Pipeline invariant proofs (Phase F)
+// ══════════════════════════════════════════════════════════════
+
+/// Pipeline_init satisfies the invariant.
+pub proof fn lemma_pipeline_init_invariant(num_buffers: nat)
+    requires num_buffers > 0,
+    ensures pipeline_invariant(&pipeline_init(num_buffers)),
+{
+    let state = pipeline_init(num_buffers);
+    assert(state.buffer_contents.len() == num_buffers);
+}
+
+/// Pipeline invariant is maintained through an issue/consume cycle.
+pub proof fn lemma_pipeline_invariant_maintained(
+    state: &PipelineState, k_tile: nat,
+)
+    requires pipeline_invariant(state),
+    ensures
+        pipeline_invariant(&pipeline_issue_copy(state, k_tile)),
+        pipeline_invariant(&pipeline_consume(state, k_tile)),
+{
+    let issued = pipeline_issue_copy(state, k_tile);
+    assert(issued.buffer_contents.len() == state.num_buffers);
+    let consumed = pipeline_consume(state, k_tile);
+    assert(consumed.buffer_contents.len() == state.num_buffers);
+}
+
+/// After issuing copy for k_tile, the buffer holds that tile's data.
+pub proof fn lemma_pipeline_issue_steady_state(
+    state: &PipelineState, k_tile: nat,
+)
+    requires pipeline_invariant(state),
+    ensures pipeline_steady_state(&pipeline_issue_copy(state, k_tile), k_tile, 0),
+{
+    let issued = pipeline_issue_copy(state, k_tile);
+    let buf_idx = k_tile % state.num_buffers;
+    assert(issued.buffer_contents[buf_idx as int] == Some(k_tile));
+}
+
+// ══════════════════════════════════════════════════════════════
+// Cross-warp reduction proofs (Phase G)
+// ══════════════════════════════════════════════════════════════
+
+/// Cross-warp reduction of a single warp returns that warp's value.
+pub proof fn lemma_cross_warp_reduce_single(val: int)
+    ensures cross_warp_reduce(seq![val], 1) == val,
+{
+    assert(cross_warp_reduce(seq![val].take(0), 0) == 0);
 }
 
 } // verus!

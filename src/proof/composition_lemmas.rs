@@ -652,4 +652,32 @@ pub proof fn lemma_compose_identity_left(a: LayoutSpec, m: nat)
     };
 }
 
+// ══════════════════════════════════════════════════════════════
+// Extended composition lemmas
+// ══════════════════════════════════════════════════════════════
+
+/// Extended composition agrees with basic composition when find_split_mode returns None
+/// or when the split mode index is out of bounds.
+pub proof fn lemma_compose_extended_fallback(a: LayoutSpec, b_shape: nat, b_stride: nat)
+    requires
+        a.valid(), b_shape > 0,
+        find_split_mode(&a, b_stride).is_none()
+            || find_split_mode(&a, b_stride).unwrap() >= a.shape.len()
+            || b_shape > a.shape[find_split_mode(&a, b_stride).unwrap() as int],
+    ensures
+        compose_single_mode_extended(a, b_shape, b_stride)
+            == compose_single_mode(a, b_shape, b_stride),
+{
+    // Both functions agree in the stride-1 case and the fallback case.
+    // The extended function only differs when find_split_mode succeeds with a valid idx
+    // and b_shape fits, which the requires excludes.
+}
+
+/// The shape output of compose_single_mode_extended always equals seq![b_shape].
+pub proof fn lemma_compose_extended_shape(a: LayoutSpec, b_shape: nat, b_stride: nat)
+    requires a.valid(), b_shape > 0,
+    ensures compose_single_mode_extended(a, b_shape, b_stride).shape =~= seq![b_shape],
+{
+}
+
 } // verus!

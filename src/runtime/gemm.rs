@@ -1,7 +1,10 @@
 use vstd::prelude::*;
 use crate::layout::*;
+use crate::shape::*;
 use crate::gemm::*;
 use crate::predication::*;
+use crate::proof::shape_lemmas::*;
+use crate::proof::tiling_lemmas::lemma_offset_rank2;
 use super::layout::*;
 use super::*;
 use super::predication::num_tiles_ceil_exec;
@@ -64,7 +67,39 @@ pub fn linearize_2d(layout: &RuntimeLayout, i: u64, j: u64) -> (result: i64)
     ensures
         result as int == gemm_c_offset(&layout@, i as nat, j as nat),
 {
-    proof { lemma_stride_bridge(layout); }
+    proof {
+        lemma_stride_bridge(layout);
+        // Bridge: i*stride[0] + j*stride[1] == layout@.offset(linearize(seq![i,j], shape))
+        let lay = layout@;
+        let coords = seq![i as nat, j as nat];
+        // shape_valid and coords_in_bounds for rank-2
+        assert(lay.shape.len() == 2);
+        assert(lay.shape =~= seq![lay.shape[0], lay.shape[1]]);
+        assert(shape_valid(lay.shape)) by {
+            assert forall|k: int| 0 <= k < lay.shape.len() implies lay.shape[k] > 0 by {
+                // from layout.wf_spec() -> layout@.valid() -> shape_valid
+            }
+        };
+        assert(coords_in_bounds(coords, lay.shape)) by {
+            assert(coords.len() == lay.shape.len());
+            assert(coords[0] < lay.shape[0]);
+            assert(coords[1] < lay.shape[1]);
+        };
+        lemma_linearize_bound(coords, lay.shape);
+        lemma_offset_rank2(&lay, linearize(coords, lay.shape));
+        lemma_linearize_roundtrip(coords, lay.shape);
+        // Now: delinearize(linearize(coords, shape), shape) =~= coords
+        // And: offset(x) == coords[0]*stride[0] + coords[1]*stride[1]
+        let x = linearize(coords, lay.shape);
+        let dc = delinearize(x, lay.shape);
+        assert(dc =~= coords);
+        assert(dc[0] == i as nat);
+        assert(dc[1] == j as nat);
+        // gemm_c_offset unfolds to lay.offset(linearize(seq![i,j], lay.shape))
+        // which equals (dc[0] as int)*stride[0] + (dc[1] as int)*stride[1]
+        // = (i as int)*stride[0] + (j as int)*stride[1]
+        crate::proof::offset_lemmas::lemma_rank2_offset_linearize(&lay, i as nat, j as nat);
+    }
     let ii = i as i64;
     let jj = j as i64;
     let s0 = layout.stride[0];
@@ -459,6 +494,64 @@ pub open spec fn gemm_product_bounded(
     let bv = b_data[b_off];
     &&& (av as int) * (bv as int) >= -bound
     &&& (av as int) * (bv as int) <= bound
+}
+
+/// Bundled data-safety predicate for GEMM kernel preconditions.
+/// Combines all per-element overflow, data-bounds, product, accumulation,
+/// and stride overflow into a single predicate for cleaner requires/invariants.
+pub open spec fn gemm_data_safe(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec,
+    a_data: Seq<i64>, b_data: Seq<i64>,
+    m: nat, n: nat, k_size: nat, bk: nat, acc_bound: int,
+) -> bool {
+    // A/B offset overflow
+    &&& forall|gi: nat, kk: nat| gi < m && kk < k_size ==>
+            #[trigger] a_offset_overflow_ok(a_layout, gi, kk)
+    &&& forall|gj: nat, kk: nat| gj < n && kk < k_size ==>
+            #[trigger] b_offset_overflow_ok(b_layout, gj, kk)
+    // A/B data in bounds
+    &&& forall|gi: nat, kk: nat| gi < m && kk < k_size ==>
+            #[trigger] a_data_in_bounds(a_layout, a_data.len(), gi, kk)
+    &&& forall|gj: nat, kk: nat| gj < n && kk < k_size ==>
+            #[trigger] b_data_in_bounds(b_layout, b_data.len(), gj, kk)
+    // Product overflow & boundedness
+    &&& forall|gi: nat, gj: nat, kk: nat| gi < m && gj < n && kk < k_size ==>
+            #[trigger] gemm_product_ok(a_layout, b_layout, a_data, b_data, gi, gj, kk)
+    &&& forall|gi: nat, gj: nat, kk: nat| gi < m && gj < n && kk < k_size ==>
+            #[trigger] gemm_product_bounded(a_layout, b_layout, a_data, b_data, gi, gj, kk, acc_bound)
+    // Accumulation bound
+    &&& acc_bound >= 0
+    &&& acc_bound <= i64::MAX as int
+    &&& -acc_bound >= i64::MIN as int
+    &&& (k_size as int) * acc_bound <= i64::MAX as int
+    &&& (bk as int) * acc_bound <= i64::MAX as int
+    // Stride overflow
+    &&& forall|gi: nat| gi < m ==> #[trigger] a_row_stride_ok(a_layout, gi)
+    &&& forall|gj: nat| gj < n ==> #[trigger] b_col_stride_ok(b_layout, gj)
+}
+
+/// Bundled layout and structural preconditions for GEMM.
+/// Combines layout well-formedness, rank, tile sizes, and shape bounds.
+pub open spec fn gemm_layout_safe(
+    a_layout: &LayoutSpec, b_layout: &LayoutSpec, c_layout: &LayoutSpec,
+    m: nat, n: nat, k_size: nat, bm: nat, bn: nat, bk: nat,
+) -> bool {
+    // Layout validity and rank
+    &&& a_layout.valid() && a_layout.rank() == 2
+    &&& b_layout.valid() && b_layout.rank() == 2
+    &&& c_layout.valid() && c_layout.rank() == 2
+    &&& c_layout.is_injective() && c_layout.non_negative_strides()
+    // Tile sizes
+    &&& bm > 0 && bn > 0 && bk > 0 && k_size > 0
+    // Shape bounds
+    &&& m <= a_layout.shape[0] && k_size <= a_layout.shape[1]
+    &&& k_size <= b_layout.shape[0] && n <= b_layout.shape[1]
+    &&& m <= c_layout.shape[0] && n <= c_layout.shape[1]
+    // Common overflow
+    &&& (bm * bn) <= usize::MAX as nat
+    &&& (bm * bn) <= u64::MAX as nat
+    &&& k_size <= i64::MAX as nat
+    &&& bk <= i64::MAX as nat
 }
 
 /// Integer-level GEMM MAC for element (i,j) over k in [0, k_size).
@@ -1381,67 +1474,26 @@ pub fn gemm_cta_kernel(
     Ghost(acc_bound): Ghost<int>,
 )
     requires
-        // Layout well-formedness
+        // Bundled layout + data safety
         a_layout.wf_spec(), b_layout.wf_spec(), c_layout.wf_spec(),
-        a_layout@.rank() == 2, b_layout@.rank() == 2, c_layout@.rank() == 2,
-        c_layout@.valid(), c_layout@.is_injective(), c_layout@.non_negative_strides(),
-        // Tile sizes
-        bm > 0, bn > 0, bk > 0, k_size > 0,
+        gemm_layout_safe(&a_layout@, &b_layout@, &c_layout@,
+            m as nat, n as nat, k_size as nat, bm as nat, bn as nat, bk as nat),
+        gemm_data_safe(&a_layout@, &b_layout@, a_data@, b_data@,
+            m as nat, n as nat, k_size as nat, bk as nat, acc_bound),
+        // CTA-specific
         k_tiles == num_tiles_ceil(k_size as nat, bk as nat),
-        // Shape bounds
-        m as nat <= a_layout@.shape[0],
-        k_size as nat <= a_layout@.shape[1],
-        k_size as nat <= b_layout@.shape[0],
-        n as nat <= b_layout@.shape[1],
-        m as nat <= c_layout@.shape[0],
-        n as nat <= c_layout@.shape[1],
-        // Overflow bounds
-        (bm as nat) * (bn as nat) <= usize::MAX as nat,
-        (bm as nat) * (bn as nat) <= u64::MAX as nat,
         (ti as nat) * (bm as nat) + (bm as nat) <= u64::MAX as nat,
         (tj as nat) * (bn as nat) + (bn as nat) <= u64::MAX as nat,
-        // Global index fits in i64 (for gemm_k_tile_loop)
         (ti as nat) * (bm as nat) + (bm as nat) <= i64::MAX as nat,
         (tj as nat) * (bn as nat) + (bn as nat) <= i64::MAX as nat,
         k_tiles <= i64::MAX as u64,
         k_tiles * bk <= u64::MAX as nat,
-        k_size <= i64::MAX as u64,
-        bk <= i64::MAX as u64,
-        // A/B offset overflow for all k in this CTA's range
-        forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-            #[trigger] a_offset_overflow_ok(&a_layout@, gi, kk),
-        forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-            #[trigger] b_offset_overflow_ok(&b_layout@, gj, kk),
-        // A/B data in bounds
-        forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-            #[trigger] a_data_in_bounds(&a_layout@, a_data@.len(), gi, kk),
-        forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-            #[trigger] b_data_in_bounds(&b_layout@, b_data@.len(), gj, kk),
-        // Product overflow & boundedness
-        forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-            #[trigger] gemm_product_ok(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk),
-        forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-            #[trigger] gemm_product_bounded(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk, acc_bound),
-        // Accumulation bound
-        acc_bound >= 0,
-        acc_bound <= i64::MAX as int,
-        -acc_bound >= i64::MIN as int,
-        (k_size as int) * acc_bound <= i64::MAX as int,
-        (bk as int) * acc_bound <= i64::MAX as int,
-        // A/B stride overflow for individual indices
-        forall|gi: nat| gi < m as nat ==>
-            #[trigger] a_row_stride_ok(&a_layout@, gi),
-        forall|gj: nat| gj < n as nat ==>
-            #[trigger] b_col_stride_ok(&b_layout@, gj),
         // Epilogue safety
         epilogue_cta_correct(&c_layout@, old(c_data)@.len(),
             m as nat, n as nat, bm as nat, bn as nat, ti as nat, tj as nat),
-        // C offset overflow safety
         cta_tile_overflow_ok(&c_layout@, m as nat, n as nat,
             bm as nat, bn as nat, ti as nat, tj as nat),
-        // Cross-CTA disjointness (for flat frame ensures)
         epilogue_cross_cta_disjoint(&c_layout@, m as nat, n as nat, bm as nat, bn as nat),
-        // Tensor validity (for offset bounds of other CTAs)
         tensor_valid(&TensorSpec { layout: c_layout@, data_size: old(c_data)@.len() }),
     ensures
         c_data@.len() == old(c_data)@.len(),
@@ -1493,46 +1545,20 @@ pub fn gemm_cta_kernel(
     while ei < bm
         invariant
             0 <= ei <= bm,
-            bm > 0, bn > 0, bk > 0, k_size > 0,
             acc_size == bm * bn,
             accumulators@.len() == (bm as nat) * (bn as nat),
             a_layout.wf_spec(), b_layout.wf_spec(),
-            a_layout@.rank() == 2, b_layout@.rank() == 2,
+            gemm_layout_safe(&a_layout@, &b_layout@, &c_layout@,
+                m as nat, n as nat, k_size as nat, bm as nat, bn as nat, bk as nat),
+            gemm_data_safe(&a_layout@, &b_layout@, a_data@, b_data@,
+                m as nat, n as nat, k_size as nat, bk as nat, acc_bound),
             k_tiles == num_tiles_ceil(k_size as nat, bk as nat),
-            m as nat <= a_layout@.shape[0],
-            k_size as nat <= a_layout@.shape[1],
-            k_size as nat <= b_layout@.shape[0],
-            n as nat <= b_layout@.shape[1],
-            (bm as nat) * (bn as nat) <= usize::MAX as nat,
             (ti as nat) * (bm as nat) + (bm as nat) <= u64::MAX as nat,
             (tj as nat) * (bn as nat) + (bn as nat) <= u64::MAX as nat,
             (ti as nat) * (bm as nat) + (bm as nat) <= i64::MAX as nat,
             (tj as nat) * (bn as nat) + (bn as nat) <= i64::MAX as nat,
             k_tiles <= i64::MAX as u64,
             k_tiles * bk <= u64::MAX as nat,
-            k_size <= i64::MAX as u64,
-            bk <= i64::MAX as u64,
-            forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-                #[trigger] a_offset_overflow_ok(&a_layout@, gi, kk),
-            forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-                #[trigger] b_offset_overflow_ok(&b_layout@, gj, kk),
-            forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-                #[trigger] a_data_in_bounds(&a_layout@, a_data@.len(), gi, kk),
-            forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-                #[trigger] b_data_in_bounds(&b_layout@, b_data@.len(), gj, kk),
-            forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-                #[trigger] gemm_product_ok(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk),
-            forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-                #[trigger] gemm_product_bounded(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk, acc_bound),
-            acc_bound >= 0,
-            acc_bound <= i64::MAX as int,
-            -acc_bound >= i64::MIN as int,
-            (k_size as int) * acc_bound <= i64::MAX as int,
-            (bk as int) * acc_bound <= i64::MAX as int,
-            forall|gi: nat| gi < m as nat ==>
-                #[trigger] a_row_stride_ok(&a_layout@, gi),
-            forall|gj: nat| gj < n as nat ==>
-                #[trigger] b_col_stride_ok(&b_layout@, gj),
             // Accumulator correctness: previous rows have correct GEMM values
             forall|pi: nat, pj: nat| pi < ei as nat && pj < bn as nat
                 && epilogue_predicated_store_safe(m as nat, n as nat,
@@ -1547,46 +1573,20 @@ pub fn gemm_cta_kernel(
             invariant
                 0 <= ej <= bn,
                 0 <= ei < bm,
-                bm > 0, bn > 0, bk > 0, k_size > 0,
                 acc_size == bm * bn,
                 accumulators@.len() == (bm as nat) * (bn as nat),
                 a_layout.wf_spec(), b_layout.wf_spec(),
-                a_layout@.rank() == 2, b_layout@.rank() == 2,
+                gemm_layout_safe(&a_layout@, &b_layout@, &c_layout@,
+                    m as nat, n as nat, k_size as nat, bm as nat, bn as nat, bk as nat),
+                gemm_data_safe(&a_layout@, &b_layout@, a_data@, b_data@,
+                    m as nat, n as nat, k_size as nat, bk as nat, acc_bound),
                 k_tiles == num_tiles_ceil(k_size as nat, bk as nat),
-                m as nat <= a_layout@.shape[0],
-                k_size as nat <= a_layout@.shape[1],
-                k_size as nat <= b_layout@.shape[0],
-                n as nat <= b_layout@.shape[1],
-                (bm as nat) * (bn as nat) <= usize::MAX as nat,
                 (ti as nat) * (bm as nat) + (bm as nat) <= u64::MAX as nat,
                 (tj as nat) * (bn as nat) + (bn as nat) <= u64::MAX as nat,
                 (ti as nat) * (bm as nat) + (bm as nat) <= i64::MAX as nat,
                 (tj as nat) * (bn as nat) + (bn as nat) <= i64::MAX as nat,
                 k_tiles <= i64::MAX as u64,
                 k_tiles * bk <= u64::MAX as nat,
-                k_size <= i64::MAX as u64,
-                bk <= i64::MAX as u64,
-                forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-                    #[trigger] a_offset_overflow_ok(&a_layout@, gi, kk),
-                forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-                    #[trigger] b_offset_overflow_ok(&b_layout@, gj, kk),
-                forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-                    #[trigger] a_data_in_bounds(&a_layout@, a_data@.len(), gi, kk),
-                forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-                    #[trigger] b_data_in_bounds(&b_layout@, b_data@.len(), gj, kk),
-                forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-                    #[trigger] gemm_product_ok(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk),
-                forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-                    #[trigger] gemm_product_bounded(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk, acc_bound),
-                acc_bound >= 0,
-                acc_bound <= i64::MAX as int,
-                -acc_bound >= i64::MIN as int,
-                (k_size as int) * acc_bound <= i64::MAX as int,
-                (bk as int) * acc_bound <= i64::MAX as int,
-                forall|gi: nat| gi < m as nat ==>
-                    #[trigger] a_row_stride_ok(&a_layout@, gi),
-                forall|gj: nat| gj < n as nat ==>
-                    #[trigger] b_col_stride_ok(&b_layout@, gj),
                 // Previous rows: correct GEMM values
                 forall|pi: nat, pj: nat| pi < ei as nat && pj < bn as nat
                     && epilogue_predicated_store_safe(m as nat, n as nat,
@@ -1817,48 +1817,18 @@ pub fn gemm_dispatch(
     Ghost(acc_bound): Ghost<int>,
 )
     requires
-        // Layout well-formedness
+        // Bundled layout + data safety
         a_layout.wf_spec(), b_layout.wf_spec(), c_layout.wf_spec(),
-        a_layout@.rank() == 2, b_layout@.rank() == 2, c_layout@.rank() == 2,
-        c_layout@.valid(), c_layout@.is_injective(), c_layout@.non_negative_strides(),
-        // Tile sizes
-        bm > 0, bn > 0, bk > 0, k_size > 0,
-        // Shape bounds
-        m as nat <= a_layout@.shape[0], k_size as nat <= a_layout@.shape[1],
-        k_size as nat <= b_layout@.shape[0], n as nat <= b_layout@.shape[1],
-        m as nat <= c_layout@.shape[0], n as nat <= c_layout@.shape[1],
-        // Tile/overflow bounds
-        (bm as nat) * (bn as nat) <= usize::MAX as nat,
-        (bm as nat) * (bn as nat) <= u64::MAX as nat,
+        gemm_layout_safe(&a_layout@, &b_layout@, &c_layout@,
+            m as nat, n as nat, k_size as nat, bm as nat, bn as nat, bk as nat),
+        gemm_data_safe(&a_layout@, &b_layout@, a_data@, b_data@,
+            m as nat, n as nat, k_size as nat, bk as nat, acc_bound),
+        // Dispatch-specific overflow
         m as nat + bm as nat <= u64::MAX as nat,
         n as nat + bn as nat <= u64::MAX as nat,
         m as nat + bm as nat <= i64::MAX as nat,
         n as nat + bn as nat <= i64::MAX as nat,
         k_size as nat + bk as nat - 1 <= u64::MAX as nat,
-        k_size <= i64::MAX as u64,
-        bk <= i64::MAX as u64,
-        // A/B offset overflow for all valid indices
-        forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-            #[trigger] a_offset_overflow_ok(&a_layout@, gi, kk),
-        forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-            #[trigger] b_offset_overflow_ok(&b_layout@, gj, kk),
-        // A/B data in bounds
-        forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-            #[trigger] a_data_in_bounds(&a_layout@, a_data@.len(), gi, kk),
-        forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-            #[trigger] b_data_in_bounds(&b_layout@, b_data@.len(), gj, kk),
-        // Product overflow & boundedness
-        forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-            #[trigger] gemm_product_ok(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk),
-        forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-            #[trigger] gemm_product_bounded(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk, acc_bound),
-        // Accumulation bound
-        acc_bound >= 0, acc_bound <= i64::MAX as int, -acc_bound >= i64::MIN as int,
-        (k_size as int) * acc_bound <= i64::MAX as int,
-        (bk as int) * acc_bound <= i64::MAX as int,
-        // Stride overflow
-        forall|gi: nat| gi < m as nat ==> #[trigger] a_row_stride_ok(&a_layout@, gi),
-        forall|gj: nat| gj < n as nat ==> #[trigger] b_col_stride_ok(&b_layout@, gj),
         // C tensor validity
         tensor_valid(&TensorSpec { layout: c_layout@, data_size: old(c_data)@.len() }),
         // C offset overflow for ALL tiles
@@ -1897,37 +1867,15 @@ pub fn gemm_dispatch(
             n_tiles as nat == num_tiles_ceil(n as nat, bn as nat),
             k_tiles as nat == num_tiles_ceil(k_size as nat, bk as nat),
             c_data@.len() == old(c_data)@.len(),
-            // Re-state all requires for gemm_cta_kernel
             a_layout.wf_spec(), b_layout.wf_spec(), c_layout.wf_spec(),
-            a_layout@.rank() == 2, b_layout@.rank() == 2, c_layout@.rank() == 2,
-            c_layout@.valid(), c_layout@.is_injective(), c_layout@.non_negative_strides(),
-            bm > 0, bn > 0, bk > 0, k_size > 0,
-            m as nat <= a_layout@.shape[0], k_size as nat <= a_layout@.shape[1],
-            k_size as nat <= b_layout@.shape[0], n as nat <= b_layout@.shape[1],
-            m as nat <= c_layout@.shape[0], n as nat <= c_layout@.shape[1],
-            (bm as nat) * (bn as nat) <= usize::MAX as nat,
-            (bm as nat) * (bn as nat) <= u64::MAX as nat,
+            gemm_layout_safe(&a_layout@, &b_layout@, &c_layout@,
+                m as nat, n as nat, k_size as nat, bm as nat, bn as nat, bk as nat),
+            gemm_data_safe(&a_layout@, &b_layout@, a_data@, b_data@,
+                m as nat, n as nat, k_size as nat, bk as nat, acc_bound),
             m as nat + bm as nat <= u64::MAX as nat,
             n as nat + bn as nat <= u64::MAX as nat,
             m as nat + bm as nat <= i64::MAX as nat,
             n as nat + bn as nat <= i64::MAX as nat,
-            forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-                #[trigger] a_offset_overflow_ok(&a_layout@, gi, kk),
-            forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-                #[trigger] b_offset_overflow_ok(&b_layout@, gj, kk),
-            forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-                #[trigger] a_data_in_bounds(&a_layout@, a_data@.len(), gi, kk),
-            forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-                #[trigger] b_data_in_bounds(&b_layout@, b_data@.len(), gj, kk),
-            forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-                #[trigger] gemm_product_ok(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk),
-            forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-                #[trigger] gemm_product_bounded(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk, acc_bound),
-            acc_bound >= 0, acc_bound <= i64::MAX as int, -acc_bound >= i64::MIN as int,
-            (k_size as int) * acc_bound <= i64::MAX as int,
-            (bk as int) * acc_bound <= i64::MAX as int,
-            forall|gi: nat| gi < m as nat ==> #[trigger] a_row_stride_ok(&a_layout@, gi),
-            forall|gj: nat| gj < n as nat ==> #[trigger] b_col_stride_ok(&b_layout@, gj),
             tensor_valid(&TensorSpec { layout: c_layout@, data_size: c_data@.len() }),
             forall|ti2: nat, tj2: nat| ti2 < num_tiles_ceil(m as nat, bm as nat)
                 && tj2 < num_tiles_ceil(n as nat, bn as nat) ==>
@@ -1935,9 +1883,6 @@ pub fn gemm_dispatch(
                     bm as nat, bn as nat, ti2, tj2),
             k_tiles as nat <= i64::MAX as nat,
             k_tiles as nat * (bk as nat) <= u64::MAX as nat,
-            k_size <= i64::MAX as u64,
-            bk <= i64::MAX as u64,
-            // Cross-CTA disjointness
             epilogue_cross_cta_disjoint(&c_layout@, m as nat, n as nat, bm as nat, bn as nat),
             // Correctness: all elements from completed tile rows are correct
             forall|ti2: nat, tj2: nat, ei: nat, ej: nat|
@@ -1961,35 +1906,14 @@ pub fn gemm_dispatch(
                 k_tiles as nat == num_tiles_ceil(k_size as nat, bk as nat),
                 c_data@.len() == old(c_data)@.len(),
                 a_layout.wf_spec(), b_layout.wf_spec(), c_layout.wf_spec(),
-                a_layout@.rank() == 2, b_layout@.rank() == 2, c_layout@.rank() == 2,
-                c_layout@.valid(), c_layout@.is_injective(), c_layout@.non_negative_strides(),
-                bm > 0, bn > 0, bk > 0, k_size > 0,
-                m as nat <= a_layout@.shape[0], k_size as nat <= a_layout@.shape[1],
-                k_size as nat <= b_layout@.shape[0], n as nat <= b_layout@.shape[1],
-                m as nat <= c_layout@.shape[0], n as nat <= c_layout@.shape[1],
-                (bm as nat) * (bn as nat) <= usize::MAX as nat,
-                (bm as nat) * (bn as nat) <= u64::MAX as nat,
+                gemm_layout_safe(&a_layout@, &b_layout@, &c_layout@,
+                    m as nat, n as nat, k_size as nat, bm as nat, bn as nat, bk as nat),
+                gemm_data_safe(&a_layout@, &b_layout@, a_data@, b_data@,
+                    m as nat, n as nat, k_size as nat, bk as nat, acc_bound),
                 m as nat + bm as nat <= u64::MAX as nat,
                 n as nat + bn as nat <= u64::MAX as nat,
                 m as nat + bm as nat <= i64::MAX as nat,
                 n as nat + bn as nat <= i64::MAX as nat,
-                forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-                    #[trigger] a_offset_overflow_ok(&a_layout@, gi, kk),
-                forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-                    #[trigger] b_offset_overflow_ok(&b_layout@, gj, kk),
-                forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-                    #[trigger] a_data_in_bounds(&a_layout@, a_data@.len(), gi, kk),
-                forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-                    #[trigger] b_data_in_bounds(&b_layout@, b_data@.len(), gj, kk),
-                forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-                    #[trigger] gemm_product_ok(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk),
-                forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-                    #[trigger] gemm_product_bounded(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk, acc_bound),
-                acc_bound >= 0, acc_bound <= i64::MAX as int, -acc_bound >= i64::MIN as int,
-                (k_size as int) * acc_bound <= i64::MAX as int,
-                (bk as int) * acc_bound <= i64::MAX as int,
-                forall|gi: nat| gi < m as nat ==> #[trigger] a_row_stride_ok(&a_layout@, gi),
-                forall|gj: nat| gj < n as nat ==> #[trigger] b_col_stride_ok(&b_layout@, gj),
                 tensor_valid(&TensorSpec { layout: c_layout@, data_size: c_data@.len() }),
                 forall|ti2: nat, tj2: nat| ti2 < num_tiles_ceil(m as nat, bm as nat)
                     && tj2 < num_tiles_ceil(n as nat, bn as nat) ==>
@@ -1997,9 +1921,6 @@ pub fn gemm_dispatch(
                         bm as nat, bn as nat, ti2, tj2),
                 k_tiles as nat <= i64::MAX as nat,
                 k_tiles as nat * (bk as nat) <= u64::MAX as nat,
-                k_size <= i64::MAX as u64,
-                bk <= i64::MAX as u64,
-                // Cross-CTA disjointness
                 epilogue_cross_cta_disjoint(&c_layout@, m as nat, n as nat, bm as nat, bn as nat),
                 // Previous tile rows: correct
                 forall|ti2: nat, tj2: nat, ei: nat, ej: nat|
@@ -2467,57 +2388,20 @@ pub fn gemm_staged_cta_kernel(
     Ghost(acc_bound): Ghost<int>,
 )
     requires
-        // Layout well-formedness
+        // Bundled layout + data safety
         a_layout.wf_spec(), b_layout.wf_spec(), c_layout.wf_spec(),
-        a_layout@.rank() == 2, b_layout@.rank() == 2, c_layout@.rank() == 2,
-        c_layout@.valid(), c_layout@.is_injective(), c_layout@.non_negative_strides(),
-        // Tile sizes
-        bm > 0, bn > 0, bk > 0, k_size > 0,
+        gemm_layout_safe(&a_layout@, &b_layout@, &c_layout@,
+            m as nat, n as nat, k_size as nat, bm as nat, bn as nat, bk as nat),
+        gemm_data_safe(&a_layout@, &b_layout@, a_data@, b_data@,
+            m as nat, n as nat, k_size as nat, bk as nat, acc_bound),
+        // CTA-specific
         k_tiles == num_tiles_ceil(k_size as nat, bk as nat),
-        // Shape bounds
-        m as nat <= a_layout@.shape[0],
-        k_size as nat <= a_layout@.shape[1],
-        k_size as nat <= b_layout@.shape[0],
-        n as nat <= b_layout@.shape[1],
-        m as nat <= c_layout@.shape[0],
-        n as nat <= c_layout@.shape[1],
-        // Overflow bounds
-        (bm as nat) * (bn as nat) <= usize::MAX as nat,
-        (bm as nat) * (bn as nat) <= u64::MAX as nat,
         (ti as nat) * (bm as nat) + (bm as nat) <= u64::MAX as nat,
         (tj as nat) * (bn as nat) + (bn as nat) <= u64::MAX as nat,
         (ti as nat) * (bm as nat) + (bm as nat) <= i64::MAX as nat,
         (tj as nat) * (bn as nat) + (bn as nat) <= i64::MAX as nat,
         k_tiles <= i64::MAX as u64,
         k_tiles * bk <= u64::MAX as nat,
-        k_size <= i64::MAX as u64,
-        bk <= i64::MAX as u64,
-        // A/B offset overflow
-        forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-            #[trigger] a_offset_overflow_ok(&a_layout@, gi, kk),
-        forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-            #[trigger] b_offset_overflow_ok(&b_layout@, gj, kk),
-        // A/B data in bounds
-        forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-            #[trigger] a_data_in_bounds(&a_layout@, a_data@.len(), gi, kk),
-        forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-            #[trigger] b_data_in_bounds(&b_layout@, b_data@.len(), gj, kk),
-        // Product overflow & boundedness
-        forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-            #[trigger] gemm_product_ok(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk),
-        forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-            #[trigger] gemm_product_bounded(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk, acc_bound),
-        // Accumulation bound
-        acc_bound >= 0,
-        acc_bound <= i64::MAX as int,
-        -acc_bound >= i64::MIN as int,
-        (k_size as int) * acc_bound <= i64::MAX as int,
-        (bk as int) * acc_bound <= i64::MAX as int,
-        // A/B stride overflow
-        forall|gi: nat| gi < m as nat ==>
-            #[trigger] a_row_stride_ok(&a_layout@, gi),
-        forall|gj: nat| gj < n as nat ==>
-            #[trigger] b_col_stride_ok(&b_layout@, gj),
         // Epilogue safety
         epilogue_cta_correct(&c_layout@, old(c_data)@.len(),
             m as nat, n as nat, bm as nat, bn as nat, ti as nat, tj as nat),
@@ -2525,11 +2409,13 @@ pub fn gemm_staged_cta_kernel(
             bm as nat, bn as nat, ti as nat, tj as nat),
         epilogue_cross_cta_disjoint(&c_layout@, m as nat, n as nat, bm as nat, bn as nat),
         tensor_valid(&TensorSpec { layout: c_layout@, data_size: old(c_data)@.len() }),
-        // NEW: smem sizes fit
+        // smem sizes fit
         (bm as nat) * (bk as nat) <= usize::MAX as nat,
         (bk as nat) * (bn as nat) <= usize::MAX as nat,
         (bm as nat) * (bk as nat) <= u64::MAX as nat,
         (bk as nat) * (bn as nat) <= u64::MAX as nat,
+        // Dimension positivity (enables unconditional g2s copy for B)
+        n > 0,
     ensures
         c_data@.len() == old(c_data)@.len(),
         // Each valid element in this CTA written with correct GEMM value
@@ -2588,16 +2474,12 @@ pub fn gemm_staged_cta_kernel(
             smem_a@.len() == (bm as nat) * (bk as nat),
             smem_b@.len() == (bk as nat) * (bn as nat),
             accumulators@.len() == (bm as nat) * (bn as nat),
-            // Carry all requires
             a_layout.wf_spec(), b_layout.wf_spec(),
-            a_layout@.rank() == 2, b_layout@.rank() == 2,
-            bm > 0, bn > 0, bk > 0, k_size > 0,
+            gemm_layout_safe(&a_layout@, &b_layout@, &c_layout@,
+                m as nat, n as nat, k_size as nat, bm as nat, bn as nat, bk as nat),
+            gemm_data_safe(&a_layout@, &b_layout@, a_data@, b_data@,
+                m as nat, n as nat, k_size as nat, bk as nat, acc_bound),
             k_tiles == num_tiles_ceil(k_size as nat, bk as nat),
-            m as nat <= a_layout@.shape[0],
-            k_size as nat <= a_layout@.shape[1],
-            k_size as nat <= b_layout@.shape[0],
-            n as nat <= b_layout@.shape[1],
-            (bm as nat) * (bn as nat) <= usize::MAX as nat,
             (bm as nat) * (bk as nat) <= usize::MAX as nat,
             (bk as nat) * (bn as nat) <= usize::MAX as nat,
             (bm as nat) * (bk as nat) <= u64::MAX as nat,
@@ -2608,27 +2490,7 @@ pub fn gemm_staged_cta_kernel(
             (tj as nat) * (bn as nat) + (bn as nat) <= i64::MAX as nat,
             k_tiles <= i64::MAX as u64,
             k_tiles * bk <= u64::MAX as nat,
-            k_size <= i64::MAX as u64,
-            bk <= i64::MAX as u64,
-            forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-                #[trigger] a_offset_overflow_ok(&a_layout@, gi, kk),
-            forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-                #[trigger] b_offset_overflow_ok(&b_layout@, gj, kk),
-            forall|gi: nat, kk: nat| gi < m as nat && kk < k_size as nat ==>
-                #[trigger] a_data_in_bounds(&a_layout@, a_data@.len(), gi, kk),
-            forall|gj: nat, kk: nat| gj < n as nat && kk < k_size as nat ==>
-                #[trigger] b_data_in_bounds(&b_layout@, b_data@.len(), gj, kk),
-            forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-                #[trigger] gemm_product_ok(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk),
-            forall|gi: nat, gj: nat, kk: nat| gi < m as nat && gj < n as nat && kk < k_size as nat ==>
-                #[trigger] gemm_product_bounded(&a_layout@, &b_layout@, a_data@, b_data@, gi, gj, kk, acc_bound),
-            acc_bound >= 0, acc_bound <= i64::MAX as int, -acc_bound >= i64::MIN as int,
-            (k_size as int) * acc_bound <= i64::MAX as int,
-            (bk as int) * acc_bound <= i64::MAX as int,
-            forall|gi: nat| gi < m as nat ==>
-                #[trigger] a_row_stride_ok(&a_layout@, gi),
-            forall|gj: nat| gj < n as nat ==>
-                #[trigger] b_col_stride_ok(&b_layout@, gj),
+            n > 0,
             // Accumulator correctness: partial MAC up to k_processed
             forall|pi: nat, pj: nat| pi < bm as nat && pj < bn as nat
                 && epilogue_predicated_store_safe(m as nat, n as nat,
@@ -2722,43 +2584,40 @@ pub fn gemm_staged_cta_kernel(
         g2s_copy_tile_exec(a_data, a_layout, &mut smem_a, ti * bm, k_start, bm, bk, m, k_size);
 
         // G2S copy B: smem_b[r*bn + c] = b_data[B_off(k_start+r, tj*bn+c)] for in-range
-        // When n == 0, skip B copy — smem_b stays zero from alloc, and no MAC writes happen
-        // since gj = tj*bn+ej >= 0 = n, so the if gi < m && gj < n branch is never taken.
-        if n > 0 {
-            proof {
-                // Bridge: g2s_element_ok for B layout
-                assert forall|r: nat, c: nat| r < bk as nat && c < bn as nat
-                    && k_start as nat + r < k_size as nat
-                    && (tj as nat) * (bn as nat) + c < n as nat
-                implies #[trigger] g2s_element_ok(&b_layout@, b_data@.len(),
-                        k_start as nat + r, (tj as nat) * (bn as nat) + c)
-                by {
-                    let kk = k_start as nat + r;
-                    let gj = (tj as nat) * (bn as nat) + c;
-                    assert(kk < k_size as nat);
-                    assert(gj < n as nat);
-                    assert(kk <= i64::MAX as nat) by (nonlinear_arith)
-                        requires kk <= k_size as nat, k_size as nat <= i64::MAX as nat;
-                    assert(gj <= i64::MAX as nat) by (nonlinear_arith)
-                        requires gj < (tj as nat) * (bn as nat) + (bn as nat),
-                            (tj as nat) * (bn as nat) + (bn as nat) <= i64::MAX as nat;
-                    assert(b_offset_overflow_ok(&b_layout@, gj, kk));
-                    assert(b_col_stride_ok(&b_layout@, gj));
-                    assert(b_data_in_bounds(&b_layout@, b_data@.len(), gj, kk));
-                    assert(a_offset_overflow_ok(&b_layout@, kk, gj));
-                    assert(a_data_in_bounds(&b_layout@, b_data@.len(), kk, gj));
-                };
-                // a_row_stride_ok for B: use gj = 0 (valid since n > 0)
-                assert forall|r: nat| r < bk as nat
-                    && k_start as nat + r < k_size as nat
-                implies #[trigger] a_row_stride_ok(&b_layout@, k_start as nat + r)
-                by {
-                    let kk = k_start as nat + r;
-                    assert(b_offset_overflow_ok(&b_layout@, 0, kk));
-                };
-            }
-            g2s_copy_tile_exec(b_data, b_layout, &mut smem_b, k_start, tj * bn, bk, bn, k_size, n);
+        proof {
+            // Bridge: g2s_element_ok for B layout
+            assert forall|r: nat, c: nat| r < bk as nat && c < bn as nat
+                && k_start as nat + r < k_size as nat
+                && (tj as nat) * (bn as nat) + c < n as nat
+            implies #[trigger] g2s_element_ok(&b_layout@, b_data@.len(),
+                    k_start as nat + r, (tj as nat) * (bn as nat) + c)
+            by {
+                let kk = k_start as nat + r;
+                let gj = (tj as nat) * (bn as nat) + c;
+                assert(kk < k_size as nat);
+                assert(gj < n as nat);
+                assert(kk <= i64::MAX as nat) by (nonlinear_arith)
+                    requires kk <= k_size as nat, k_size as nat <= i64::MAX as nat;
+                assert(gj <= i64::MAX as nat) by (nonlinear_arith)
+                    requires gj < (tj as nat) * (bn as nat) + (bn as nat),
+                        (tj as nat) * (bn as nat) + (bn as nat) <= i64::MAX as nat;
+                assert(b_offset_overflow_ok(&b_layout@, gj, kk));
+                assert(b_col_stride_ok(&b_layout@, gj));
+                assert(b_data_in_bounds(&b_layout@, b_data@.len(), gj, kk));
+                assert(a_offset_overflow_ok(&b_layout@, kk, gj));
+                assert(a_data_in_bounds(&b_layout@, b_data@.len(), kk, gj));
+            };
+            // a_row_stride_ok for B: use gj = 0 (valid since n > 0)
+            assert forall|r: nat| r < bk as nat
+                && k_start as nat + r < k_size as nat
+            implies #[trigger] a_row_stride_ok(&b_layout@, k_start as nat + r)
+            by {
+                let kk = k_start as nat + r;
+                assert(0nat < n as nat);
+                assert(b_offset_overflow_ok(&b_layout@, 0nat, kk));
+            };
         }
+        g2s_copy_tile_exec(b_data, b_layout, &mut smem_b, k_start, tj * bn, bk, bn, k_size, n);
 
         // Step 2b: Inner MAC from shared memory
         let mut ei: u64 = 0;
