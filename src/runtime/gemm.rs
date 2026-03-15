@@ -1741,6 +1741,9 @@ pub fn gemm_cta_kernel(
     epilogue_tile_write(c_data, c_layout, &accumulators, ti, tj, bm, bn, m, n);
 
     proof {
+        // Reveal cross-CTA disjointness for frame reasoning below
+        reveal(epilogue_cross_cta_disjoint);
+
         // Chain: accumulators correct → epilogue writes them → C correct
         // epilogue_tile_write ensures:
         //   valid elements: c_data@[offset] == accumulators@[ei*bn+ej]
@@ -3131,6 +3134,9 @@ pub fn gemm_staged_cta_kernel(
 
     // Step 5: Final proof — chain accumulators → epilogue → C correct
     proof {
+        // Reveal cross-CTA disjointness for frame reasoning below
+        reveal(epilogue_cross_cta_disjoint);
+
         assert forall|ei: nat, ej: nat| ei < bm as nat && ej < bn as nat
             && epilogue_predicated_store_safe(m as nat, n as nat,
                 ti as nat, tj as nat, ei, ej, bm as nat, bn as nat)

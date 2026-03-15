@@ -469,6 +469,7 @@ pub open spec fn epilogue_cta_correct(
 }
 
 /// Cross-CTA epilogue disjointness: stores from different CTAs don't conflict.
+#[verifier::opaque]
 pub open spec fn epilogue_cross_cta_disjoint(
     c_layout: &LayoutSpec, m: nat, n: nat, bm: nat, bn: nat,
 ) -> bool {

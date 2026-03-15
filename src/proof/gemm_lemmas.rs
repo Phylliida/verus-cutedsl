@@ -1228,6 +1228,7 @@ pub proof fn lemma_epilogue_cross_cta_disjoint(
     ensures
         epilogue_cross_cta_disjoint(c_layout, m, n, bm, bn),
 {
+    reveal(epilogue_cross_cta_disjoint);
     assert forall|ti1: nat, tj1: nat, ei1: nat, ej1: nat,
                  ti2: nat, tj2: nat, ei2: nat, ej2: nat|
         ei1 < bm && ej1 < bn && ei2 < bm && ej2 < bn
