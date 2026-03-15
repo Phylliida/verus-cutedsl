@@ -557,45 +557,27 @@ pub open spec fn ds_inner_inv(
     }
 }
 
-/// Blelloch in-place exclusive scan. O(n) work, O(2 log n) depth.
-/// Requires power-of-2 sized input.
-pub fn blelloch_exclusive_scan_exec(data: &mut Vec<i64>, n: u64)
+/// In-place tree reduce (up-sweep phase shared by Blelloch and Brent-Kung).
+/// After completion, data[j] == tree_reduce_state(as_int_seq(old(data)), n, levels)[j].
+pub fn tree_reduce_in_place_exec(data: &mut Vec<i64>, n: u64, levels: u64)
     requires
         old(data)@.len() == n as nat,
-        n > 0,
+        n > 1,
+        pow2(levels as nat) == n as nat,
         is_power_of_2(n as nat),
+        levels as nat == log2_ceil(n as nat),
         all_partial_sums_bounded(old(data)@),
         n <= i64::MAX as u64,
     ensures
         data@.len() == n as nat,
-        forall|i: int| 0 <= i < n as int ==>
-            data@[i] as int == exclusive_scan_int(old(data)@)[i],
+        forall|j: int| 0 <= j < n as int ==>
+            data@[j] as int == tree_reduce_state(as_int_seq(old(data)@), n as nat, levels as nat)[j],
 {
     let ghost original_data = old(data)@;
     let ghost original_int = as_int_seq(original_data);
-    let levels = log2_ceil_exec(n);
+    let ghost total_levels = levels as nat;
     let data_len = data.len();
 
-    // Handle n = 1: exclusive_scan[0] = sum(data, 0, 0) = 0
-    if n == 1 {
-        data.set(0, 0i64);
-        proof {
-            lemma_sum_empty::<int>(|j: int| as_int_seq(original_data)[j], 0, 0);
-        }
-        return;
-    }
-
-    // n >= 2, so levels >= 1
-    proof {
-        lemma_pow2_log2_ceil_exact(n as nat);
-        // pow2(levels) == n
-    }
-
-    let ghost total_levels = levels as nat;
-
-    // ============================================================
-    // UP-SWEEP (tree reduce, in-place)
-    // ============================================================
     let mut d: u64 = 0;
     let mut stride: u64 = 1;
     while d < levels
@@ -711,6 +693,48 @@ pub fn blelloch_exclusive_scan_exec(data: &mut Vec<i64>, n: u64)
         stride = stride * 2;
         d = d + 1;
     }
+}
+
+/// Blelloch in-place exclusive scan. O(n) work, O(2 log n) depth.
+/// Requires power-of-2 sized input.
+pub fn blelloch_exclusive_scan_exec(data: &mut Vec<i64>, n: u64)
+    requires
+        old(data)@.len() == n as nat,
+        n > 0,
+        is_power_of_2(n as nat),
+        all_partial_sums_bounded(old(data)@),
+        n <= i64::MAX as u64,
+    ensures
+        data@.len() == n as nat,
+        forall|i: int| 0 <= i < n as int ==>
+            data@[i] as int == exclusive_scan_int(old(data)@)[i],
+{
+    let ghost original_data = old(data)@;
+    let ghost original_int = as_int_seq(original_data);
+    let levels = log2_ceil_exec(n);
+    let data_len = data.len();
+
+    // Handle n = 1: exclusive_scan[0] = sum(data, 0, 0) = 0
+    if n == 1 {
+        data.set(0, 0i64);
+        proof {
+            lemma_sum_empty::<int>(|j: int| as_int_seq(original_data)[j], 0, 0);
+        }
+        return;
+    }
+
+    // n >= 2, so levels >= 1
+    proof {
+        lemma_pow2_log2_ceil_exact(n as nat);
+        // pow2(levels) == n
+    }
+
+    let ghost total_levels = levels as nat;
+
+    // ============================================================
+    // UP-SWEEP (shared tree reduce)
+    // ============================================================
+    tree_reduce_in_place_exec(data, n, levels);
 
     // ============================================================
     // ROOT ZEROING
@@ -1113,113 +1137,9 @@ pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
     let ghost total_levels = levels as nat;
 
     // ============================================================
-    // UP-SWEEP (identical to Blelloch up-sweep)
+    // UP-SWEEP (shared tree reduce)
     // ============================================================
-    let mut d: u64 = 0;
-    let mut stride: u64 = 1;
-    while d < levels
-        invariant
-            d <= levels,
-            stride as nat == pow2(d as nat),
-            data@.len() == n as nat,
-            levels as nat == log2_ceil(n as nat),
-            n > 1,
-            n <= i64::MAX as u64,
-            n as int == data_len as int,
-            is_power_of_2(n as nat),
-            pow2(total_levels) == n as nat,
-            all_partial_sums_bounded(original_data),
-            original_data.len() == n as nat,
-            original_int == as_int_seq(original_data),
-            total_levels == levels as nat,
-            forall|j: int| 0 <= j < n as int ==>
-                data@[j] as int == tree_reduce_state(original_int, n as nat, d as nat)[j],
-        decreases levels - d,
-    {
-        proof {
-            lemma_pow2_lt_for_sub_levels(n as nat, d as nat);
-            crate::proof::swizzle_lemmas::lemma_pow2_positive(d as nat);
-        }
-
-        let ghost prev_state = tree_reduce_state(original_int, n as nat, d as nat);
-        let ghost next_state = tree_reduce_state(original_int, n as nat, (d + 1) as nat);
-        let step: u64 = 2 * stride;
-
-        let mut i: u64 = 0;
-        while i < n
-            invariant
-                i <= n,
-                data@.len() == n as nat,
-                stride as nat == pow2(d as nat),
-                stride > 0,
-                stride < n,
-                step == 2 * stride,
-                d < levels,
-                levels as nat == log2_ceil(n as nat),
-                n > 1,
-                n <= i64::MAX as u64,
-                n as int == data_len as int,
-                is_power_of_2(n as nat),
-                pow2(total_levels) == n as nat,
-                all_partial_sums_bounded(original_data),
-                original_data.len() == n as nat,
-                original_int == as_int_seq(original_data),
-                total_levels == levels as nat,
-                prev_state == tree_reduce_state(original_int, n as nat, d as nat),
-                next_state == tree_reduce_state(original_int, n as nat, (d + 1) as nat),
-                forall|j: int| 0 <= j < i as int ==>
-                    data@[j] as int == next_state[j],
-                forall|j: int| i as int <= j < n as int ==>
-                    data@[j] as int == prev_state[j],
-            decreases n - i,
-        {
-            if (i + 1) % step == 0 && i >= stride {
-                let partner = (i - stride) as usize;
-
-                proof {
-                    let pi = partner as int + 1;
-                    assert(pi == i as int + 1 - stride as int);
-                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod((i + 1) as int, step as int);
-                    let q = ((i + 1) as int) / (step as int);
-                    assert(i as int + 1 == step as int * q);
-                    assert(q >= 1) by (nonlinear_arith)
-                        requires i as int + 1 == step as int * q, step > 0, i as int + 1 > 0;
-                    assert(pi == stride as int * (2 * q - 1)) by (nonlinear_arith)
-                        requires pi == i as int + 1 - stride as int,
-                                 i as int + 1 == step as int * q, step == 2 * stride;
-                    assert(pi == step as int * (q - 1) + stride as int) by (nonlinear_arith)
-                        requires pi == stride as int * (2 * q - 1), step == 2 * stride;
-                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
-                        pi, step as int, q - 1, stride as int
-                    );
-                    assert(pi % (step as int) != 0) by (nonlinear_arith)
-                        requires pi % (step as int) == stride as int, stride > 0;
-                    assert(pow2((d + 1) as nat) == 2 * pow2(d as nat));
-                    assert(next_state[partner as int] == prev_state[partner as int]);
-
-                    lemma_upsweep_overflow_bound(
-                        original_data, original_int, n as nat, total_levels,
-                        d as nat, i as int,
-                    );
-                }
-
-                let val = data[i as usize] + data[partner];
-                data.set(i as usize, val);
-            } else {
-                proof {
-                    assert(pow2((d + 1) as nat) == 2 * pow2(d as nat));
-                }
-            }
-
-            i = i + 1;
-        }
-
-        proof {
-            assert(pow2((d + 1) as nat) == 2 * pow2(d as nat));
-        }
-        stride = stride * 2;
-        d = d + 1;
-    }
+    tree_reduce_in_place_exec(data, n, levels);
 
     // ============================================================
     // DOWN-SWEEP (Brent-Kung specific)

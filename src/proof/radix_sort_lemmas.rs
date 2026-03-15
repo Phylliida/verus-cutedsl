@@ -4,7 +4,7 @@ use crate::swizzle::pow2;
 use crate::scan::{compact_size, compact_indices, compact_result};
 use crate::radix_sort::*;
 use crate::proof::scan_lemmas::*;
-use crate::proof::scan_multiblock_lemmas::lemma_compact_scatter_disjoint;
+// lemma_compact_scatter_disjoint now in scan_lemmas
 use crate::proof::swizzle_lemmas::{lemma_pow2_positive, lemma_pow2_monotone};
 use crate::proof::integer_helpers::*;
 
@@ -130,49 +130,6 @@ pub proof fn lemma_radix_step_len(data: Seq<nat>, pos: nat)
 // Scatter properties
 // ============================================================
 
-/// compact_indices[i] <= i for any predicate.
-proof fn lemma_compact_indices_le_i(pred: Seq<bool>, i: int)
-    requires 0 <= i, i < pred.len() as int,
-    ensures compact_indices(pred)[i] <= i as nat,
-    decreases i,
-{
-    if i == 0 {
-        assert(pred.take(0).len() == 0);
-    } else {
-        lemma_compact_indices_le_i(pred, i - 1);
-        lemma_compact_indices_step(pred, i - 1);
-    }
-}
-
-/// compact_size is monotone in take length.
-proof fn lemma_compact_size_monotone(pred: Seq<bool>, i: int, j: int)
-    requires 0 <= i <= j, j <= pred.len() as int,
-    ensures compact_size(pred.take(i)) <= compact_size(pred.take(j)),
-    decreases j - i,
-{
-    if i == j {
-        assert(pred.take(i) =~= pred.take(j));
-    } else {
-        lemma_compact_size_monotone(pred, i, j - 1);
-        assert(pred.take(j).drop_last() =~= pred.take(j - 1));
-    }
-}
-
-/// Helper: when pred[i] is true, compact_indices(pred)[i] < compact_size(pred).
-proof fn lemma_compact_size_take_lt(pred: Seq<bool>, i: int)
-    requires 0 <= i, i < pred.len() as int, pred[i],
-    ensures compact_indices(pred)[i] < compact_size(pred),
-{
-    // compact_indices(pred)[i] = compact_size(pred.take(i))
-    // compact_size(pred.take(i+1)) = compact_size(pred.take(i)) + 1 (since pred[i] = true)
-    assert(pred.take(i + 1).drop_last() =~= pred.take(i));
-    assert(pred.take(i + 1).last() == pred[i]);
-    // So compact_size(pred.take(i+1)) >= compact_indices(pred)[i] + 1
-    // compact_size(pred.take(i+1)) <= compact_size(pred) by monotonicity
-    lemma_compact_size_monotone(pred, (i + 1) as int, pred.len() as int);
-    assert(pred.take(pred.len() as int) =~= pred);
-}
-
 /// Scatter destinations are in bounds.
 pub proof fn lemma_radix_scatter_in_bounds(data: Seq<nat>, pos: nat, i: nat)
     requires i < data.len(),
@@ -256,39 +213,6 @@ pub proof fn lemma_radix_scatter_injective(data: Seq<nat>, pos: nat, i: nat, j: 
 // ============================================================
 // Connecting scatter to radix_step definition
 // ============================================================
-
-/// compact_result(data, pred)[compact_indices(pred)[i]] == data[i] when pred[i] is true.
-/// Works for any predicate (we'll instantiate with both pred and not_pred).
-proof fn lemma_compact_result_at(data: Seq<nat>, pred: Seq<bool>, i: int)
-    requires
-        data.len() == pred.len(),
-        0 <= i, i < data.len() as int,
-        pred[i],
-    ensures
-        compact_result(data, pred)[compact_indices(pred)[i] as int] == data[i],
-    decreases data.len(),
-{
-    if i == data.len() - 1 {
-        // Last element with pred[i]=true: pushed at position = rest.len() = compact_size(pred.take(i))
-        lemma_compact_result_len::<nat>(data.drop_last(), pred.drop_last());
-        assert(pred.take(i) =~= pred.drop_last());
-    } else {
-        // Induction: use the result for drop_last
-        assert(data.drop_last()[i] == data[i]);
-        assert(pred.drop_last()[i] == pred[i]);
-        lemma_compact_result_at(data.drop_last(), pred.drop_last(), i);
-        assert(pred.drop_last().take(i) =~= pred.take(i));
-        let idx = compact_indices(pred)[i];
-        let rest = compact_result(data.drop_last(), pred.drop_last());
-        if pred.last() {
-            // rest.push(data.last())[idx] == rest[idx] since idx < rest.len()
-            lemma_compact_result_len::<nat>(data.drop_last(), pred.drop_last());
-            lemma_compact_size_take_lt(pred.drop_last(), i);
-            assert(idx < rest.len());
-        }
-        // else: compact_result == rest, so result[idx] == rest[idx] directly
-    }
-}
 
 /// The scatter permutation produces the same result as the spec radix_step.
 pub proof fn lemma_radix_scatter_produces_step(data: Seq<nat>, pos: nat, i: nat)

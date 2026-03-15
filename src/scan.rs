@@ -96,6 +96,15 @@ pub open spec fn all_partial_sums_bounded(data: Seq<i64>) -> bool {
 }
 
 // ============================================================
+// Predicate-to-int conversion
+// ============================================================
+
+/// Convert a predicate sequence to 0/1 ints.
+pub open spec fn pred_as_int_seq(pred: Seq<bool>) -> Seq<int> {
+    Seq::new(pred.len(), |i: int| if pred[i] { 1int } else { 0int })
+}
+
+// ============================================================
 // Compact/Filter
 // ============================================================
 

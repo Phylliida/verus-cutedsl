@@ -781,132 +781,16 @@ proof fn lemma_scatter_is_compact_result(
         output[i] == compact_result(data, pred)[i]
     by {
         // Find j such that compact_indices(pred)[j] == i and pred[j]
-        let j = lemma_compact_indices_surjective(data, pred, i);
+        let j = lemma_compact_indices_surjective::<i64>(data, pred, i);
         // output[i] == output[compact_indices(pred)[j]] == data[j] (from requires)
         assert(pred[j]);
         assert(compact_indices(pred)[j] as int == i);
         assert(output[i] == data[j]);
         // compact_result(data, pred)[i] == data[j]
-        lemma_compact_result_at_index(data, pred, j);
+        lemma_compact_result_at::<i64>(data, pred, j);
     }
 }
 
-/// For each i < compact_size(pred), find the unique j with pred[j] and compact_indices(pred)[j] == i.
-proof fn lemma_compact_indices_surjective(
-    data: Seq<i64>, pred: Seq<bool>, i: int,
-) -> (j: int)
-    requires
-        data.len() == pred.len(),
-        0 <= i,
-        i < compact_size(pred) as int,
-    ensures
-        0 <= j,
-        j < pred.len() as int,
-        pred[j],
-        compact_indices(pred)[j] as int == i,
-    decreases pred.len(),
-{
-    let n = pred.len() as int;
-    // compact_size of the full pred > i >= 0, so pred is non-empty
-    assert(pred.drop_last() =~= pred.take(n - 1));
-    if pred.last() && i == compact_size(pred) as int - 1 {
-        // The last element is true and maps to the last compact index
-        // compact_indices(pred)[n-1] = compact_size(pred.take(n-1))
-        //                            = compact_size(pred.drop_last())
-        //                            = compact_size(pred) - 1  [since pred.last() is true]
-        //                            = i
-        assert(compact_indices(pred)[(n - 1) as int]
-            == compact_size(pred.take(n - 1)));
-        assert(compact_size(pred) == compact_size(pred.drop_last()) + 1nat);
-        (n - 1) as int
-    } else {
-        // Either pred.last() is false (compact_size unchanged) or i < compact_size - 1
-        // In both cases, i < compact_size(pred.drop_last())
-        let cs_drop = compact_size(pred.drop_last());
-        if pred.last() {
-            // i < compact_size(pred) - 1 = cs_drop
-            assert(compact_size(pred) == cs_drop + 1nat);
-        } else {
-            // compact_size(pred) == cs_drop
-            assert(compact_size(pred) == cs_drop);
-        }
-        assert((i as int) < (cs_drop as int));
-        // Recurse on drop_last
-        let j = lemma_compact_indices_surjective(
-            data.drop_last(), pred.drop_last(), i,
-        );
-        // j < pred.drop_last().len() == n - 1 < n
-        // pred.drop_last()[j] == pred[j]
-        assert(pred[j] == pred.drop_last()[j]);
-        // compact_indices(pred.drop_last())[j] == compact_size(pred.drop_last().take(j))
-        //   == compact_size(pred.take(j))  [since j < n-1, take(j) is same]
-        //   == compact_indices(pred)[j]
-        assert(pred.drop_last().take(j) =~= pred.take(j));
-        assert(compact_indices(pred.drop_last())[j] == compact_indices(pred)[j]);
-        j
-    }
-}
-
-/// compact_result(data, pred)[compact_indices(pred)[j]] == data[j] when pred[j].
-proof fn lemma_compact_result_at_index(
-    data: Seq<i64>, pred: Seq<bool>, j: int,
-)
-    requires
-        data.len() == pred.len(),
-        0 <= j,
-        j < pred.len() as int,
-        pred[j],
-    ensures
-        compact_result(data, pred)[compact_indices(pred)[j] as int] == data[j],
-    decreases pred.len(),
-{
-    let n = pred.len() as int;
-    if j == n - 1 {
-        // j is the last element
-        // compact_indices(pred)[n-1] = compact_size(pred.take(n-1)) = compact_size(pred.drop_last())
-        assert(pred.take(n - 1) =~= pred.drop_last());
-        let ci = compact_indices(pred)[(n - 1) as int];
-        // pred.last() is true (since j == n-1 and pred[j])
-        // compact_result(data, pred) = compact_result(data.drop_last(), pred.drop_last()).push(data.last())
-        // compact_result(data, pred)[ci] where ci = compact_size(pred.drop_last())
-        //   = compact_result(data.drop_last(), pred.drop_last()).push(data.last())[ci]
-        //   = data.last() (since ci == length of rest)
-        let rest = compact_result(data.drop_last(), pred.drop_last());
-        lemma_compact_result_len(data.drop_last(), pred.drop_last());
-        // rest.len() == compact_size(pred.drop_last()) == compact_size(pred.take(n-1)) == ci
-        assert(ci == rest.len() as nat);
-        assert(compact_result(data, pred) =~= rest.push(data.last()));
-        assert(rest.push(data.last())[ci as int] == data.last());
-        assert(data.last() == data[j]);
-    } else {
-        // j < n - 1: recurse
-        let rest = compact_result(data.drop_last(), pred.drop_last());
-        // compact_indices(pred)[j] == compact_indices(pred.drop_last())[j]
-        assert(pred.drop_last().take(j) =~= pred.take(j));
-        assert(compact_indices(pred.drop_last())[j] == compact_indices(pred)[j]);
-        // IH: compact_result(data.drop_last(), pred.drop_last())[ci] == data.drop_last()[j]
-        lemma_compact_result_at_index(data.drop_last(), pred.drop_last(), j);
-        let ci = compact_indices(pred)[j];
-        // ci < compact_size(pred.drop_last()) == rest.len()
-        lemma_compact_result_len(data.drop_last(), pred.drop_last());
-        // ci = compact_size(pred.take(j)) < compact_size(pred.take(j+1)) <= compact_size(pred.drop_last())
-        lemma_compact_indices_step(pred, j);
-        // compact_indices(pred)[j+1] == ci + 1 (since pred[j])
-        // compact_indices(pred)[j+1] <= compact_indices(pred)[n-1] (nondecreasing)
-        lemma_compact_indices_nondecreasing(pred, j + 1, n - 1);
-        // compact_indices(pred)[n-1] == compact_size(pred.drop_last())
-        assert(pred.take((n - 1) as int) =~= pred.drop_last());
-        // So ci + 1 <= compact_size(pred.drop_last()), i.e. ci < compact_size(pred.drop_last())
-        assert((ci as int) < (compact_size(pred.drop_last()) as int));
-        if pred.last() {
-            assert(compact_result(data, pred) =~= rest.push(data.last()));
-            assert((ci as int) < (rest.len() as int));
-            assert(rest.push(data.last())[ci as int] == rest[ci as int]);
-        } else {
-            assert(compact_result(data, pred) =~= rest);
-        }
-        assert(data.drop_last()[j] == data[j]);
-    }
-}
+// lemma_compact_indices_surjective and lemma_compact_result_at moved to proof/scan_lemmas.rs
 
 } // verus!

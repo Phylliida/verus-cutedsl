@@ -109,6 +109,229 @@ pub proof fn lemma_compact_size_le_len(pred: Seq<bool>)
     }
 }
 
+/// compact_indices[i] <= i for any predicate.
+pub proof fn lemma_compact_indices_le_i(pred: Seq<bool>, i: int)
+    requires 0 <= i, i < pred.len() as int,
+    ensures compact_indices(pred)[i] <= i as nat,
+    decreases i,
+{
+    if i == 0 {
+        assert(pred.take(0).len() == 0);
+    } else {
+        lemma_compact_indices_le_i(pred, i - 1);
+        lemma_compact_indices_step(pred, i - 1);
+    }
+}
+
+/// compact_size is monotone in take length.
+pub proof fn lemma_compact_size_monotone(pred: Seq<bool>, i: int, j: int)
+    requires 0 <= i <= j, j <= pred.len() as int,
+    ensures compact_size(pred.take(i)) <= compact_size(pred.take(j)),
+    decreases j - i,
+{
+    if i == j {
+        assert(pred.take(i) =~= pred.take(j));
+    } else {
+        lemma_compact_size_monotone(pred, i, j - 1);
+        assert(pred.take(j).drop_last() =~= pred.take(j - 1));
+    }
+}
+
+/// When pred[i] is true, compact_indices(pred)[i] < compact_size(pred).
+pub proof fn lemma_compact_size_take_lt(pred: Seq<bool>, i: int)
+    requires 0 <= i, i < pred.len() as int, pred[i],
+    ensures compact_indices(pred)[i] < compact_size(pred),
+{
+    assert(pred.take(i + 1).drop_last() =~= pred.take(i));
+    assert(pred.take(i + 1).last() == pred[i]);
+    lemma_compact_size_monotone(pred, (i + 1) as int, pred.len() as int);
+    assert(pred.take(pred.len() as int) =~= pred);
+}
+
+/// compact_indices is nondecreasing.
+pub proof fn lemma_compact_indices_nondecreasing(pred: Seq<bool>, i: int, j: int)
+    requires
+        0 <= i <= j,
+        j < pred.len() as int,
+    ensures
+        compact_indices(pred)[i] <= compact_indices(pred)[j],
+    decreases j - i,
+{
+    if i == j {
+    } else {
+        lemma_compact_indices_nondecreasing(pred, i, j - 1);
+        lemma_compact_indices_step(pred, j - 1);
+    }
+}
+
+/// When pred[i] and pred[j] with i < j, compact_indices[i] < compact_indices[j].
+pub proof fn lemma_compact_scatter_disjoint(pred: Seq<bool>, i: int, j: int)
+    requires
+        0 <= i < j,
+        j < pred.len() as int,
+        pred[i],
+        pred[j],
+    ensures
+        compact_indices(pred)[i] < compact_indices(pred)[j],
+{
+    lemma_compact_indices_monotone(pred, i);
+    if i + 1 < j {
+        lemma_compact_indices_nondecreasing(pred, (i + 1) as int, j);
+    }
+}
+
+/// compact_result(data, pred)[compact_indices(pred)[i]] == data[i] when pred[i].
+pub proof fn lemma_compact_result_at<T>(data: Seq<T>, pred: Seq<bool>, i: int)
+    requires
+        data.len() == pred.len(),
+        0 <= i, i < data.len() as int,
+        pred[i],
+    ensures
+        compact_result(data, pred)[compact_indices(pred)[i] as int] == data[i],
+    decreases data.len(),
+{
+    if i == data.len() - 1 {
+        lemma_compact_result_len::<T>(data.drop_last(), pred.drop_last());
+        assert(pred.take(i) =~= pred.drop_last());
+    } else {
+        assert(data.drop_last()[i] == data[i]);
+        assert(pred.drop_last()[i] == pred[i]);
+        lemma_compact_result_at::<T>(data.drop_last(), pred.drop_last(), i);
+        assert(pred.drop_last().take(i) =~= pred.take(i));
+        let idx = compact_indices(pred)[i];
+        let rest = compact_result(data.drop_last(), pred.drop_last());
+        if pred.last() {
+            lemma_compact_result_len::<T>(data.drop_last(), pred.drop_last());
+            lemma_compact_size_take_lt(pred.drop_last(), i);
+            assert(idx < rest.len());
+        }
+    }
+}
+
+/// For each i < compact_size(pred), find the unique j with pred[j] and compact_indices(pred)[j] == i.
+pub proof fn lemma_compact_indices_surjective<T>(
+    data: Seq<T>, pred: Seq<bool>, i: int,
+) -> (j: int)
+    requires
+        data.len() == pred.len(),
+        0 <= i,
+        i < compact_size(pred) as int,
+    ensures
+        0 <= j,
+        j < pred.len() as int,
+        pred[j],
+        compact_indices(pred)[j] as int == i,
+    decreases pred.len(),
+{
+    let n = pred.len() as int;
+    assert(pred.drop_last() =~= pred.take(n - 1));
+    if pred.last() && i == compact_size(pred) as int - 1 {
+        assert(compact_indices(pred)[(n - 1) as int]
+            == compact_size(pred.take(n - 1)));
+        assert(compact_size(pred) == compact_size(pred.drop_last()) + 1nat);
+        (n - 1) as int
+    } else {
+        let cs_drop = compact_size(pred.drop_last());
+        if pred.last() {
+            assert(compact_size(pred) == cs_drop + 1nat);
+        } else {
+            assert(compact_size(pred) == cs_drop);
+        }
+        assert((i as int) < (cs_drop as int));
+        let j = lemma_compact_indices_surjective::<T>(
+            data.drop_last(), pred.drop_last(), i,
+        );
+        assert(pred[j] == pred.drop_last()[j]);
+        assert(pred.drop_last().take(j) =~= pred.take(j));
+        assert(compact_indices(pred.drop_last())[j] == compact_indices(pred)[j]);
+        j
+    }
+}
+
+/// compact_indices[i] == exclusive_scan(pred_as_int_seq(pred))[i].
+pub proof fn lemma_compact_indices_is_exclusive_scan(pred: Seq<bool>, i: int)
+    requires
+        0 <= i < pred.len() as int,
+    ensures
+        compact_indices(pred)[i] as int == exclusive_scan::<int>(pred_as_int_seq(pred))[i],
+    decreases i,
+{
+    if i == 0 {
+        assert(pred.take(0).len() == 0);
+        lemma_sum_empty::<int>(|j: int| pred_as_int_seq(pred)[j], 0, 0);
+    } else {
+        lemma_compact_indices_is_exclusive_scan(pred, i - 1);
+        assert(pred.take(i).drop_last() =~= pred.take(i - 1));
+        assert(pred.take(i).last() == pred[i - 1]);
+        lemma_sum_peel_last::<int>(|j: int| pred_as_int_seq(pred)[j], 0, i);
+    }
+}
+
+/// compact_size equals sum of pred_as_int_seq.
+pub proof fn lemma_compact_size_equals_sum(pred: Seq<bool>)
+    ensures compact_size(pred) as int ==
+        sum::<int>(|j: int| pred_as_int_seq(pred)[j], 0, pred.len() as int),
+    decreases pred.len(),
+{
+    if pred.len() == 0 {
+        lemma_sum_empty::<int>(
+            |j: int| pred_as_int_seq(pred)[j], 0, 0,
+        );
+    } else {
+        let n = pred.len();
+        lemma_compact_size_equals_sum(pred.drop_last());
+        lemma_sum_peel_last::<int>(
+            |j: int| pred_as_int_seq(pred)[j], 0, n as int,
+        );
+        assert forall|j: int| 0 <= j < (n - 1) as int implies
+            pred_as_int_seq(pred)[j] == pred_as_int_seq(pred.drop_last())[j]
+        by {
+            assert(pred[j] == pred.drop_last()[j]);
+        }
+        lemma_sum_congruence::<int>(
+            |j: int| pred_as_int_seq(pred)[j],
+            |j: int| pred_as_int_seq(pred.drop_last())[j],
+            0, (n - 1) as int,
+        );
+    }
+}
+
+/// Partial sum of pred_as_int_seq (trigger-friendly wrapper).
+pub open spec fn pred_partial_sum(pred: Seq<bool>, lo: int, hi: int) -> int {
+    sum::<int>(|j: int| pred_as_int_seq(pred)[j], lo, hi)
+}
+
+/// pred_as_int_seq partial sums are bounded by n <= i64::MAX.
+pub proof fn lemma_pred_partial_sums_bounded(pred: Seq<bool>)
+    requires pred.len() <= i64::MAX as nat,
+    ensures
+        forall|lo: int, hi: int| 0 <= lo <= hi <= pred.len() ==>
+            0 <= #[trigger] pred_partial_sum(pred, lo, hi)
+            && pred_partial_sum(pred, lo, hi) <= pred.len() as int,
+{
+    assert forall|lo: int, hi: int| 0 <= lo <= hi <= pred.len()
+    implies 0 <= #[trigger] pred_partial_sum(pred, lo, hi)
+        && pred_partial_sum(pred, lo, hi) <= (hi - lo) as int
+    by {
+        lemma_pred_partial_sum_bounded_helper(pred, lo, hi);
+    }
+}
+
+proof fn lemma_pred_partial_sum_bounded_helper(pred: Seq<bool>, lo: int, hi: int)
+    requires 0 <= lo <= hi, hi <= pred.len(),
+    ensures
+        0 <= sum::<int>(|j: int| pred_as_int_seq(pred)[j], lo, hi),
+        sum::<int>(|j: int| pred_as_int_seq(pred)[j], lo, hi) <= hi - lo,
+    decreases hi - lo,
+{
+    if lo >= hi {
+        lemma_sum_empty::<int>(|j: int| pred_as_int_seq(pred)[j], lo, hi);
+    } else {
+        lemma_pred_partial_sum_bounded_helper(pred, lo, hi - 1);
+        lemma_sum_peel_last::<int>(|j: int| pred_as_int_seq(pred)[j], lo, hi);
+    }
+}
+
 // ============================================================
 // log2_ceil / pow2 bounds
 // ============================================================

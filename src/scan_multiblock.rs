@@ -92,14 +92,7 @@ pub open spec fn three_phase_correct(data: Seq<int>, output: Seq<int>, block_siz
         #[trigger] output[i] == inclusive_scan::<int>(data)[i]
 }
 
-// ============================================================
-// Compact helpers
-// ============================================================
-
-/// Convert a predicate sequence to 0/1 ints.
-pub open spec fn pred_as_int_seq(pred: Seq<bool>) -> Seq<int> {
-    Seq::new(pred.len(), |i: int| if pred[i] { 1int } else { 0int })
-}
+// pred_as_int_seq now lives in crate::scan
 
 // ============================================================
 // Decoupled lookback (spec-only GPU model)

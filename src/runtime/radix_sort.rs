@@ -5,15 +5,10 @@
 use vstd::prelude::*;
 use crate::swizzle::pow2;
 use crate::scan::*;
-use crate::scan_multiblock::pred_as_int_seq;
+// pred_as_int_seq now comes from crate::scan::*
 use crate::radix_sort::*;
 use crate::proof::scan_lemmas::*;
-use crate::proof::scan_multiblock_lemmas::{
-    lemma_compact_scatter_disjoint,
-    lemma_compact_indices_is_exclusive_scan,
-    lemma_compact_indices_nondecreasing,
-    lemma_pred_partial_sums_bounded,
-};
+// compact lemmas now come from crate::proof::scan_lemmas::*
 use crate::proof::radix_sort_lemmas::*;
 use crate::proof::swizzle_lemmas::{lemma_pow2_positive, lemma_pow2_monotone};
 use crate::proof::integer_helpers::*;
@@ -179,7 +174,7 @@ pub fn radix_step_exec(data: &Vec<u64>, output: &mut Vec<u64>, pos: u64)
         let dest: u64;
         if !is_one {
             proof {
-                lemma_compact_indices_le_i_bridge(spec_pred, si as int);
+                lemma_compact_indices_le_i(spec_pred, si as int);
                 assert(!spec_pred[si as int]);
             }
             dest = si - (rank as u64);
@@ -394,48 +389,7 @@ proof fn lemma_count_zeros_bridge(
     lemma_complement_compact_size(spec_pred);
 }
 
-/// compact_size equals sum of pred_as_int_seq.
-proof fn lemma_compact_size_equals_sum(pred: Seq<bool>)
-    ensures compact_size(pred) as int ==
-        verus_algebra::summation::sum::<int>(|j: int| pred_as_int_seq(pred)[j], 0, pred.len() as int),
-    decreases pred.len(),
-{
-    if pred.len() == 0 {
-        verus_algebra::summation::lemma_sum_empty::<int>(
-            |j: int| pred_as_int_seq(pred)[j], 0, 0,
-        );
-    } else {
-        let n = pred.len();
-        lemma_compact_size_equals_sum(pred.drop_last());
-        verus_algebra::summation::lemma_sum_peel_last::<int>(
-            |j: int| pred_as_int_seq(pred)[j], 0, n as int,
-        );
-        assert forall|j: int| 0 <= j < (n - 1) as int implies
-            pred_as_int_seq(pred)[j] == pred_as_int_seq(pred.drop_last())[j]
-        by {
-            assert(pred[j] == pred.drop_last()[j]);
-        }
-        verus_algebra::summation::lemma_sum_congruence::<int>(
-            |j: int| pred_as_int_seq(pred)[j],
-            |j: int| pred_as_int_seq(pred.drop_last())[j],
-            0, (n - 1) as int,
-        );
-    }
-}
-
-/// compact_indices[i] <= i.
-proof fn lemma_compact_indices_le_i_bridge(pred: Seq<bool>, i: int)
-    requires 0 <= i, i < pred.len() as int,
-    ensures compact_indices(pred)[i] <= i as nat,
-    decreases i,
-{
-    if i == 0 {
-        assert(pred.take(0).len() == 0);
-    } else {
-        lemma_compact_indices_le_i_bridge(pred, i - 1);
-        lemma_compact_indices_step(pred, i - 1);
-    }
-}
+// lemma_compact_size_equals_sum and lemma_compact_indices_le_i moved to proof/scan_lemmas.rs
 
 /// Scatter surjectivity: for every output position, some input maps there.
 proof fn lemma_radix_scatter_surjective(data: Seq<nat>, pos: nat, dest: int)
