@@ -11,6 +11,7 @@ pub mod gemm;
 pub mod contraction;
 pub mod scan;
 pub mod scan_multiblock;
+pub mod radix_sort;
 
 verus! {
 
