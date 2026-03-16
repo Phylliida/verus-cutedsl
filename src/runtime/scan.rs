@@ -614,6 +614,11 @@ pub fn exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             output@[i].view().eqv(
                 exclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i]
             ),
+        // Second ensures: partial_sum_generic form for delegation wrappers
+        forall|i: int| 0 <= i < n as int ==>
+            output@[i].view().eqv(
+                partial_sum_generic::<T, R>(data@, 0, i)
+            ),
 {
     let incl = hillis_steele_generic_exec::<T, R>(data, n);
     let ghost view_seq = Seq::new(data@.len(), |j: int| data@[j].view());
@@ -626,10 +631,8 @@ pub fn exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
     proof {
         use crate::proof::scan_lemmas::lemma_exclusive_from_inclusive;
         lemma_exclusive_from_inclusive::<R>(view_seq, 0);
-        // exclusive_scan(view_seq)[0] == R::zero()
-        // z.view().eqv(R::zero()) from exec_zero ensures
-        // R::zero() == exclusive_scan(view_seq)[0]
         R::axiom_eqv_reflexive(exclusive_scan::<R>(view_seq)[0]);
+        // partial_sum_generic(data, 0, 0) = sum(|j| data[j].view(), 0, 0) = R::zero() definitionally
     }
     output.push(z);
 
@@ -646,8 +649,12 @@ pub fn exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             view_seq == Seq::new(data@.len(), |j: int| data@[j].view()),
             forall|k: int| 0 <= k < n as int ==>
                 incl@[k].view().eqv(inclusive_scan::<R>(view_seq)[k]),
+            forall|k: int| 0 <= k < n as int ==>
+                incl@[k].view().eqv(partial_sum_generic::<T, R>(data@, 0, k + 1)),
             forall|k: int| 0 <= k < i as int ==>
                 output@[k].view().eqv(exclusive_scan::<R>(view_seq)[k]),
+            forall|k: int| 0 <= k < i as int ==>
+                output@[k].view().eqv(partial_sum_generic::<T, R>(data@, 0, k)),
         decreases n - i,
     {
         let prev_usize: usize = (i - 1) as usize;
@@ -656,14 +663,19 @@ pub fn exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             use crate::proof::scan_lemmas::lemma_exclusive_from_inclusive;
             let pi = (i - 1) as int;
             lemma_exclusive_from_inclusive::<R>(view_seq, i as int);
-            // clone.view().eqv(incl@[pi].view()) — from exec_clone
-            // incl@[pi].view().eqv(inclusive_scan(view_seq)[pi]) — from invariant
+            // Bridge for exclusive_scan form
             R::axiom_eqv_transitive(
                 clone.view(),
                 incl@[pi].view(),
                 inclusive_scan::<R>(view_seq)[pi],
             );
-            // exclusive_scan(view_seq)[i] == inclusive_scan(view_seq)[i-1] (== for spec values)
+            // Bridge for partial_sum_generic form
+            // incl@[pi].view().eqv(partial_sum_generic(data, 0, pi+1)) = partial_sum_generic(data, 0, i)
+            R::axiom_eqv_transitive(
+                clone.view(),
+                incl@[pi].view(),
+                partial_sum_generic::<T, R>(data@, 0, i as int),
+            );
         }
         output.push(clone);
         i = i + 1;

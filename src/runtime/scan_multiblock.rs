@@ -1092,7 +1092,6 @@ pub fn compact_exec(
         data@.len() == pred@.len(),
         data@.len() > 0,
         data@.len() <= i64::MAX as nat,
-        is_power_of_2(data@.len()),
     ensures
         result.1 as nat == compact_size(pred@),
         result.0@.len() == data@.len(),
@@ -1142,7 +1141,6 @@ pub fn compact_generic_exec<T: Copy>(
         data@.len() == pred@.len(),
         data@.len() > 0,
         data@.len() <= i64::MAX as nat,
-        is_power_of_2(data@.len()),
     ensures
         result.1 as nat == compact_size(pred@),
         result.0@.len() == data@.len(),
@@ -1171,8 +1169,6 @@ pub fn compact_generic_exec<T: Copy>(
         pi = pi + 1;
     }
 
-    let ghost original_pred_int = pred_int@;
-
     proof {
         lemma_pred_partial_sums_bounded(pred@);
         assert forall|lo: int, hi: int| 0 <= lo <= hi <= pred_int@.len()
@@ -1191,7 +1187,7 @@ pub fn compact_generic_exec<T: Copy>(
         }
     }
 
-    blelloch_exclusive_scan_exec(&mut pred_int, n);
+    let scan_result = exclusive_scan_i64_exec(&pred_int);
 
     // Allocate output buffer with fill value
     let mut output: Vec<T> = Vec::new();
@@ -1210,33 +1206,33 @@ pub fn compact_generic_exec<T: Copy>(
         invariant
             si <= n,
             output@.len() == n as nat,
+            scan_result@.len() == n as nat,
             pred_int@.len() == n as nat,
-            original_pred_int.len() == n as nat,
             data@.len() == n as nat,
             pred@.len() == n as nat,
             n <= i64::MAX as u64,
             n as int == data_len as int,
             forall|j: int| 0 <= j < n as int ==>
-                pred_int@[j] as int == exclusive_scan_int(original_pred_int)[j],
+                scan_result@[j] as int == exclusive_scan_int(pred_int@)[j],
             forall|j: int| 0 <= j < n as int ==>
-                original_pred_int[j] as int == pred_as_int_seq(pred@)[j],
+                pred_int@[j] as int == pred_as_int_seq(pred@)[j],
             forall|j: int| 0 <= j < si as int && pred@[j] ==>
                 #[trigger] output@[compact_indices(pred@)[j] as int] == data@[j],
         decreases n - si,
     {
         if pred[si as usize] {
-            let scatter_idx = pred_int[si as usize];
+            let scatter_idx = scan_result[si as usize];
 
             proof {
                 lemma_compact_indices_is_exclusive_scan(pred@, si as int);
                 assert forall|j: int| 0 <= j < si as int implies
-                    #[trigger] as_int_seq(original_pred_int)[j] == pred_as_int_seq(pred@)[j]
+                    #[trigger] as_int_seq(pred_int@)[j] == pred_as_int_seq(pred@)[j]
                 by {
-                    assert(as_int_seq(original_pred_int)[j] == original_pred_int[j] as int);
-                    assert(original_pred_int[j] as int == pred_as_int_seq(pred@)[j]);
+                    assert(as_int_seq(pred_int@)[j] == pred_int@[j] as int);
+                    assert(pred_int@[j] as int == pred_as_int_seq(pred@)[j]);
                 }
                 lemma_sum_congruence::<int>(
-                    |j: int| as_int_seq(original_pred_int)[j],
+                    |j: int| as_int_seq(pred_int@)[j],
                     |j: int| pred_as_int_seq(pred@)[j],
                     0, si as int,
                 );
@@ -1320,6 +1316,111 @@ pub fn compact_generic_exec<T: Copy>(
     }
 
     (output, count)
+}
+
+// ============================================================
+// Unified scan API
+// ============================================================
+
+/// Inclusive prefix scan for arbitrary-length data.
+/// Dispatches to Hillis-Steele (small) or three-phase block scan (large).
+pub fn inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
+    data: &Vec<T>,
+) -> (output: Vec<T>)
+    requires
+        data@.len() > 0,
+        all_partial_sums_representable::<T, R>(data@),
+        data@.len() <= u64::MAX as nat / 2,
+    ensures
+        output@.len() == data@.len(),
+        forall|i: int| 0 <= i < data@.len() as int ==>
+            output@[i].view().eqv(
+                inclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i]
+            ),
+        // Second ensures: partial_sum_generic form for delegation wrappers
+        forall|i: int| 0 <= i < data@.len() as int ==>
+            output@[i].view().eqv(
+                partial_sum_generic::<T, R>(data@, 0, i + 1)
+            ),
+{
+    let n: u64 = data.len() as u64;
+    if n <= 256 {
+        hillis_steele_generic_exec::<T, R>(data, n)
+    } else {
+        three_phase_inclusive_scan_generic_exec::<T, R>(data, 256u64)
+    }
+}
+
+/// Inclusive prefix scan for i64 data of arbitrary length.
+pub fn inclusive_scan_i64_exec(
+    data: &Vec<i64>,
+) -> (output: Vec<i64>)
+    requires
+        data@.len() > 0,
+        all_partial_sums_bounded(data@),
+        data@.len() <= i64::MAX as nat,
+    ensures
+        output@.len() == data@.len(),
+        forall|i: int| 0 <= i < data@.len() as int ==>
+            output@[i] as int == inclusive_scan_int(data@)[i],
+{
+    proof { lemma_bounded_implies_representable(data@); }
+    let result = inclusive_scan_generic_exec::<i64, int>(data);
+    proof {
+        assert forall|i: int| 0 <= i < data@.len() as int implies
+            result@[i] as int == inclusive_scan_int(data@)[i]
+        by {
+            lemma_partial_sums_equal(data@, 0, i + 1);
+            assert forall|j: int| 0 <= j < i + 1 implies
+                (data@[j] as int).eqv(as_int_seq(data@)[j])
+            by {
+                int::axiom_eqv_reflexive(data@[j] as int);
+            }
+            lemma_sum_congruence::<int>(
+                |j: int| data@[j] as int,
+                |j: int| as_int_seq(data@)[j],
+                0, i + 1,
+            );
+        }
+    }
+    result
+}
+
+/// Exclusive prefix scan for i64 data of arbitrary length.
+/// result[0] = 0, result[i] = data[0] + ... + data[i-1].
+pub fn exclusive_scan_i64_exec(
+    data: &Vec<i64>,
+) -> (output: Vec<i64>)
+    requires
+        data@.len() > 0,
+        all_partial_sums_bounded(data@),
+        data@.len() <= i64::MAX as nat,
+    ensures
+        output@.len() == data@.len(),
+        forall|i: int| 0 <= i < data@.len() as int ==>
+            output@[i] as int == exclusive_scan_int(data@)[i],
+{
+    let n: u64 = data.len() as u64;
+    proof { lemma_bounded_implies_representable(data@); }
+    let result = exclusive_scan_generic_exec::<i64, int>(data, n);
+    proof {
+        assert forall|i: int| 0 <= i < data@.len() as int implies
+            result@[i] as int == exclusive_scan_int(data@)[i]
+        by {
+            lemma_partial_sums_equal(data@, 0, i);
+            assert forall|j: int| 0 <= j < i implies
+                (data@[j] as int).eqv(as_int_seq(data@)[j])
+            by {
+                int::axiom_eqv_reflexive(data@[j] as int);
+            }
+            lemma_sum_congruence::<int>(
+                |j: int| data@[j] as int,
+                |j: int| as_int_seq(data@)[j],
+                0, i,
+            );
+        }
+    }
+    result
 }
 
 } // verus!
