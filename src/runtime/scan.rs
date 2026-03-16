@@ -106,6 +106,42 @@ impl ExecRing<int> for i64 {
     }
 }
 
+// ============================================================
+// u64 implementation of ExecRing<int>
+// ============================================================
+
+impl ExecRing<int> for u64 {
+    #[verifier::inline]
+    open spec fn view(&self) -> int {
+        *self as int
+    }
+
+    #[verifier::inline]
+    open spec fn is_representable(v: int) -> bool {
+        0 <= v && v <= u64::MAX as int
+    }
+
+    proof fn lemma_representable_congruence(a: int, b: int)
+    {
+        // For int: eqv is ==, so a == b. is_representable(a) implies is_representable(b).
+    }
+
+    fn exec_add(&self, other: &Self) -> (result: Self)
+    {
+        *self + *other
+    }
+
+    fn exec_zero() -> (result: Self)
+    {
+        0u64
+    }
+
+    fn exec_clone(&self) -> (result: Self)
+    {
+        *self
+    }
+}
+
 /// Helper: partial_sum and partial_sum_generic are equal for i64/int.
 /// Both are sum over closures that compute data[j] as int, but Z3 treats the closures
 /// as distinct function symbols. Bridge by induction on sum's recursion.

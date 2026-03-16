@@ -1340,4 +1340,224 @@ proof fn lemma_scatter_is_compact_result(
 
 // lemma_compact_indices_surjective and lemma_compact_result_at moved to proof/scan_lemmas.rs
 
+// ============================================================
+// Generic compact (data type parameterized, scan stays i64)
+// ============================================================
+
+/// Generic scatter lemma: if each true position j has output[compact_indices[j]] == data[j],
+/// then output[i] == compact_result(data, pred)[i] for all i < compact_size.
+proof fn lemma_scatter_is_compact_result_generic<T>(
+    data: Seq<T>, pred: Seq<bool>, output: Seq<T>, n: u64,
+)
+    requires
+        data.len() == n as nat,
+        pred.len() == n as nat,
+        output.len() == n as nat,
+        n > 0,
+        forall|j: int| 0 <= j < n as int && pred[j] ==>
+            #[trigger] output[compact_indices(pred)[j] as int] == data[j],
+    ensures
+        forall|i: int| 0 <= i < compact_size(pred) as int ==>
+            output[i] == compact_result(data, pred)[i],
+{
+    assert forall|i: int| 0 <= i < compact_size(pred) as int implies
+        output[i] == compact_result(data, pred)[i]
+    by {
+        let j = lemma_compact_indices_surjective::<T>(data, pred, i);
+        assert(pred[j]);
+        assert(compact_indices(pred)[j] as int == i);
+        assert(output[i] == data[j]);
+        lemma_compact_result_at::<T>(data, pred, j);
+    }
+}
+
+/// Generic compact: works for any Copy type.
+/// The scan internally uses i64 for predicate indices; data elements are T.
+pub fn compact_generic_exec<T: Copy>(
+    data: &Vec<T>, pred: &Vec<bool>, fill: T,
+) -> (result: (Vec<T>, u64))
+    requires
+        data@.len() == pred@.len(),
+        data@.len() > 0,
+        data@.len() <= i64::MAX as nat,
+        is_power_of_2(data@.len()),
+    ensures
+        result.1 as nat == compact_size(pred@),
+        result.0@.len() == data@.len(),
+        forall|i: int| 0 <= i < result.1 as int ==>
+            result.0@[i] == compact_result(data@, pred@)[i as int],
+{
+    let n = data.len() as u64;
+    let data_len = data.len();
+
+    // Build pred_int: 0/1 values from pred (always i64 for the scan)
+    let mut pred_int: Vec<i64> = Vec::new();
+    let mut pi: u64 = 0;
+    while pi < n
+        invariant
+            pi <= n,
+            pred_int@.len() == pi as nat,
+            pred@.len() == n as nat,
+            data@.len() == n as nat,
+            n as int == data_len as int,
+            forall|j: int| 0 <= j < pi as int ==>
+                #[trigger] pred_int@[j] as int == pred_as_int_seq(pred@)[j],
+        decreases n - pi,
+    {
+        let val: i64 = if pred[pi as usize] { 1i64 } else { 0i64 };
+        pred_int.push(val);
+        pi = pi + 1;
+    }
+
+    let ghost original_pred_int = pred_int@;
+
+    proof {
+        lemma_pred_partial_sums_bounded(pred@);
+        assert forall|lo: int, hi: int| 0 <= lo <= hi <= pred_int@.len()
+        implies i64::MIN as int <= #[trigger] partial_sum(pred_int@, lo, hi)
+            && partial_sum(pred_int@, lo, hi) <= i64::MAX as int
+        by {
+            assert forall|j: int| lo <= j < hi implies
+                pred_int@[j] as int == pred_as_int_seq(pred@)[j] by {}
+            lemma_sum_congruence::<int>(
+                |j: int| pred_int@[j] as int,
+                |j: int| pred_as_int_seq(pred@)[j],
+                lo, hi,
+            );
+            assert(0 <= pred_partial_sum(pred@, lo, hi)
+                && pred_partial_sum(pred@, lo, hi) <= pred@.len() as int);
+        }
+    }
+
+    blelloch_exclusive_scan_exec(&mut pred_int, n);
+
+    // Allocate output buffer with fill value
+    let mut output: Vec<T> = Vec::new();
+    let mut oi: u64 = 0;
+    while oi < n
+        invariant oi <= n, output@.len() == oi as nat,
+        decreases n - oi,
+    {
+        output.push(fill);
+        oi = oi + 1;
+    }
+
+    // Scatter: place data[i] at scatter index when pred[i]
+    let mut si: u64 = 0;
+    while si < n
+        invariant
+            si <= n,
+            output@.len() == n as nat,
+            pred_int@.len() == n as nat,
+            original_pred_int.len() == n as nat,
+            data@.len() == n as nat,
+            pred@.len() == n as nat,
+            n <= i64::MAX as u64,
+            n as int == data_len as int,
+            forall|j: int| 0 <= j < n as int ==>
+                pred_int@[j] as int == exclusive_scan_int(original_pred_int)[j],
+            forall|j: int| 0 <= j < n as int ==>
+                original_pred_int[j] as int == pred_as_int_seq(pred@)[j],
+            forall|j: int| 0 <= j < si as int && pred@[j] ==>
+                #[trigger] output@[compact_indices(pred@)[j] as int] == data@[j],
+        decreases n - si,
+    {
+        if pred[si as usize] {
+            let scatter_idx = pred_int[si as usize];
+
+            proof {
+                lemma_compact_indices_is_exclusive_scan(pred@, si as int);
+                assert forall|j: int| 0 <= j < si as int implies
+                    #[trigger] as_int_seq(original_pred_int)[j] == pred_as_int_seq(pred@)[j]
+                by {
+                    assert(as_int_seq(original_pred_int)[j] == original_pred_int[j] as int);
+                    assert(original_pred_int[j] as int == pred_as_int_seq(pred@)[j]);
+                }
+                lemma_sum_congruence::<int>(
+                    |j: int| as_int_seq(original_pred_int)[j],
+                    |j: int| pred_as_int_seq(pred@)[j],
+                    0, si as int,
+                );
+                assert(scatter_idx as int == compact_indices(pred@)[si as int] as int);
+                assert(0 <= compact_indices(pred@)[si as int]);
+                lemma_pred_partial_sums_bounded(pred@);
+                lemma_compact_size_le_len(pred@.take(si as int));
+                assert(compact_indices(pred@)[si as int] == compact_size(pred@.take(si as int)));
+                assert(pred@.take(si as int).len() == si as nat);
+                assert(compact_indices(pred@)[si as int] <= si as nat);
+                assert((compact_indices(pred@)[si as int] as int) < (n as int));
+
+                assert forall|j: int| 0 <= j < si as int && pred@[j] implies
+                    compact_indices(pred@)[j] as int != compact_indices(pred@)[si as int] as int
+                by {
+                    lemma_compact_scatter_disjoint(pred@, j, si as int);
+                }
+            }
+
+            proof {
+                assert(scatter_idx >= 0i64);
+                assert((scatter_idx as int) < (n as int));
+            }
+            let ghost output_before_scatter = output@;
+            output.set(scatter_idx as usize, data[si as usize]);
+
+            proof {
+                assert((scatter_idx as usize) as int == scatter_idx as int);
+                assert(output@[scatter_idx as int] == data@[si as int]);
+                assert(scatter_idx as int == compact_indices(pred@)[si as int] as int);
+                assert forall|j: int| 0 <= j < si as int && pred@[j] implies
+                    #[trigger] output@[compact_indices(pred@)[j] as int] == data@[j]
+                by {
+                    lemma_compact_scatter_disjoint(pred@, j, si as int);
+                    let ci_j = compact_indices(pred@)[j] as int;
+                    let ci_si = compact_indices(pred@)[si as int] as int;
+                    assert(ci_j != ci_si);
+                    assert(ci_si == scatter_idx as int);
+                    assert(ci_j != scatter_idx as int);
+                    assert(ci_j != (scatter_idx as usize) as int);
+                    assert(0 <= ci_j && ci_j < output@.len() as int) by {
+                        lemma_compact_size_le_len(pred@.take(j));
+                        assert(compact_indices(pred@)[j] == compact_size(pred@.take(j)));
+                        assert(compact_indices(pred@)[j] <= j as nat);
+                    }
+                    assert(output@[ci_j] == output_before_scatter[ci_j]);
+                }
+            }
+        }
+        si = si + 1;
+    }
+
+    // Count true values
+    let mut count: u64 = 0;
+    let mut ci: u64 = 0;
+    while ci < n
+        invariant
+            ci <= n,
+            pred@.len() == n as nat,
+            n as int == data_len as int,
+            count as nat == compact_size(pred@.take(ci as int)),
+            count <= ci,
+        decreases n - ci,
+    {
+        proof {
+            assert(pred@.take((ci + 1) as int).drop_last() =~= pred@.take(ci as int));
+            assert(pred@.take((ci + 1) as int).last() == pred@[ci as int]);
+            assert(compact_size(pred@.take((ci + 1) as int))
+                == compact_size(pred@.take(ci as int))
+                   + if pred@[ci as int] { 1nat } else { 0nat });
+        }
+        if pred[ci as usize] {
+            count = count + 1;
+        }
+        ci = ci + 1;
+    }
+
+    proof {
+        assert(pred@.take(n as int) =~= pred@);
+        lemma_scatter_is_compact_result_generic::<T>(data@, pred@, output@, n);
+    }
+
+    (output, count)
+}
+
 } // verus!
