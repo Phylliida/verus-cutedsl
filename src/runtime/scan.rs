@@ -106,6 +106,40 @@ impl ExecRing<int> for i64 {
     }
 }
 
+/// Helper: partial_sum and partial_sum_generic are equal for i64/int.
+/// Both are sum over closures that compute data[j] as int, but Z3 treats the closures
+/// as distinct function symbols. Bridge by induction on sum's recursion.
+proof fn lemma_partial_sums_equal(data: Seq<i64>, lo: int, hi: int)
+    requires 0 <= lo, hi <= data.len(),
+    ensures partial_sum(data, lo, hi) == partial_sum_generic::<i64, int>(data, lo, hi),
+    decreases (if hi > lo { hi - lo } else { 0 }),
+{
+    if hi <= lo {
+        // Both return Ring::zero() = 0
+    } else {
+        lemma_partial_sums_equal(data, lo + 1, hi);
+        // IH: sum(cls_PS, lo+1, hi) == sum(cls_PSG, lo+1, hi)
+        // Unfolding sum one step: f(lo) + sum(f, lo+1, hi) on each side
+        // cls_PS(lo) = data[lo] as int, cls_PSG(lo) = data[lo].view() = data[lo] as int
+    }
+}
+
+/// Bridge: all_partial_sums_bounded ==> all_partial_sums_representable for i64.
+pub proof fn lemma_bounded_implies_representable(data: Seq<i64>)
+    requires all_partial_sums_bounded(data),
+    ensures all_partial_sums_representable::<i64, int>(data),
+{
+    assert forall|lo: int, hi: int| 0 <= lo <= hi <= data.len() implies
+        <i64 as ExecRing<int>>::is_representable(
+            #[trigger] partial_sum_generic::<i64, int>(data, lo, hi)
+        )
+    by {
+        lemma_partial_sums_equal(data, lo, hi);
+        // Now Z3 knows partial_sum == partial_sum_generic, and all_partial_sums_bounded
+        // gives i64 range bounds on partial_sum.
+    }
+}
+
 /// Hillis-Steele element value: what element i should hold after `level` levels.
 /// This is sum(f, max(0, i+1-pow2(level)), i+1).
 pub open spec fn hs_value(data: Seq<i64>, i: int, level: nat) -> int {
@@ -643,144 +677,8 @@ pub fn hillis_steele_exec(data: &Vec<i64>, n: u64) -> (output: Vec<i64>)
         forall|i: int| 0 <= i < n as int ==>
             output@[i] as int == inclusive_scan_int(data@)[i],
 {
-    let levels = log2_ceil_exec(n);
-
-    // Capture data.len() as usize to establish n fits in usize for casts
-    let data_len = data.len();
-
-    // Initialize current buffer from data
-    let mut current: Vec<i64> = Vec::new();
-    let mut idx: u64 = 0;
-    while idx < n
-        invariant
-            idx <= n,
-            current@.len() == idx as nat,
-            data@.len() == n as nat,
-            n as int == data_len as int,
-            forall|j: int| 0 <= j < idx as int ==> current@[j] == data@[j],
-        decreases n - idx,
-    {
-        current.push(data[idx as usize]);
-        idx = idx + 1;
-    }
-
-    proof {
-        // Base case: at level 0, current[i] = data[i] = sum(f, i, i+1) = hs_value(i, 0)
-        assert forall|i: int| 0 <= i < n as int implies
-            #[trigger] current@[i] as int == hs_value(data@, i, 0)
-        by {
-            lemma_sum_single::<int>(|j: int| data@[j] as int, i);
-            assert(current@[i] == data@[i]);
-        }
-    }
-
-    // Apply Hillis-Steele levels
-    let mut d: u64 = 0;
-    let mut stride: u64 = 1;
-    while d < levels
-        invariant
-            d <= levels,
-            stride as nat == pow2(d as nat),
-            current@.len() == n as nat,
-            levels as nat == log2_ceil(n as nat),
-            n > 0,
-            n <= i64::MAX as u64,
-            n as int == data_len as int,
-            data@.len() == n as nat,
-            all_partial_sums_bounded(data@),
-            // Hillis-Steele invariant
-            forall|i: int| 0 <= i < n as int ==>
-                #[trigger] current@[i] as int == hs_value(data@, i, d as nat),
-        decreases levels - d,
-    {
-        // Prove stride < n for overflow safety of stride * 2
-        proof {
-            if n as nat > 1 {
-                lemma_pow2_lt_for_sub_levels(n as nat, d as nat);
-            } else {
-                // n == 1 => levels = log2_ceil(1) = 0, d < 0 impossible
-                assert(false);
-            }
-        }
-
-        // Build next level in a new Vec
-        let mut next: Vec<i64> = Vec::new();
-        let mut i: u64 = 0;
-        while i < n
-            invariant
-                i <= n,
-                next@.len() == i as nat,
-                current@.len() == n as nat,
-                stride as nat == pow2(d as nat),
-                stride < n,
-                d < levels,
-                levels as nat == log2_ceil(n as nat),
-                n > 0,
-                n <= i64::MAX as u64,
-                n as int == data_len as int,
-                data@.len() == n as nat,
-                all_partial_sums_bounded(data@),
-                forall|k: int| 0 <= k < n as int ==>
-                    #[trigger] current@[k] as int == hs_value(data@, k, d as nat),
-                forall|k: int| 0 <= k < i as int ==>
-                    #[trigger] next@[k] as int == hs_value(data@, k, (d + 1) as nat),
-            decreases n - i,
-        {
-            if i >= stride {
-                let partner = (i - stride) as usize;
-
-                proof {
-                    let ghost ii = i as int;
-                    let ghost partner_int = ii - stride as int;
-
-                    // Prove addition doesn't overflow
-                    lemma_hs_addition(data@, ii, d as nat, n as nat);
-                    // hs_value(ii, d) + hs_value(partner, d) == hs_value(ii, d+1)
-                    // current[i] + current[partner] = hs_value(ii, d+1)
-
-                    // hs_value(ii, d+1) = sum(f, next_lo, ii+1) = partial_sum(data@, next_lo, ii+1)
-                    let ghost next_lo = if ii + 1 - pow2((d + 1) as nat) as int > 0 { ii + 1 - pow2((d + 1) as nat) as int } else { 0int };
-                    assert(0 <= next_lo && ii + 1 <= n as int);
-                    assert(partial_sum(data@, next_lo, ii + 1) == hs_value(data@, ii, (d + 1) as nat));
-                    // partial_sum is bounded by all_partial_sums_bounded
-                }
-
-                let val = current[i as usize] + current[partner];
-                next.push(val);
-            } else {
-                next.push(current[i as usize]);
-
-                proof {
-                    let ghost ii = i as int;
-                    lemma_hs_no_change(data@, ii, d as nat, n as nat);
-                }
-            }
-
-            i = i + 1;
-        }
-
-        current = next;
-
-        proof {
-            assert(pow2((d + 1) as nat) == 2 * pow2(d as nat));
-            // stride < n <= i64::MAX, so stride * 2 < 2 * i64::MAX < u64::MAX
-        }
-
-        stride = stride * 2;
-        d = d + 1;
-    }
-
-    proof {
-        lemma_log2_ceil_pow2(n as nat);
-        assert forall|i: int| 0 <= i < n as int implies
-            current@[i] as int == inclusive_scan_int(data@)[i]
-        by {
-            assert(current@[i] as int == hs_value(data@, i, levels as nat));
-            lemma_hs_equals_inclusive_scan(data@, i, levels as nat);
-        }
-    }
-
-    current
+    proof { lemma_bounded_implies_representable(data@); }
+    hillis_steele_generic_exec::<i64, int>(data, n)
 }
 
 /// Reduce: sum all elements. Uses Hillis-Steele and returns the last element.
