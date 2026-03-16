@@ -18,13 +18,6 @@ verus! {
 // Block decomposition helpers
 // ============================================================
 
-/// Number of blocks: ceil_div(n, block_size).
-pub open spec fn num_blocks(n: nat, block_size: nat) -> nat
-    recommends block_size > 0,
-{
-    (((n + block_size - 1) as int) / (block_size as int)) as nat
-}
-
 /// Start index of block b.
 pub open spec fn block_start(block_size: nat, b: nat) -> nat {
     b * block_size
