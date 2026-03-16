@@ -109,7 +109,7 @@ impl ExecRing<int> for i64 {
 /// Helper: partial_sum and partial_sum_generic are equal for i64/int.
 /// Both are sum over closures that compute data[j] as int, but Z3 treats the closures
 /// as distinct function symbols. Bridge by induction on sum's recursion.
-proof fn lemma_partial_sums_equal(data: Seq<i64>, lo: int, hi: int)
+pub proof fn lemma_partial_sums_equal(data: Seq<i64>, lo: int, hi: int)
     requires 0 <= lo, hi <= data.len(),
     ensures partial_sum(data, lo, hi) == partial_sum_generic::<i64, int>(data, lo, hi),
     decreases (if hi > lo { hi - lo } else { 0 }),
@@ -138,74 +138,6 @@ pub proof fn lemma_bounded_implies_representable(data: Seq<i64>)
         // Now Z3 knows partial_sum == partial_sum_generic, and all_partial_sums_bounded
         // gives i64 range bounds on partial_sum.
     }
-}
-
-/// Hillis-Steele element value: what element i should hold after `level` levels.
-/// This is sum(f, max(0, i+1-pow2(level)), i+1).
-pub open spec fn hs_value(data: Seq<i64>, i: int, level: nat) -> int {
-    let lo = if i + 1 - pow2(level) as int > 0 { i + 1 - pow2(level) as int } else { 0int };
-    sum::<int>(|j: int| data[j] as int, lo, i + 1)
-}
-
-/// hs_value addition lemma: adding current[i] + current[partner] gives hs_value at next level.
-proof fn lemma_hs_addition(data: Seq<i64>, i: int, d: nat, n: nat)
-    requires
-        n as int == data.len(),
-        0 <= i < n as int,
-        i >= pow2(d) as int,
-    ensures
-        hs_value(data, i, d) + hs_value(data, i - pow2(d) as int, d) == hs_value(data, i, (d + 1) as nat),
-{
-    let stride = pow2(d);
-    let partner = i - stride as int;
-    let prev_lo = i + 1 - stride as int;  // > 0 since i >= stride
-    let partner_lo = if partner + 1 - stride as int > 0 { partner + 1 - stride as int } else { 0int };
-    let next_lo = if i + 1 - pow2((d + 1) as nat) as int > 0 { i + 1 - pow2((d + 1) as nat) as int } else { 0int };
-
-    assert(pow2((d + 1) as nat) == 2 * pow2(d));
-    assert(partner + 1 == prev_lo);
-    assert(partner_lo == next_lo);
-    assert(next_lo <= prev_lo);
-
-    lemma_sum_split::<int>(|j: int| data[j] as int, next_lo, prev_lo, i + 1);
-}
-
-/// hs_value is unchanged when i < stride (both levels have same lo = 0).
-proof fn lemma_hs_no_change(data: Seq<i64>, i: int, d: nat, n: nat)
-    requires
-        n as int == data.len(),
-        0 <= i < n as int,
-        i < pow2(d) as int,
-    ensures
-        hs_value(data, i, d) == hs_value(data, i, (d + 1) as nat),
-{
-    assert(pow2((d + 1) as nat) == 2 * pow2(d));
-    // i < pow2(d) => i+1 <= pow2(d) => i+1-pow2(d) <= 0 => lo_d = 0
-    // i+1-2*pow2(d) < i+1-pow2(d) <= 0 => lo_{d+1} = 0
-    // So both are sum(f, 0, i+1)
-}
-
-/// hs_value at sufficient level equals inclusive_scan_int.
-proof fn lemma_hs_equals_inclusive_scan(data: Seq<i64>, i: int, level: nat)
-    requires
-        0 <= i < data.len() as int,
-        pow2(level) >= data.len(),
-    ensures
-        hs_value(data, i, level) == inclusive_scan_int(data)[i],
-{
-    // pow2(level) >= n > i+1, so lo = max(0, i+1-pow2(level)) = 0
-    // hs_value = sum(|j| data[j] as int, 0, i+1)
-    // inclusive_scan_int(data)[i] = sum::<int>(|j| as_int_seq(data)[j], 0, i+1)
-    // as_int_seq(data)[j] = data[j] as int, so these are equal
-    // But Z3 needs closure congruence:
-    assert forall|j: int| 0 <= j < data.len() as int implies
-        as_int_seq(data)[j] == data[j] as int by {}
-    lemma_sum_congruence::<int>(
-        |j: int| data[j] as int,
-        |j: int| as_int_seq(data)[j],
-        0, i + 1,
-    );
-    // sum::<int>.eqv() is == for int, so the sums are equal
 }
 
 /// Compute ceil(log2(n)) at runtime.
@@ -353,6 +285,11 @@ pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
         forall|i: int| 0 <= i < n as int ==>
             output@[i].view().eqv(
                 inclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i]
+            ),
+        // Second ensures: direct partial_sum_generic form, avoids closure matching issues for callers
+        forall|i: int| 0 <= i < n as int ==>
+            output@[i].view().eqv(
+                partial_sum_generic::<T, R>(data@, 0, i + 1)
             ),
 {
     let levels = log2_ceil_exec(n);
@@ -574,6 +511,9 @@ pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
             current@[i].view().eqv(
                 inclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i]
             )
+            && current@[i].view().eqv(
+                partial_sum_generic::<T, R>(data@, 0, i + 1)
+            )
         by {
             // current[i].view().eqv(hs(i, levels))
             lemma_hs_equals_inclusive_scan_generic::<T, R>(data@, i, levels as nat);
@@ -582,6 +522,18 @@ pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
                 current@[i].view(),
                 hs_value_generic::<T, R>(data@, i, levels as nat),
                 inclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i],
+            );
+            // hs(i, levels) = partial_sum_generic(data@, 0, i+1) when pow2(levels) >= n
+            // (lo = max(0, i+1-pow2(levels)) = 0 since i < n <= pow2(levels))
+            assert(i + 1 - pow2(levels as nat) as int <= 0) by {
+                assert(pow2(levels as nat) >= data@.len());
+            }
+            // Now Z3 sees hs_value_generic(...) = sum(cls, 0, i+1) = partial_sum_generic(...)
+            R::axiom_eqv_reflexive(hs_value_generic::<T, R>(data@, i, levels as nat));
+            R::axiom_eqv_transitive(
+                current@[i].view(),
+                hs_value_generic::<T, R>(data@, i, levels as nat),
+                partial_sum_generic::<T, R>(data@, 0, i + 1),
             );
         }
     }
@@ -680,15 +632,30 @@ pub fn hillis_steele_exec(data: &Vec<i64>, n: u64) -> (output: Vec<i64>)
     proof { lemma_bounded_implies_representable(data@); }
     let result = hillis_steele_generic_exec::<i64, int>(data, n);
     proof {
-        // Generic ensures uses Seq::new(n, |j| data@[j].view()) — after inlining view(),
-        // this equals as_int_seq(data@) = Seq::new(n, |j| data@[j] as int).
-        // Prove extensional equality so Z3 can substitute.
-        let ghost gen_seq = Seq::new(data@.len(),
-            |j: int| <i64 as ExecRing<int>>::view(&data@[j]));
-        assert(gen_seq =~= as_int_seq(data@));
+        // Generic new ensures: result@[i].view().eqv(partial_sum_generic(data@, 0, i+1))
+        // For i64/int: view() inlines, eqv is ==, so:
+        //   result@[i] as int == partial_sum_generic(data@, 0, i+1)
+        // Bridge chain: partial_sum_generic == partial_sum == inclusive_scan_int
         assert forall|i: int| 0 <= i < n as int implies
             result@[i] as int == inclusive_scan_int(data@)[i]
-        by {}
+        by {
+            // Step 1: partial_sum_generic == partial_sum (by induction on sum)
+            lemma_partial_sums_equal(data@, 0, i + 1);
+            // Step 2: partial_sum == inclusive_scan_int (by sum_congruence)
+            // partial_sum(data@, 0, i+1) uses closure |j| data@[j] as int
+            // inclusive_scan_int(data@)[i] uses closure |j| as_int_seq(data@)[j]
+            // These are pointwise equal: as_int_seq(data@)[j] == data@[j] as int
+            assert forall|j: int| 0 <= j < i + 1 implies
+                (data@[j] as int).eqv(as_int_seq(data@)[j])
+            by {
+                int::axiom_eqv_reflexive(data@[j] as int);
+            }
+            lemma_sum_congruence::<int>(
+                |j: int| data@[j] as int,
+                |j: int| as_int_seq(data@)[j],
+                0, i + 1,
+            );
+        }
     }
     result
 }
