@@ -678,7 +678,19 @@ pub fn hillis_steele_exec(data: &Vec<i64>, n: u64) -> (output: Vec<i64>)
             output@[i] as int == inclusive_scan_int(data@)[i],
 {
     proof { lemma_bounded_implies_representable(data@); }
-    hillis_steele_generic_exec::<i64, int>(data, n)
+    let result = hillis_steele_generic_exec::<i64, int>(data, n);
+    proof {
+        // Generic ensures uses Seq::new(n, |j| data@[j].view()) — after inlining view(),
+        // this equals as_int_seq(data@) = Seq::new(n, |j| data@[j] as int).
+        // Prove extensional equality so Z3 can substitute.
+        let ghost gen_seq = Seq::new(data@.len(),
+            |j: int| <i64 as ExecRing<int>>::view(&data@[j]));
+        assert(gen_seq =~= as_int_seq(data@));
+        assert forall|i: int| 0 <= i < n as int implies
+            result@[i] as int == inclusive_scan_int(data@)[i]
+        by {}
+    }
+    result
 }
 
 /// Reduce: sum all elements. Uses Hillis-Steele and returns the last element.
