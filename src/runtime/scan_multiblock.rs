@@ -6,7 +6,6 @@ use crate::scan::*;
 use crate::scan_multiblock::*;
 use crate::swizzle::pow2;
 use crate::proof::scan_lemmas::*;
-use crate::proof::scan_multiblock_lemmas::*;
 use crate::proof::swizzle_lemmas::{lemma_pow2_positive, lemma_pow2_monotone};
 use crate::runtime::scan::*;
 

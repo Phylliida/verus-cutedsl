@@ -23,7 +23,7 @@ verus! {
 // ============================================================
 
 /// log2_ceil(pow2(k)) == k for any k.
-proof fn lemma_log2_ceil_eq_for_pow2(n: nat, total_levels: nat)
+pub proof fn lemma_log2_ceil_eq_for_pow2(n: nat, total_levels: nat)
     requires
         n > 0,
         pow2(total_levels) == n,
@@ -168,7 +168,7 @@ pub proof fn lemma_blelloch_base(data: Seq<int>, n: nat, total_levels: nat)
 
 /// Helper: in the else branch of blelloch_downsweep_state, (j+1) % stride != 0.
 /// Proved by contradiction using the two negated if-conditions.
-proof fn lemma_else_branch_not_divisible(j: int, stride: nat, s_prev: nat)
+pub proof fn lemma_else_branch_not_divisible(j: int, stride: nat, s_prev: nat)
     requires
         j >= 0,
         stride > 0,
