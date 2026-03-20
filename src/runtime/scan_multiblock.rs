@@ -1736,7 +1736,10 @@ pub fn multi_split_exec(
         offsets.set(b_usize, write_offset);
 
         // Copy filtered[0..count] into output at write_offset
-        assume(write_offset as nat + count as nat <= n as nat); // proof debt: bucket_offset sums ≤ n
+        proof {
+            // write_offset + count = bucket_offset(b) + bucket_count(b) = bucket_offset(b+1) <= n
+            lemma_bucket_offset_bounded(buckets_nat, (b + 1) as nat);
+        }
         let mut ci: u64 = 0;
         while ci < count
             invariant
@@ -1750,6 +1753,11 @@ pub fn multi_split_exec(
                 n <= i64::MAX as nat,
                 counts@.len() == num_buckets as nat,
                 offsets@.len() == num_buckets as nat,
+                b <= num_buckets,
+                forall|bb: int| 0 <= bb < b as int ==>
+                    (#[trigger] counts@[bb]) as nat == bucket_count(buckets_nat, bb as nat),
+                forall|bb: int| 0 <= bb < b as int ==>
+                    (#[trigger] offsets@[bb]) as nat == bucket_offset(buckets_nat, bb as nat),
                 forall|j: int| 0 <= j < count as int ==>
                     filtered@[j] == compact_result(data@, bucket_pred(buckets_nat, b as nat))[j],
                 forall|j: int| 0 <= j < ci as int ==>
@@ -1783,8 +1791,15 @@ pub fn multi_split_exec(
                         output@[offsets@[bb] as int + j]
                             == #[trigger] compact_result(data@, bucket_pred(buckets_nat, bb as nat))[j]
                 by {
-                    // proof debt: bucket regions don't overlap (follows from cumulative offsets)
-                    assume(offsets@[bb] as int + j < write_offset as int);
+                    // bucket_offset(bb) + bucket_count(bb) = bucket_offset(bb+1) <= bucket_offset(b) = write_offset
+                    assert(offsets@[bb] as nat == bucket_offset(buckets_nat, bb as nat));
+                    assert(counts@[bb] as nat == bucket_count(buckets_nat, bb as nat));
+                    // offsets@[bb] + j < offsets@[bb] + counts@[bb] = bucket_offset(bb+1)
+                    assert(offsets@[bb] as nat + counts@[bb] as nat
+                        == bucket_offset(buckets_nat, (bb + 1) as nat));
+                    lemma_bucket_offset_monotone(buckets_nat, (bb + 1) as nat, b as nat);
+                    // bucket_offset(bb+1) <= bucket_offset(b) = write_offset
+                    assert(offsets@[bb] as int + j < write_offset as int);
                     assert(offsets@[bb] as int + j != dst_idx as int);
                     assert(0 <= offsets@[bb] as int + j);
                     assert((offsets@[bb] as int + j) < (output@.len() as int));
