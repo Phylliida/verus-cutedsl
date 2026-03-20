@@ -18,11 +18,6 @@ use crate::runtime::scan_multiblock::*;
 
 verus! {
 
-/// Convert a Vec<u64> view to a Seq<nat>.
-pub open spec fn as_nat_seq(data: Seq<u64>) -> Seq<nat> {
-    Seq::new(data.len(), |i: int| data[i] as nat)
-}
-
 /// Single radix sort step: stable partition by bit at position `pos`.
 /// `shift` must equal pow2(pos) — threaded from the outer loop to avoid recomputation.
 pub fn radix_step_exec(data: &Vec<u64>, output: &mut Vec<u64>, pos: u64, shift: u64)

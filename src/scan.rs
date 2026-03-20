@@ -65,7 +65,7 @@ pub open spec fn as_int_seq(data: Seq<i64>) -> Seq<int> {
 }
 
 /// Lift Seq<u64> to Seq<nat> for use with generic specs.
-pub open spec fn as_nat_seq_u64(data: Seq<u64>) -> Seq<nat> {
+pub open spec fn as_nat_seq(data: Seq<u64>) -> Seq<nat> {
     Seq::new(data.len(), |i: int| data[i] as nat)
 }
 
@@ -175,17 +175,31 @@ pub open spec fn bucket_offset(data: Seq<nat>, b: nat) -> nat
     else { bucket_offset(data, (b - 1) as nat) + bucket_count(data, (b - 1) as nat) }
 }
 
+/// Find which bucket owns output index i: the largest b such that bucket_offset(buckets, b) <= i.
+/// Returns num_buckets if no bucket owns this index (shouldn't happen for valid inputs).
+pub open spec fn bucket_for_index(buckets: Seq<nat>, num_buckets: nat, i: nat) -> nat
+    decreases num_buckets,
+{
+    if num_buckets == 0 { 0 }
+    else if bucket_offset(buckets, (num_buckets - 1) as nat) <= i {
+        (num_buckets - 1) as nat
+    } else {
+        bucket_for_index(buckets, (num_buckets - 1) as nat, i)
+    }
+}
+
 /// Multi-split result: concatenation of per-bucket compacted subsequences.
-pub open spec fn multi_split_result(data: Seq<nat>, buckets: Seq<nat>, num_buckets: nat) -> Seq<nat>
+/// Output index i belongs to bucket b = bucket_for_index(buckets, num_buckets, i),
+/// and the element is compact_result(data, bucket_pred(buckets, b))[i - bucket_offset(buckets, b)].
+pub open spec fn multi_split_result<T>(data: Seq<T>, buckets: Seq<nat>, num_buckets: nat) -> Seq<T>
     recommends
         data.len() == buckets.len(),
         forall|i: int| 0 <= i < data.len() as int ==> (buckets[i] as nat) < num_buckets,
 {
-    // Build per-bucket compacted results and concatenate
     Seq::new(data.len(), |i: int| {
-        // Find which bucket and position within bucket this output index belongs to
-        // This is the spec-level definition; runtime uses per-bucket compact calls
-        data[i] // placeholder — actual semantics enforced by runtime ensures
+        let b = bucket_for_index(buckets, num_buckets, i as nat);
+        let j = i - bucket_offset(buckets, b) as int;
+        compact_result(data, bucket_pred(buckets, b))[j]
     })
 }
 

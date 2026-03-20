@@ -1590,10 +1590,10 @@ pub fn histogram_exec(data: &Vec<u64>, num_buckets: u64) -> (counts: Vec<u64>)
 /// Returns (partitioned_output, per_bucket_counts, per_bucket_offsets).
 /// Elements in bucket b occupy output[offsets[b]..offsets[b]+counts[b]].
 pub fn multi_split_exec(
-    data: &Vec<i64>,
+    data: &Vec<u64>,
     buckets: &Vec<u64>,
     num_buckets: u64,
-) -> (result: (Vec<i64>, Vec<u64>, Vec<u64>))
+) -> (result: (Vec<u64>, Vec<u64>, Vec<u64>))
     requires
         data@.len() == buckets@.len(),
         data@.len() > 0,
@@ -1609,13 +1609,13 @@ pub fn multi_split_exec(
         // Per-bucket: counts[b] == bucket_count
         forall|b: int| 0 <= b < num_buckets as int ==> (#[trigger] result.1@[b]) as nat ==
             bucket_count(
-                as_nat_seq_u64(buckets@),
+                as_nat_seq(buckets@),
                 b as nat,
             ),
         // Per-bucket: offsets[b] == bucket_offset
         forall|b: int| 0 <= b < num_buckets as int ==> (#[trigger] result.2@[b]) as nat ==
             bucket_offset(
-                as_nat_seq_u64(buckets@),
+                as_nat_seq(buckets@),
                 b as nat,
             ),
         // Per-bucket: elements at [offset..offset+count) match compact_result
@@ -1625,22 +1625,22 @@ pub fn multi_split_exec(
                     == #[trigger] compact_result(
                         data@,
                         bucket_pred(
-                            as_nat_seq_u64(buckets@),
+                            as_nat_seq(buckets@),
                             b as nat,
                         ),
                     )[j],
 {
     let n = data.len();
-    let ghost buckets_nat = as_nat_seq_u64(buckets@);
+    let ghost buckets_nat = as_nat_seq(buckets@);
 
     // Initialize output with zeros
-    let mut output: Vec<i64> = Vec::new();
+    let mut output: Vec<u64> = Vec::new();
     let mut oi: usize = 0;
     while oi < n
         invariant oi <= n, output@.len() == oi as nat,
         decreases n - oi,
     {
-        output.push(0i64);
+        output.push(0u64);
         oi = oi + 1;
     }
 
@@ -1676,7 +1676,7 @@ pub fn multi_split_exec(
             num_buckets > 0,
             num_buckets <= i64::MAX as u64,
             write_offset as nat <= n as nat,
-            buckets_nat == as_nat_seq_u64(buckets@),
+            buckets_nat == as_nat_seq(buckets@),
             forall|i: int| 0 <= i < data@.len() as int ==>
                 (buckets@[i] as nat) < num_buckets as nat,
             write_offset as nat == bucket_offset(buckets_nat, b as nat),
@@ -1698,7 +1698,7 @@ pub fn multi_split_exec(
                 pi <= n,
                 pred@.len() == pi as nat,
                 n == buckets@.len(),
-                buckets_nat == as_nat_seq_u64(buckets@),
+                buckets_nat == as_nat_seq(buckets@),
                 forall|i: int| 0 <= i < pi as int ==>
                     #[trigger] pred@[i] == (buckets_nat[i] == b as nat),
             decreases n - pi,
@@ -1717,7 +1717,7 @@ pub fn multi_split_exec(
         }
 
         // Compact this bucket
-        let (filtered, count) = compact_exec(data, &pred);
+        let (filtered, count) = compact_generic_exec(data, &pred, 0u64);
 
         proof {
             assert(count as nat == compact_size(pred@));

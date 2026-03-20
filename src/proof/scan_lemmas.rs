@@ -588,4 +588,63 @@ pub proof fn lemma_bucket_offset_monotone(data: Seq<nat>, a: nat, b: nat)
     }
 }
 
+/// bucket_for_index returns a valid bucket b < num_buckets, with
+/// bucket_offset(buckets, b) <= i < bucket_offset(buckets, b) + bucket_count(buckets, b).
+pub proof fn lemma_bucket_for_index_valid(buckets: Seq<nat>, num_buckets: nat, i: nat)
+    requires
+        i < bucket_offset(buckets, num_buckets),
+    ensures ({
+        let b = bucket_for_index(buckets, num_buckets, i);
+        &&& b < num_buckets
+        &&& bucket_offset(buckets, b) <= i
+        &&& i < bucket_offset(buckets, b) + bucket_count(buckets, b)
+    }),
+    decreases num_buckets,
+{
+    let b = bucket_for_index(buckets, num_buckets, i);
+    if num_buckets == 0 {
+        // bucket_offset(buckets, 0) == 0, so i < 0 — contradicts nat
+    } else if bucket_offset(buckets, (num_buckets - 1) as nat) <= i {
+        // b == num_buckets - 1
+        // bucket_offset(buckets, num_buckets) = bucket_offset(nb-1) + bucket_count(nb-1)
+        // i < bucket_offset(nb) = bucket_offset(nb-1) + bucket_count(nb-1)
+    } else {
+        // b = bucket_for_index(buckets, num_buckets - 1, i)
+        // Need: i < bucket_offset(buckets, num_buckets - 1)
+        lemma_bucket_for_index_valid(buckets, (num_buckets - 1) as nat, i);
+    }
+}
+
+/// When per-bucket elements match compact_result, the full output equals multi_split_result.
+pub proof fn lemma_multi_split_matches<T>(
+    data: Seq<T>, buckets: Seq<nat>, num_buckets: nat, output: Seq<T>,
+)
+    requires
+        data.len() == buckets.len(),
+        output.len() == data.len(),
+        bucket_offset(buckets, num_buckets) == data.len(),
+        forall|i: int| 0 <= i < data.len() as int ==> (buckets[i] as nat) < num_buckets,
+        forall|b: int, j: int| 0 <= b < num_buckets as int
+            && 0 <= j < bucket_count(buckets, b as nat) as int ==>
+                output[bucket_offset(buckets, b as nat) as int + j]
+                    == #[trigger] compact_result(data, bucket_pred(buckets, b as nat))[j],
+    ensures
+        output =~= multi_split_result(data, buckets, num_buckets),
+{
+    let result = multi_split_result(data, buckets, num_buckets);
+    assert(output.len() == result.len());
+    assert forall|i: int| 0 <= i < output.len() as int implies output[i] == result[i]
+    by {
+        let b = bucket_for_index(buckets, num_buckets, i as nat);
+        lemma_bucket_for_index_valid(buckets, num_buckets, i as nat);
+        let j = i - bucket_offset(buckets, b) as int;
+        assert(0 <= j);
+        assert(j < bucket_count(buckets, b) as int);
+        assert(bucket_offset(buckets, b) as int + j == i);
+        // Trigger the per-bucket quantifier with b and j
+        assert(output[bucket_offset(buckets, b) as int + j]
+            == compact_result(data, bucket_pred(buckets, b))[j]);
+    }
+}
+
 } // verus!
