@@ -1629,6 +1629,8 @@ pub fn multi_split_exec(
                             b as nat,
                         ),
                     )[j],
+        // Global: output matches multi_split_result
+        result.0@ =~= multi_split_result(data@, as_nat_seq(buckets@), num_buckets as nat),
 {
     let n = data.len();
     let ghost buckets_nat = as_nat_seq(buckets@);
@@ -1812,6 +1814,25 @@ pub fn multi_split_exec(
         write_offset = write_offset + count;
 
         b = b + 1;
+    }
+
+    proof {
+        // Prove bucket_offset(buckets_nat, num_buckets) == n so lemma applies
+        assert forall|i: int| 0 <= i < buckets_nat.len() as int
+            implies (buckets_nat[i] as nat) < num_buckets as nat
+        by {
+            assert(buckets_nat[i] == buckets@[i] as nat);
+        }
+        lemma_bucket_offset_total(buckets_nat, num_buckets as nat);
+        // Now prove the per-bucket quantifier in the form the lemma expects
+        assert forall|bb: int, j: int| 0 <= bb < num_buckets as int
+            && 0 <= j < bucket_count(buckets_nat, bb as nat) as int
+        implies output@[bucket_offset(buckets_nat, bb as nat) as int + j]
+            == #[trigger] compact_result(data@, bucket_pred(buckets_nat, bb as nat))[j]
+        by {
+            assert(counts@[bb] as nat == bucket_count(buckets_nat, bb as nat));
+        }
+        lemma_multi_split_matches(data@, buckets_nat, num_buckets as nat, output@);
     }
 
     (output, counts, offsets)

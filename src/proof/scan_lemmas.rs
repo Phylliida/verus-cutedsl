@@ -588,6 +588,35 @@ pub proof fn lemma_bucket_offset_monotone(data: Seq<nat>, a: nat, b: nat)
     }
 }
 
+/// When all elements have bucket < num_buckets, total offset == data.len().
+/// Proof: each element contributes exactly 1 to some bucket_count(b) where b == data[i],
+/// so sum of all bucket_counts = data.len().
+pub proof fn lemma_bucket_offset_total(data: Seq<nat>, num_buckets: nat)
+    requires
+        forall|i: int| 0 <= i < data.len() as int ==> (data[i] as nat) < num_buckets,
+    ensures
+        bucket_offset(data, num_buckets) == data.len(),
+    decreases data.len(),
+{
+    if data.len() == 0 {
+        lemma_bucket_offset_empty_data(data, num_buckets);
+    } else {
+        let dl = data.drop_last();
+        let last = data.last();
+        // Induction: dl has all elements < num_buckets
+        assert forall|i: int| 0 <= i < dl.len() as int implies (dl[i] as nat) < num_buckets
+        by {
+            assert(dl[i] == data[i]);
+        }
+        lemma_bucket_offset_total(dl, num_buckets);
+        // bucket_offset(dl, num_buckets) == dl.len() == data.len() - 1
+        lemma_bucket_offset_drop_last(data, num_buckets);
+        // bucket_offset(data, nb) == bucket_offset(dl, nb) + if last < nb { 1 } else { 0 }
+        // last < num_buckets (from precondition, last == data[data.len()-1])
+        assert(last < num_buckets);
+    }
+}
+
 /// bucket_for_index returns a valid bucket b < num_buckets, with
 /// bucket_offset(buckets, b) <= i < bucket_offset(buckets, b) + bucket_count(buckets, b).
 pub proof fn lemma_bucket_for_index_valid(buckets: Seq<nat>, num_buckets: nat, i: nat)
@@ -638,12 +667,15 @@ pub proof fn lemma_multi_split_matches<T>(
         let b = bucket_for_index(buckets, num_buckets, i as nat);
         lemma_bucket_for_index_valid(buckets, num_buckets, i as nat);
         let j = i - bucket_offset(buckets, b) as int;
+        let b_int: int = b as int;
         assert(0 <= j);
         assert(j < bucket_count(buckets, b) as int);
         assert(bucket_offset(buckets, b) as int + j == i);
-        // Trigger the per-bucket quantifier with b and j
-        assert(output[bucket_offset(buckets, b) as int + j]
-            == compact_result(data, bucket_pred(buckets, b))[j]);
+        assert(0 <= b_int < num_buckets as int);
+        assert(0 <= j < bucket_count(buckets, b_int as nat) as int);
+        // Trigger the per-bucket quantifier with b_int and j
+        assert(output[bucket_offset(buckets, b_int as nat) as int + j]
+            == compact_result(data, bucket_pred(buckets, b_int as nat))[j]);
     }
 }
 
