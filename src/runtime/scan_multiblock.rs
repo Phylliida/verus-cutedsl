@@ -1763,6 +1763,7 @@ pub fn multi_split_exec(
         {
             let src_idx = ci as usize;
             let dst_idx = (write_offset + ci) as usize;
+            let ghost pre_output = output@;
             output.set(dst_idx, filtered[src_idx]);
 
             proof {
@@ -1774,6 +1775,7 @@ pub fn multi_split_exec(
                         == #[trigger] compact_result(data@, bucket_pred(buckets_nat, b as nat))[j]
                 by {
                     assert(write_offset as int + j != dst_idx as int);
+                    assert(output@[write_offset as int + j] == pre_output[write_offset as int + j]);
                 }
 
                 assert forall|bb: int, j: int| 0 <= bb < b as int
@@ -1781,7 +1783,11 @@ pub fn multi_split_exec(
                         output@[offsets@[bb] as int + j]
                             == #[trigger] compact_result(data@, bucket_pred(buckets_nat, bb as nat))[j]
                 by {
-                    assume(offsets@[bb] as int + j != dst_idx as int); // proof debt: non-overlap
+                    // proof debt: bucket regions don't overlap (follows from cumulative offsets)
+                    assume(offsets@[bb] as int + j < write_offset as int);
+                    assert(offsets@[bb] as int + j != dst_idx as int);
+                    assert(0 <= offsets@[bb] as int + j);
+                    assert((offsets@[bb] as int + j) < (output@.len() as int));
                 }
             }
 

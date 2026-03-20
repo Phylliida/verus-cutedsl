@@ -484,4 +484,108 @@ pub proof fn lemma_pow2_log2_ceil_exact(n: nat)
     }
 }
 
+// ============================================================
+// Bucket offset / multi-split lemmas
+// ============================================================
+
+/// bucket_pred(data, k).drop_last() == bucket_pred(data.drop_last(), k).
+pub proof fn lemma_bucket_pred_drop_last(data: Seq<nat>, k: nat)
+    requires data.len() > 0,
+    ensures bucket_pred(data, k).drop_last() =~= bucket_pred(data.drop_last(), k),
+{
+    let pred_full = bucket_pred(data, k);
+    let pred_short = bucket_pred(data.drop_last(), k);
+    assert(pred_full.drop_last().len() == pred_short.len());
+    assert forall|i: int| 0 <= i < pred_short.len() as int implies
+        pred_full.drop_last()[i] == #[trigger] pred_short[i]
+    by {
+        assert(pred_full[i] == (data[i] == k));
+        assert(pred_short[i] == (data.drop_last()[i] == k));
+        assert(data.drop_last()[i] == data[i]);
+    }
+}
+
+/// bucket_count decomposes on drop_last: adds 1 if last element matches.
+pub proof fn lemma_bucket_count_drop_last(data: Seq<nat>, k: nat)
+    requires data.len() > 0,
+    ensures bucket_count(data, k) ==
+        bucket_count(data.drop_last(), k) + if data.last() == k { 1nat } else { 0nat },
+{
+    lemma_bucket_pred_drop_last(data, k);
+    let pred = bucket_pred(data, k);
+    // compact_size(pred) = compact_size(pred.drop_last()) + if pred.last() { 1 } else { 0 }
+    // This is the definition of compact_size when pred.len() > 0.
+    assert(pred.last() == (data.last() == k));
+}
+
+/// bucket_offset decomposes on drop_last: adds 1 if last element is in [0, b).
+pub proof fn lemma_bucket_offset_drop_last(data: Seq<nat>, b: nat)
+    requires data.len() > 0,
+    ensures bucket_offset(data, b) ==
+        bucket_offset(data.drop_last(), b) + if data.last() < b { 1nat } else { 0nat },
+    decreases b,
+{
+    if b == 0 {
+        // Both sides are 0
+    } else {
+        lemma_bucket_offset_drop_last(data, (b - 1) as nat);
+        lemma_bucket_count_drop_last(data, (b - 1) as nat);
+        // bucket_offset(data, b) = bucket_offset(data, b-1) + bucket_count(data, b-1)
+        // = [bucket_offset(dl, b-1) + if last < b-1 { 1 } else { 0 }]
+        //   + [bucket_count(dl, b-1) + if last == b-1 { 1 } else { 0 }]
+        // = bucket_offset(dl, b) + (if last < b-1 { 1 } else { 0 }) + (if last == b-1 { 1 } else { 0 })
+        // = bucket_offset(dl, b) + if last < b { 1 } else { 0 }
+        // Because for nats: x < b iff x < b-1 or x == b-1
+        let x = data.last();
+        assert((if x < (b - 1) as nat { 1nat } else { 0nat })
+             + (if x == (b - 1) as nat { 1nat } else { 0nat })
+            == (if x < b { 1nat } else { 0nat }));
+    }
+}
+
+/// bucket_offset(data, b) <= data.len() for all b.
+pub proof fn lemma_bucket_offset_bounded(data: Seq<nat>, b: nat)
+    ensures bucket_offset(data, b) <= data.len(),
+    decreases data.len(),
+{
+    if data.len() == 0 {
+        // All bucket_preds have length 0, so all compact_sizes are 0
+        // bucket_offset is 0 by induction on b
+        lemma_bucket_offset_empty_data(data, b);
+    } else {
+        lemma_bucket_offset_bounded(data.drop_last(), b);
+        lemma_bucket_offset_drop_last(data, b);
+        // bucket_offset(data, b) = bucket_offset(dl, b) + (0 or 1) <= dl.len() + 1 = data.len()
+    }
+}
+
+/// When data is empty, bucket_offset is 0 for all b.
+proof fn lemma_bucket_offset_empty_data(data: Seq<nat>, b: nat)
+    requires data.len() == 0,
+    ensures bucket_offset(data, b) == 0,
+    decreases b,
+{
+    if b == 0 {
+    } else {
+        lemma_bucket_offset_empty_data(data, (b - 1) as nat);
+        // bucket_count(data, b-1) = compact_size(bucket_pred(data, b-1))
+        // bucket_pred(data, b-1) has length 0, so compact_size = 0
+        let pred = bucket_pred(data, (b - 1) as nat);
+        assert(pred.len() == 0);
+    }
+}
+
+/// bucket_offset is monotone: a <= b implies bucket_offset(data, a) <= bucket_offset(data, b).
+pub proof fn lemma_bucket_offset_monotone(data: Seq<nat>, a: nat, b: nat)
+    requires a <= b,
+    ensures bucket_offset(data, a) <= bucket_offset(data, b),
+    decreases b - a,
+{
+    if a == b {
+    } else {
+        lemma_bucket_offset_monotone(data, a, (b - 1) as nat);
+        // bucket_offset(data, b) = bucket_offset(data, b-1) + bucket_count(data, b-1) >= bucket_offset(data, b-1)
+    }
+}
+
 } // verus!
