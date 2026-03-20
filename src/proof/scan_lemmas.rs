@@ -109,6 +109,20 @@ pub proof fn lemma_compact_size_le_len(pred: Seq<bool>)
     }
 }
 
+/// Step lemma: compact_size(pred.take(i+1)) = compact_size(pred.take(i)) + (1 if pred[i] else 0).
+pub proof fn lemma_compact_size_step(pred: Seq<bool>, i: int)
+    requires
+        0 <= i,
+        i < pred.len() as int,
+    ensures
+        compact_size(pred.take(i + 1))
+            == compact_size(pred.take(i))
+                + (if pred[i] { 1nat } else { 0nat }),
+{
+    assert(pred.take(i + 1).drop_last() =~= pred.take(i));
+    assert(pred.take(i + 1).last() == pred[i]);
+}
+
 /// compact_indices[i] <= i for any predicate.
 pub proof fn lemma_compact_indices_le_i(pred: Seq<bool>, i: int)
     requires 0 <= i, i < pred.len() as int,

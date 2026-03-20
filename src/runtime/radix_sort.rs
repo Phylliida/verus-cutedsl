@@ -14,6 +14,7 @@ use crate::proof::swizzle_lemmas::{lemma_pow2_positive, lemma_pow2_monotone};
 use crate::proof::integer_helpers::*;
 use crate::proof::permutation_lemmas::lemma_finite_pigeonhole;
 use crate::runtime::scan::*;
+use crate::runtime::scan_multiblock::*;
 
 verus! {
 
@@ -28,7 +29,6 @@ pub fn radix_step_exec(data: &Vec<u64>, output: &mut Vec<u64>, pos: u64, shift: 
     requires
         old(output)@.len() == data@.len(),
         data@.len() > 0,
-        is_power_of_2(data@.len()),
         data@.len() <= i64::MAX as nat,
         pos < 64,
         shift as nat == pow2(pos as nat),
@@ -81,37 +81,36 @@ pub fn radix_step_exec(data: &Vec<u64>, output: &mut Vec<u64>, pos: u64, shift: 
 
     // Step 2: Save last pred, then scan
     let last_pred = pred_int[(n - 1) as usize];
-    let ghost original_pred_int = pred_int@;
 
     proof {
         lemma_pred_01_partial_sums_bounded_inner(pred_int@, n);
     }
 
-    blelloch_exclusive_scan_exec(&mut pred_int, n);
+    let scan_result = exclusive_scan_i64_exec(&pred_int);
 
     // Step 3: Compute total_ones and count_zeros
-    let scan_last = pred_int[(n - 1) as usize];
+    let scan_last = scan_result[(n - 1) as usize];
     proof {
         // Bridge scan_last to bounded value
-        lemma_exclusive_scan_01_bound(original_pred_int, n);
+        lemma_exclusive_scan_01_bound(pred_int@, n);
         assert(last_pred == 0i64 || last_pred == 1i64);
     }
     let total_ones: i64 = scan_last + last_pred;
     let count_zeros_val: i64 = (n as i64) - total_ones;
 
-    // Step 4: Bridge pred_int to compact_indices
+    // Step 4: Bridge scan_result to compact_indices
     proof {
         assert(0 <= count_zeros_val);
         lemma_count_zeros_bridge(
-            original_pred_int, spec_pred, spec_data,
+            pred_int@, spec_pred, spec_data,
             pos as nat, n, total_ones, count_zeros_val,
         );
         // Establish compact_indices bridge for all j
         assert forall|j: int| 0 <= j < n as int implies
-            pred_int@[j] as int == #[trigger] compact_indices(spec_pred)[j] as int
+            scan_result@[j] as int == #[trigger] compact_indices(spec_pred)[j] as int
         by {
             lemma_compact_indices_bridge_single(
-                original_pred_int, pred_int@, spec_pred, j, n,
+                pred_int@, scan_result@, spec_pred, j, n,
             );
         }
     }
@@ -123,7 +122,7 @@ pub fn radix_step_exec(data: &Vec<u64>, output: &mut Vec<u64>, pos: u64, shift: 
             si <= n,
             output@.len() == n as nat,
             data@.len() == n as nat,
-            pred_int@.len() == n as nat,
+            scan_result@.len() == n as nat,
             pred_vec@.len() == n as nat,
             n <= i64::MAX as u64,
             n > 0,
@@ -136,21 +135,21 @@ pub fn radix_step_exec(data: &Vec<u64>, output: &mut Vec<u64>, pos: u64, shift: 
             forall|j: int| 0 <= j < n as int ==>
                 pred_vec@[j] == spec_pred[j],
             forall|j: int| 0 <= j < n as int ==>
-                pred_int@[j] as int == #[trigger] compact_indices(spec_pred)[j] as int,
+                scan_result@[j] as int == #[trigger] compact_indices(spec_pred)[j] as int,
             // Each already-scattered element is correct
             forall|j: int| 0 <= j < si as int ==>
                 (#[trigger] output@[radix_scatter_dest(spec_data, pos as nat, j as nat) as int]) as nat == spec_data[j],
         decreases n - si,
     {
         let val = data[si as usize];
-        let rank = pred_int[si as usize];
+        let rank = scan_result[si as usize];
         let is_one = pred_vec[si as usize];
 
         proof {
             lemma_bit_at_binary(spec_data[si as int], pos as nat);
             // Trigger the invariant for si
             let ci_si = compact_indices(spec_pred)[si as int];
-            assert(pred_int@[si as int] as int == ci_si as int);
+            assert(scan_result@[si as int] as int == ci_si as int);
             assert(rank as int == ci_si as int);
             assert(rank >= 0);
         }
@@ -402,7 +401,6 @@ proof fn lemma_radix_scatter_surjective(data: Seq<nat>, pos: nat, dest: int)
 pub fn radix_sort_exec(data: &mut Vec<u64>, num_bits: u64)
     requires
         old(data)@.len() > 0,
-        is_power_of_2(old(data)@.len()),
         old(data)@.len() <= i64::MAX as nat,
         num_bits <= 64,
         forall|i: int| 0 <= i < old(data)@.len() as int ==>
@@ -448,7 +446,6 @@ pub fn radix_sort_exec(data: &mut Vec<u64>, num_bits: u64)
             buf@.len() == n as nat,
             n > 0,
             n as nat <= i64::MAX as nat,
-            is_power_of_2(n as nat),
             num_bits <= 64,
             num_bits > 0,
             original == as_nat_seq(old(data)@),
@@ -486,7 +483,6 @@ pub fn radix_sort_exec(data: &mut Vec<u64>, num_bits: u64)
                 buf@.len() == n as nat,
                 n > 0,
                 n as nat <= i64::MAX as nat,
-                is_power_of_2(n as nat),
                 num_bits <= 64,
                 original == as_nat_seq(old(data)@),
                 original.len() == n as nat,

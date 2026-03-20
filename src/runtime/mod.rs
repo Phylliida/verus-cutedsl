@@ -12,6 +12,7 @@ pub mod contraction;
 pub mod scan;
 pub mod scan_multiblock;
 pub mod radix_sort;
+pub mod scan_segmented;
 
 verus! {
 

@@ -65,6 +65,9 @@ pub mod scan_multiblock;
 pub mod radix_sort;
 
 #[cfg(verus_keep_ghost)]
+pub mod scan_segmented;
+
+#[cfg(verus_keep_ghost)]
 pub mod proof;
 
 #[cfg(verus_keep_ghost)]

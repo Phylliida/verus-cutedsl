@@ -1423,4 +1423,377 @@ pub fn exclusive_scan_i64_exec(
     result
 }
 
+/// Reduce (sum) for i64 data of arbitrary length.
+/// Returns data[0] + data[1] + ... + data[n-1].
+pub fn reduce_i64_exec(
+    data: &Vec<i64>,
+) -> (result: i64)
+    requires
+        data@.len() > 0,
+        all_partial_sums_bounded(data@),
+        data@.len() <= i64::MAX as nat,
+    ensures
+        result as int == reduce_int(data@, 0, data@.len() as int),
+{
+    let scan = inclusive_scan_i64_exec(data);
+    let n = data.len();
+    let last = scan[(n - 1) as usize];
+    proof {
+        lemma_reduce_equals_last_inclusive::<int>(as_int_seq(data@), data@.len());
+        // Bridge: inclusive_scan_int uses as_int_seq internally, so
+        // scan[n-1] == inclusive_scan_int(data@)[n-1] == reduce::<int>(as_int_seq(data@), 0, n)
+        // And reduce_int(data@, 0, n) == reduce::<int>(as_int_seq(data@), 0, n) by definition.
+    }
+    last
+}
+
+/// Histogram: count elements in each bucket.
+/// data[i] is the bucket index for element i. Returns counts[b] = number of elements with data[i] == b.
+pub fn histogram_exec(data: &Vec<u64>, num_buckets: u64) -> (counts: Vec<u64>)
+    requires
+        data@.len() > 0,
+        num_buckets > 0,
+        data@.len() <= u64::MAX as nat,
+        forall|i: int| 0 <= i < data@.len() as int ==>
+            (data@[i] as nat) < num_buckets as nat,
+    ensures
+        counts@.len() == num_buckets as nat,
+        forall|b: int| 0 <= b < num_buckets as int ==>
+            counts@[b] as nat == histogram_spec(
+                Seq::new(data@.len(), |i: int| data@[i] as nat),
+                num_buckets as nat,
+            )[b],
+{
+    let n = data.len();
+    let ghost data_nat = Seq::new(data@.len(), |i: int| data@[i] as nat);
+
+    // Initialize counts to zero
+    let mut counts: Vec<u64> = Vec::new();
+    let mut bi: u64 = 0;
+    while bi < num_buckets
+        invariant
+            bi <= num_buckets,
+            counts@.len() == bi as nat,
+            forall|b: int| 0 <= b < bi as int ==> counts@[b] == 0u64,
+        decreases num_buckets - bi,
+    {
+        counts.push(0u64);
+        bi = bi + 1;
+    }
+
+    // Count loop
+    let mut idx: usize = 0;
+    while idx < n
+        invariant
+            idx <= n,
+            n == data@.len(),
+            counts@.len() == num_buckets as nat,
+            num_buckets > 0,
+            data@.len() <= u64::MAX as nat,
+            data_nat == Seq::new(data@.len(), |i: int| data@[i] as nat),
+            forall|i: int| 0 <= i < data@.len() as int ==>
+                (data@[i] as nat) < num_buckets as nat,
+            // counts[b] == compact_size(bucket_pred(data_nat, b).take(idx))
+            forall|b: int| 0 <= b < num_buckets as int ==>
+                counts@[b] as nat == compact_size(
+                    bucket_pred(data_nat, b as nat).take(idx as int)),
+        decreases n - idx,
+    {
+        let bucket: u64 = data[idx];
+        // Bridge u64 → usize cast via counts.len()
+        let counts_len: usize = counts.len();
+        proof {
+            assert(data@[idx as int] as nat == data_nat[idx as int]);
+            assert((data@[idx as int] as nat) < num_buckets as nat);
+            assert((bucket as int) < (counts_len as int));
+        }
+        let bucket_idx: usize = bucket as usize;
+        proof {
+            // Now Z3 knows bucket fits in usize
+            assert((bucket_idx as int) == (bucket as int));
+        }
+
+        let old_count = counts[bucket_idx];
+
+        proof {
+            // Trigger invariant at b = bucket_idx as int
+            let b_int: int = bucket_idx as int;
+            let bp = bucket_pred(data_nat, b_int as nat);
+            let bp_take = bp.take(idx as int);
+            assert(counts@[b_int] as nat == compact_size(bp_take));
+            assert(bp_take.len() == idx as nat);
+            lemma_compact_size_le_len(bp_take);
+            assert(old_count as nat <= idx as nat);
+        }
+
+        let ghost pre_counts = counts@;
+        counts.set(bucket_idx, old_count + 1);
+
+        proof {
+            let ghost bucket_b: int = bucket_idx as int;
+            // data_nat[idx] == bucket as nat == (bucket_idx as int) as nat
+            assert(data_nat[idx as int] == bucket as nat);
+            assert(bucket as nat == (bucket_b as nat));
+
+            // Step + re-establish invariant for all buckets
+            assert forall|b: int| 0 <= b < num_buckets as int implies
+                counts@[b] as nat == compact_size(
+                    #[trigger] bucket_pred(data_nat, b as nat).take((idx + 1) as int))
+            by {
+                let pred_b = bucket_pred(data_nat, b as nat);
+                lemma_compact_size_step(pred_b, idx as int);
+                // pred_b[idx] == (data_nat[idx] == b as nat)
+                // data_nat[idx] == bucket_b as nat
+                assert(pred_b[idx as int] == (data_nat[idx as int] == b as nat));
+                // From loop invariant
+                assert(pre_counts[b] as nat
+                    == compact_size(bucket_pred(data_nat, b as nat).take(idx as int)));
+                if b == bucket_b {
+                    // pred_b[idx] is true: data_nat[idx] == b as nat
+                    assert(b as nat == bucket_b as nat);
+                    assert(data_nat[idx as int] == bucket_b as nat);
+                    assert(data_nat[idx as int] == b as nat);
+                    assert(pred_b[idx as int]);
+                    assert(compact_size(pred_b.take((idx + 1) as int))
+                        == compact_size(pred_b.take(idx as int)) + 1);
+                    assert(counts@[b] == old_count + 1);
+                    assert(old_count == pre_counts[b]);
+                } else {
+                    // pred_b[idx] is false
+                    assert(data_nat[idx as int] != b as nat);
+                    assert(!pred_b[idx as int]);
+                    assert(compact_size(pred_b.take((idx + 1) as int))
+                        == compact_size(pred_b.take(idx as int)));
+                    assert(b != bucket_b);
+                    assert(counts@[b] == pre_counts[b]);
+                }
+            }
+        }
+
+        idx = idx + 1;
+    }
+
+    proof {
+        // Final: take(n) == full sequence
+        assert forall|b: int| 0 <= b < num_buckets as int implies
+            counts@[b] as nat == histogram_spec(data_nat, num_buckets as nat)[b]
+        by {
+            let pred_b = bucket_pred(data_nat, b as nat);
+            assert(pred_b.take(n as int) =~= pred_b);
+        }
+    }
+
+    counts
+}
+
+/// Multi-split: partition data into buckets.
+/// Returns (partitioned_output, per_bucket_counts, per_bucket_offsets).
+/// Elements in bucket b occupy output[offsets[b]..offsets[b]+counts[b]].
+pub fn multi_split_exec(
+    data: &Vec<i64>,
+    buckets: &Vec<u64>,
+    num_buckets: u64,
+) -> (result: (Vec<i64>, Vec<u64>, Vec<u64>))
+    requires
+        data@.len() == buckets@.len(),
+        data@.len() > 0,
+        data@.len() <= i64::MAX as nat,
+        num_buckets > 0,
+        num_buckets <= i64::MAX as u64,
+        forall|i: int| 0 <= i < data@.len() as int ==>
+            (buckets@[i] as nat) < num_buckets as nat,
+    ensures
+        result.1@.len() == num_buckets as nat,
+        result.2@.len() == num_buckets as nat,
+        result.0@.len() == data@.len(),
+        // Per-bucket: counts[b] == bucket_count
+        forall|b: int| 0 <= b < num_buckets as int ==> (#[trigger] result.1@[b]) as nat ==
+            bucket_count(
+                as_nat_seq_u64(buckets@),
+                b as nat,
+            ),
+        // Per-bucket: offsets[b] == bucket_offset
+        forall|b: int| 0 <= b < num_buckets as int ==> (#[trigger] result.2@[b]) as nat ==
+            bucket_offset(
+                as_nat_seq_u64(buckets@),
+                b as nat,
+            ),
+        // Per-bucket: elements at [offset..offset+count) match compact_result
+        forall|b: int, j: int| 0 <= b < num_buckets as int
+            && 0 <= j < result.1@[b] as int ==>
+                result.0@[result.2@[b] as int + j]
+                    == #[trigger] compact_result(
+                        data@,
+                        bucket_pred(
+                            as_nat_seq_u64(buckets@),
+                            b as nat,
+                        ),
+                    )[j],
+{
+    let n = data.len();
+    let ghost buckets_nat = as_nat_seq_u64(buckets@);
+
+    // Initialize output with zeros
+    let mut output: Vec<i64> = Vec::new();
+    let mut oi: usize = 0;
+    while oi < n
+        invariant oi <= n, output@.len() == oi as nat,
+        decreases n - oi,
+    {
+        output.push(0i64);
+        oi = oi + 1;
+    }
+
+    // Initialize counts and offsets
+    let mut counts: Vec<u64> = Vec::new();
+    let mut offsets: Vec<u64> = Vec::new();
+    let mut bi: u64 = 0;
+    while bi < num_buckets
+        invariant
+            bi <= num_buckets,
+            counts@.len() == bi as nat,
+            offsets@.len() == bi as nat,
+        decreases num_buckets - bi,
+    {
+        counts.push(0u64);
+        offsets.push(0u64);
+        bi = bi + 1;
+    }
+
+    // Process each bucket
+    let mut write_offset: u64 = 0;
+    let mut b: u64 = 0;
+    while b < num_buckets
+        invariant
+            b <= num_buckets,
+            output@.len() == n,
+            counts@.len() == num_buckets as nat,
+            offsets@.len() == num_buckets as nat,
+            data@.len() == n,
+            buckets@.len() == n,
+            n > 0,
+            n <= i64::MAX as nat,
+            num_buckets > 0,
+            num_buckets <= i64::MAX as u64,
+            write_offset as nat <= n as nat,
+            buckets_nat == as_nat_seq_u64(buckets@),
+            forall|i: int| 0 <= i < data@.len() as int ==>
+                (buckets@[i] as nat) < num_buckets as nat,
+            write_offset as nat == bucket_offset(buckets_nat, b as nat),
+            forall|bb: int| 0 <= bb < b as int ==>
+                (#[trigger] counts@[bb]) as nat == bucket_count(buckets_nat, bb as nat),
+            forall|bb: int| 0 <= bb < b as int ==>
+                (#[trigger] offsets@[bb]) as nat == bucket_offset(buckets_nat, bb as nat),
+            forall|bb: int, j: int| 0 <= bb < b as int
+                && 0 <= j < counts@[bb] as int ==>
+                    output@[offsets@[bb] as int + j]
+                        == #[trigger] compact_result(data@, bucket_pred(buckets_nat, bb as nat))[j],
+        decreases num_buckets - b,
+    {
+        // Build predicate for bucket b
+        let mut pred: Vec<bool> = Vec::new();
+        let mut pi: usize = 0;
+        while pi < n
+            invariant
+                pi <= n,
+                pred@.len() == pi as nat,
+                n == buckets@.len(),
+                buckets_nat == as_nat_seq_u64(buckets@),
+                forall|i: int| 0 <= i < pi as int ==>
+                    #[trigger] pred@[i] == (buckets_nat[i] == b as nat),
+            decreases n - pi,
+        {
+            let is_b: bool = buckets[pi] == b;
+            proof {
+                assert(buckets_nat[pi as int] == buckets@[pi as int] as nat);
+            }
+            pred.push(is_b);
+            pi = pi + 1;
+        }
+
+        proof {
+            assert(pred@.len() == data@.len());
+            assert(pred@ =~= bucket_pred(buckets_nat, b as nat));
+        }
+
+        // Compact this bucket
+        let (filtered, count) = compact_exec(data, &pred);
+
+        proof {
+            assert(count as nat == compact_size(pred@));
+            assert(count as nat == bucket_count(buckets_nat, b as nat));
+            lemma_compact_size_le_len(pred@);
+            assert(count as nat <= n as nat);
+        }
+
+        // Store count and offset
+        let b_usize: usize = b as usize;
+        proof {
+            assert((b as int) < (num_buckets as int));
+            assert((b as int) < (counts.len() as int));
+        }
+        counts.set(b_usize, count);
+        offsets.set(b_usize, write_offset);
+
+        // Copy filtered[0..count] into output at write_offset
+        assume(write_offset as nat + count as nat <= n as nat); // proof debt: bucket_offset sums ≤ n
+        let mut ci: u64 = 0;
+        while ci < count
+            invariant
+                ci <= count,
+                output@.len() == n,
+                count as nat == bucket_count(buckets_nat, b as nat),
+                write_offset as nat == bucket_offset(buckets_nat, b as nat),
+                write_offset as nat + count as nat <= n as nat,
+                filtered@.len() == n,
+                n > 0,
+                n <= i64::MAX as nat,
+                counts@.len() == num_buckets as nat,
+                offsets@.len() == num_buckets as nat,
+                forall|j: int| 0 <= j < count as int ==>
+                    filtered@[j] == compact_result(data@, bucket_pred(buckets_nat, b as nat))[j],
+                forall|j: int| 0 <= j < ci as int ==>
+                    output@[write_offset as int + j]
+                        == #[trigger] compact_result(data@, bucket_pred(buckets_nat, b as nat))[j],
+                forall|bb: int, j: int| 0 <= bb < b as int
+                    && 0 <= j < counts@[bb] as int ==>
+                        output@[offsets@[bb] as int + j]
+                            == #[trigger] compact_result(data@, bucket_pred(buckets_nat, bb as nat))[j],
+            decreases count - ci,
+        {
+            let src_idx = ci as usize;
+            let dst_idx = (write_offset + ci) as usize;
+            output.set(dst_idx, filtered[src_idx]);
+
+            proof {
+                assert(output@[write_offset as int + ci as int]
+                    == compact_result(data@, bucket_pred(buckets_nat, b as nat))[ci as int]);
+
+                assert forall|j: int| 0 <= j < ci as int implies
+                    output@[write_offset as int + j]
+                        == #[trigger] compact_result(data@, bucket_pred(buckets_nat, b as nat))[j]
+                by {
+                    assert(write_offset as int + j != dst_idx as int);
+                }
+
+                assert forall|bb: int, j: int| 0 <= bb < b as int
+                    && 0 <= j < counts@[bb] as int implies
+                        output@[offsets@[bb] as int + j]
+                            == #[trigger] compact_result(data@, bucket_pred(buckets_nat, bb as nat))[j]
+                by {
+                    assume(offsets@[bb] as int + j != dst_idx as int); // proof debt: non-overlap
+                }
+            }
+
+            ci = ci + 1;
+        }
+
+        write_offset = write_offset + count;
+
+        b = b + 1;
+    }
+
+    (output, counts, offsets)
+}
+
 } // verus!
