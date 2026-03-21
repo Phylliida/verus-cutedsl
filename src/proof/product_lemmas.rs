@@ -1165,4 +1165,150 @@ pub proof fn lemma_raked_product_nonneg_strides(a: &LayoutSpec, b: &LayoutSpec)
     };
 }
 
+// ══════════════════════════════════════════════════════════════
+// Product identity (left) and associativity
+// ══════════════════════════════════════════════════════════════
+
+/// Product with scalar_layout on the left preserves size and offsets.
+pub proof fn lemma_product_identity_left(a: &LayoutSpec)
+    requires
+        a.valid(),
+        a.non_negative_strides(),
+        a.shape.len() > 0,
+    ensures
+        logical_product(&scalar_layout(), a).size() == a.size(),
+        forall|x: nat| x < a.size() ==>
+            logical_product(&scalar_layout(), a).offset(x) == a.offset(x),
+{
+    let s = scalar_layout();
+    lemma_scalar_layout_valid();
+    lemma_product_size(&s, a);
+    // size = s.size() * a.size() = 1 * a.size() = a.size()
+    vstd::arithmetic::mul::lemma_mul_basics(a.size() as int);
+
+    let p = logical_product(&s, a);
+    lemma_product_valid(&s, a);
+
+    assert forall|x: nat| x < a.size()
+    implies p.offset(x) == a.offset(x)
+    by {
+        // product(s, a).offset(x) = s.offset(x % 1) + 1 * a.offset(x / 1)
+        //                         = s.offset(0)     + a.offset(x)
+        //                         = 0               + a.offset(x)
+        lemma_product_offset(&s, a, x);
+        crate::proof::offset_lemmas::lemma_offset_zero(s);
+    };
+}
+
+/// Product associativity: product(product(A,B), C) is offset-equivalent to product(A, product(B,C)).
+///
+/// Both nested products have the same shape (a.shape ++ b.shape ++ c.shape) and for any
+/// valid index x, their offsets agree. The key identity is:
+///   a.offset(x % sa) + ca * b.offset((x/sa) % sb) + ca*cb * c.offset(x/(sa*sb))
+/// which both sides reduce to via div/mod associativity.
+pub proof fn lemma_product_associative(
+    a: &LayoutSpec, b: &LayoutSpec, c: &LayoutSpec,
+)
+    requires
+        product_admissible(a, b),
+        product_admissible(&logical_product(a, b), c),
+        product_admissible(b, c),
+        product_admissible(a, &logical_product(b, c)),
+        a.non_negative_strides(),
+        b.non_negative_strides(),
+        c.non_negative_strides(),
+    ensures
+        logical_product(&logical_product(a, b), c).size()
+            == logical_product(a, &logical_product(b, c)).size(),
+        forall|x: nat| x < logical_product(&logical_product(a, b), c).size() ==>
+            logical_product(&logical_product(a, b), c).offset(x)
+                == logical_product(a, &logical_product(b, c)).offset(x),
+{
+    let ab = logical_product(a, b);
+    let bc = logical_product(b, c);
+    let ab_c = logical_product(&ab, c);
+    let a_bc = logical_product(a, &bc);
+
+    let sa = a.size();
+    let sb = b.size();
+    let sc = c.size();
+    let ca = a.cosize_nonneg();
+    let cb = b.cosize_nonneg();
+
+    // Establish validity and cosize facts
+    lemma_product_valid(a, b);
+    lemma_product_valid(b, c);
+    lemma_product_valid(&ab, c);
+    lemma_product_valid(a, &bc);
+    lemma_product_cosize(a, b);
+    lemma_product_cosize(b, c);
+
+    // Size equality: sa * sb * sc
+    lemma_product_size(a, b);
+    lemma_product_size(b, c);
+    lemma_product_size(&ab, c);
+    lemma_product_size(a, &bc);
+    // ab.size() == sa * sb, bc.size() == sb * sc
+    // ab_c.size() == (sa*sb) * sc, a_bc.size() == sa * (sb*sc)
+    vstd::arithmetic::mul::lemma_mul_is_associative(sa as int, sb as int, sc as int);
+
+    assert forall|x: nat| x < ab_c.size()
+    implies ab_c.offset(x) == a_bc.offset(x)
+    by {
+        let sab = ab.size();
+        let sbc = bc.size();
+        let cab = ab.cosize_nonneg();
+
+        // LHS decomposition: ab.offset(x % sab) + cab * c.offset(x / sab)
+        lemma_product_offset(&ab, c, x);
+
+        // Further decompose ab.offset(x % sab):
+        // ab.offset(y) = a.offset(y % sa) + ca * b.offset(y / sa)  where y = x % sab
+        assert(x % sab < sab) by {
+            crate::proof::integer_helpers::lemma_mod_bound(x, sab);
+        };
+        assert(x % sab < sa * sb);
+        lemma_product_offset(a, b, x % sab);
+
+        // RHS decomposition: a.offset(x % sa) + ca * bc.offset(x / sa)
+        assert(x < sa * (sb * sc)) by {
+            vstd::arithmetic::mul::lemma_mul_is_associative(sa as int, sb as int, sc as int);
+        };
+        lemma_product_offset(a, &bc, x);
+
+        // Further decompose bc.offset(x / sa):
+        // bc.offset(z) = b.offset(z % sb) + cb * c.offset(z / sb)  where z = x / sa
+        crate::proof::integer_helpers::lemma_mul_pos(sb, sc);
+        assert(x < sa * (sb * sc)) by {
+            vstd::arithmetic::mul::lemma_mul_is_associative(sa as int, sb as int, sc as int);
+        };
+        crate::proof::integer_helpers::lemma_div_upper_bound(x, sa, sb * sc);
+        lemma_product_offset(b, c, x / sa);
+
+        // Now equate the three terms using div/mod associativity:
+        // Term 1: a.offset((x % sab) % sa) == a.offset(x % sa)
+        crate::proof::integer_helpers::lemma_mod_mod(x, sa, sb);
+
+        // Term 3: c.offset(x / sab) == c.offset((x / sa) / sb)
+        //   since sab == sa * sb
+        crate::proof::integer_helpers::lemma_div_div(x, sa, sb);
+
+        // Term 2: b.offset((x % sab) / sa) == b.offset((x / sa) % sb)
+        crate::proof::integer_helpers::lemma_mod_div_mixed(x, sa, sb);
+
+        // LHS = a.offset(x%sa) + ca * b.offset((x/sa)%sb) + cab * c.offset((x/sa)/sb)
+        // RHS = a.offset(x%sa) + ca * (b.offset((x/sa)%sb) + cb * c.offset((x/sa)/sb))
+        //     = a.offset(x%sa) + ca * b.offset((x/sa)%sb) + ca*cb * c.offset((x/sa)/sb)
+        // cab == ca * cb (from lemma_product_cosize)
+        assert(cab == ca * cb);
+
+        // Distribute: ca * (b_term + cb * c_term) == ca * b_term + ca * cb * c_term
+        let b_term = b.offset((x / sa) % sb);
+        let c_term = c.offset((x / sa) / sb);
+        assert(ca as int * (b_term + cb as int * c_term)
+            == ca as int * b_term + (ca * cb) as int * c_term) by (nonlinear_arith)
+            requires ca as int >= 0, cb as int >= 0;
+    };
+}
+
 } // verus!

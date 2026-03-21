@@ -230,4 +230,139 @@ pub proof fn lemma_multiple_of_multiple(a: int, n: nat, d: int)
     vstd::arithmetic::div_mod::lemma_mod_multiples_basic(n as int * q, d);
 }
 
+// ══════════════════════════════════════════════════════════════
+// Div/mod associativity lemmas (for product associativity)
+// ══════════════════════════════════════════════════════════════
+
+/// (x / a) / b == x / (a * b) for a, b > 0.
+pub proof fn lemma_div_div(x: nat, a: nat, b: nat)
+    requires a > 0, b > 0,
+    ensures (x / a) / b == x / (a * b),
+{
+    // Use fundamental_div_mod to decompose x, then show both sides equal.
+    // x = a * q1 + r1 where q1 = x/a, r1 = x%a, 0 <= r1 < a
+    // q1 = b * q2 + r2 where q2 = q1/b, r2 = q1%b, 0 <= r2 < b
+    // LHS = q2
+    // x = a * (b * q2 + r2) + r1 = a*b*q2 + a*r2 + r1
+    // a*r2 + r1 < a*b (since r2 < b, r1 < a: a*r2 + r1 < a*b)
+    // So x / (a*b) = q2 = RHS
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int, a as int);
+    let q1 = x / a;
+    let r1 = x % a;
+    vstd::arithmetic::div_mod::lemma_mod_pos_bound(x as int, a as int);
+
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(q1 as int, b as int);
+    let q2 = q1 / b;
+    let r2 = q1 % b;
+    vstd::arithmetic::div_mod::lemma_mod_pos_bound(q1 as int, b as int);
+
+    // x == a * (b * q2 + r2) + r1 == a*b*q2 + a*r2 + r1
+    assert(x == a * q1 + r1);
+    assert(q1 == b * q2 + r2);
+    assert(x == a * (b * q2 + r2) + r1) by {
+        assert(a * q1 == a * (b * q2 + r2));
+    };
+    // a * (b * q2 + r2) == a*b*q2 + a*r2
+    vstd::arithmetic::mul::lemma_mul_is_distributive_add(a as int, (b * q2) as int, r2 as int);
+    vstd::arithmetic::mul::lemma_mul_is_associative(a as int, b as int, q2 as int);
+    assert(x == (a * b) * q2 + (a * r2 + r1));
+
+    // remainder < a*b
+    assert(a * r2 + r1 < a * b) by {
+        // a * r2 <= a * (b-1) = a*b - a
+        vstd::arithmetic::mul::lemma_mul_inequality(r2 as int, (b - 1) as int, a as int);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(a as int, r2 as int);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(a as int, (b - 1) as int);
+        vstd::arithmetic::mul::lemma_mul_is_distributive_sub(a as int, b as int, 1int);
+    };
+
+    // a*b > 0
+    vstd::arithmetic::mul::lemma_mul_strictly_positive(a as int, b as int);
+
+    // By converse of fundamental_div_mod: x = (a*b)*q2 + rem, 0 <= rem < a*b
+    // implies x / (a*b) == q2
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+        x as int, (a * b) as int, q2 as int, (a * r2 + r1) as int
+    );
+}
+
+/// (x % (a * b)) % a == x % a for a, b > 0.
+pub proof fn lemma_mod_mod(x: nat, a: nat, b: nat)
+    requires a > 0, b > 0,
+    ensures (x % (a * b)) % a == x % a,
+{
+    vstd::arithmetic::mul::lemma_mul_strictly_positive(a as int, b as int);
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int, (a * b) as int);
+    let q = x / (a * b);
+    let r = x % (a * b);
+    // x == (a*b)*q + r
+    // x % a == ((a*b)*q + r) % a == r % a  (since (a*b)*q is a multiple of a)
+    vstd::arithmetic::mul::lemma_mul_is_associative(a as int, b as int, q as int);
+    vstd::arithmetic::mul::lemma_mul_is_commutative(b as int, q as int);
+    vstd::arithmetic::mul::lemma_mul_is_associative(a as int, q as int, b as int);
+    // (a*b)*q == a*(b*q), so it's a multiple of a
+    assert((a * b) * q == a * (b * q));
+    vstd::arithmetic::div_mod::lemma_mod_multiples_basic(b as int * q as int, a as int);
+    // (a * (b*q)) % a == 0
+    vstd::arithmetic::div_mod::lemma_add_mod_noop((a * b) * q as int, r as int, a as int);
+    // x % a == ((a*b)*q % a + r % a) % a == (0 + r % a) % a == r % a
+    vstd::arithmetic::div_mod::lemma_mod_pos_bound(r as int, a as int);
+    vstd::arithmetic::div_mod::lemma_small_mod((r % a) as nat, a);
+}
+
+/// (x % (a * b)) / a == (x / a) % b for a, b > 0.
+pub proof fn lemma_mod_div_mixed(x: nat, a: nat, b: nat)
+    requires a > 0, b > 0,
+    ensures (x % (a * b)) / a == (x / a) % b,
+{
+    vstd::arithmetic::mul::lemma_mul_strictly_positive(a as int, b as int);
+
+    // Decompose: x = a*q1 + r1, q1 = b*q2 + r2
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int, a as int);
+    let q1 = x / a;
+    let r1 = x % a;
+    vstd::arithmetic::div_mod::lemma_mod_pos_bound(x as int, a as int);
+
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(q1 as int, b as int);
+    let q2 = q1 / b;
+    let r2 = q1 % b;
+    vstd::arithmetic::div_mod::lemma_mod_pos_bound(q1 as int, b as int);
+
+    // RHS = r2
+
+    // x = a*(b*q2 + r2) + r1 = a*b*q2 + a*r2 + r1
+    vstd::arithmetic::mul::lemma_mul_is_distributive_add(a as int, (b * q2) as int, r2 as int);
+    vstd::arithmetic::mul::lemma_mul_is_associative(a as int, b as int, q2 as int);
+    assert(x == (a * b) * q2 + (a * r2 + r1));
+
+    // remainder = a*r2 + r1 < a*b
+    assert(a * r2 + r1 < a * b) by {
+        vstd::arithmetic::mul::lemma_mul_inequality(r2 as int, (b - 1) as int, a as int);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(a as int, r2 as int);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(a as int, (b - 1) as int);
+        vstd::arithmetic::mul::lemma_mul_is_distributive_sub(a as int, b as int, 1int);
+    };
+
+    // So x % (a*b) == a*r2 + r1
+    assert(x == q2 as int * ((a * b) as int) + (a * r2 + r1) as int) by {
+        vstd::arithmetic::mul::lemma_mul_is_commutative((a * b) as int, q2 as int);
+    };
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+        x as int, (a * b) as int, q2 as int, (a * r2 + r1) as int
+    );
+
+    // LHS = (a*r2 + r1) / a
+    // a*r2 + r1 = r1 + r2*a, where r1 < a
+    // So (a*r2 + r1) / a == r2
+    assert((a * r2 + r1) as int == r2 as int * (a as int) + r1 as int) by {
+        vstd::arithmetic::mul::lemma_mul_is_commutative(a as int, r2 as int);
+    };
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+        (a * r2 + r1) as int, a as int, r2 as int, r1 as int
+    );
+    assert((a * r2 + r1) / a == r2);
+
+    // r2 == q1 % b == (x / a) % b
+}
+
 } // verus!
