@@ -365,4 +365,71 @@ pub proof fn lemma_mod_div_mixed(x: nat, a: nat, b: nat)
     // r2 == q1 % b == (x / a) % b
 }
 
+// ══════════════════════════════════════════════════════════════
+// Modular scaling (for recursive composition straddle case)
+// ══════════════════════════════════════════════════════════════
+
+/// Modular scaling: a * (x % b) == (a * x) % (a * b) for a, b > 0.
+///
+/// Proof: x = b*q + r where r = x%b. Then a*x = a*b*q + a*r.
+/// Since 0 <= a*r < a*b, (a*x) % (a*b) == a*r == a*(x%b).
+pub proof fn lemma_mod_scale(x: nat, a: nat, b: nat)
+    requires a > 0, b > 0,
+    ensures a * (x % b) == (a * x) % (a * b),
+{
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int, b as int);
+    let q = x / b;
+    let r = x % b;
+    vstd::arithmetic::div_mod::lemma_mod_pos_bound(x as int, b as int);
+    // x == b*q + r, 0 <= r < b
+    // a*x == a*(b*q + r) == a*b*q + a*r
+    vstd::arithmetic::mul::lemma_mul_is_distributive_add(a as int, (b * q) as int, r as int);
+    vstd::arithmetic::mul::lemma_mul_is_associative(a as int, b as int, q as int);
+    assert(a * x == (a * b) * q + a * r);
+    // 0 <= a*r < a*b
+    assert(a * r < a * b) by {
+        vstd::arithmetic::mul::lemma_mul_inequality(r as int, (b - 1) as int, a as int);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(a as int, r as int);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(a as int, (b - 1) as int);
+        vstd::arithmetic::mul::lemma_mul_is_distributive_sub(a as int, b as int, 1int);
+    };
+    vstd::arithmetic::mul::lemma_mul_strictly_positive(a as int, b as int);
+    // By converse: (a*x) % (a*b) == a*r == a*(x%b)
+    assert(a * x == q as int * ((a * b) as int) + (a * r) as int) by {
+        vstd::arithmetic::mul::lemma_mul_is_commutative((a * b) as int, q as int);
+    };
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+        (a * x) as int, (a * b) as int, q as int, (a * r) as int
+    );
+}
+
+/// Division scaling: x / b == (a * x) / (a * b) for a, b > 0.
+///
+/// Proof: same decomposition as lemma_mod_scale — the quotient is q in both cases.
+pub proof fn lemma_div_scale(x: nat, a: nat, b: nat)
+    requires a > 0, b > 0,
+    ensures x / b == (a * x) / (a * b),
+{
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int, b as int);
+    let q = x / b;
+    let r = x % b;
+    vstd::arithmetic::div_mod::lemma_mod_pos_bound(x as int, b as int);
+    vstd::arithmetic::mul::lemma_mul_is_distributive_add(a as int, (b * q) as int, r as int);
+    vstd::arithmetic::mul::lemma_mul_is_associative(a as int, b as int, q as int);
+    assert(a * x == (a * b) * q + a * r);
+    assert(a * r < a * b) by {
+        vstd::arithmetic::mul::lemma_mul_inequality(r as int, (b - 1) as int, a as int);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(a as int, r as int);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(a as int, (b - 1) as int);
+        vstd::arithmetic::mul::lemma_mul_is_distributive_sub(a as int, b as int, 1int);
+    };
+    vstd::arithmetic::mul::lemma_mul_strictly_positive(a as int, b as int);
+    assert(a * x == q as int * ((a * b) as int) + (a * r) as int) by {
+        vstd::arithmetic::mul::lemma_mul_is_commutative((a * b) as int, q as int);
+    };
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+        (a * x) as int, (a * b) as int, q as int, (a * r) as int
+    );
+}
+
 } // verus!
