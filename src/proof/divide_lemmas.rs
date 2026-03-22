@@ -1085,36 +1085,9 @@ pub proof fn lemma_divide_offset(a: &LayoutSpec, b: &LayoutSpec, x: nat)
         stride: b.stride.add(c.stride),
     };
 
-    // zipped is valid with non-negative strides
+    // zipped is valid + non-negative strides + size == m
+    crate::proof::tiling_lemmas::lemma_zipped_setup(a, b);
     lemma_complement_rank(b, m);
-    lemma_complement_valid(b, m);
-    lemma_complement_positive_strides(b, m);
-    assert(zipped.valid()) by {
-        lemma_complement_shape_valid(b, m);
-        assert forall|i: int| 0 <= i < zipped.shape.len()
-        implies #[trigger] zipped.shape[i] > 0 by {
-            if i < b.shape.len() as int {} else {
-                assert(zipped.shape[i] == c.shape[(i - b.shape.len()) as int]);
-            }
-        };
-    };
-    assert(zipped.non_negative_strides()) by {
-        assert forall|i: int| 0 <= i < zipped.stride.len()
-        implies #[trigger] zipped.stride[i] >= 0 by {
-            if i < b.stride.len() as int {
-                assert(zipped.stride[i] == b.stride[i]);
-                lemma_column_major_strides_len(b.shape);
-            } else {
-                assert(zipped.stride[i] == c.stride[(i - b.stride.len()) as int]);
-            }
-        };
-    };
-
-    // zipped.size() == m
-    crate::proof::product_lemmas::lemma_shape_size_append(b.shape, c.shape);
-    lemma_complement_size(b, m);
-    vstd::arithmetic::mul::lemma_mul_is_commutative(
-        shape_size(b.shape) as int, shape_size(c.shape) as int);
     assert(shape_size(zipped.shape) == m);
 
     // zipped.offset(x) == x (the key identity)
@@ -1229,30 +1202,8 @@ pub proof fn lemma_divide_offset_column_major(a: &LayoutSpec, b: &LayoutSpec, x:
         stride: b.stride.add(c.stride),
     };
 
-    // Establish zipped is valid with non-negative strides
-    lemma_complement_rank(b, m);
-    lemma_complement_valid(b, m);
-    lemma_complement_positive_strides(b, m);
-    assert(zipped.valid()) by {
-        lemma_complement_shape_valid(b, m);
-        assert forall|i: int| 0 <= i < zipped.shape.len()
-        implies #[trigger] zipped.shape[i] > 0 by {
-            if i < b.shape.len() as int {} else {
-                assert(zipped.shape[i] == c.shape[(i - b.shape.len()) as int]);
-            }
-        };
-    };
-    assert(zipped.non_negative_strides()) by {
-        assert forall|i: int| 0 <= i < zipped.stride.len()
-        implies #[trigger] zipped.stride[i] >= 0 by {
-            if i < b.stride.len() as int {
-                assert(zipped.stride[i] == b.stride[i]);
-                lemma_column_major_strides_len(b.shape);
-            } else {
-                assert(zipped.stride[i] == c.stride[(i - b.stride.len()) as int]);
-            }
-        };
-    };
+    // zipped is valid + non-negative strides + size == m
+    crate::proof::tiling_lemmas::lemma_zipped_setup(a, b);
 
     // A is column-major → stride[0] == 1
     crate::proof::inverse_lemmas::lemma_column_major_strides_first(a.shape);
@@ -1342,18 +1293,8 @@ pub proof fn lemma_divide_extended_shape(a: &LayoutSpec, b: &LayoutSpec)
         shape: b.shape.add(c.shape),
         stride: b.stride.add(c.stride),
     };
-    // Prove zipped is valid
-    lemma_complement_valid(b, m);
-    lemma_complement_shape_valid(b, m);
-    assert(zipped.valid()) by {
-        assert forall|i: int| 0 <= i < zipped.shape.len()
-        implies #[trigger] zipped.shape[i] > 0 by {
-            if i < b.shape.len() as int {} else {
-                let c_val = complement(b, m);
-                assert(zipped.shape[i] == c_val.shape[(i - b.shape.len()) as int]);
-            }
-        };
-    };
+    // zipped is valid + non-negative strides + size == m
+    crate::proof::tiling_lemmas::lemma_zipped_setup(a, b);
 
     lemma_compose_rank(a_val, zipped);
     crate::proof::composition_lemmas::lemma_compose_shape(a_val, zipped);
@@ -1440,16 +1381,7 @@ pub proof fn lemma_divide_extended_offset(a: &LayoutSpec, b: &LayoutSpec, x: nat
         shape: b.shape.add(c.shape),
         stride: b.stride.add(c.stride),
     };
-    lemma_complement_valid(b, m);
-    lemma_complement_shape_valid(b, m);
-    assert(zipped.valid()) by {
-        assert forall|i: int| 0 <= i < zipped.shape.len()
-        implies #[trigger] zipped.shape[i] > 0 by {
-            if i < b.shape.len() as int {} else {
-                assert(zipped.shape[i] == c.shape[(i - b.shape.len()) as int]);
-            }
-        };
-    };
+    crate::proof::tiling_lemmas::lemma_zipped_setup(a, b);
     crate::proof::composition_lemmas::lemma_compose_extended_eq_rank1(a_val, zipped);
     assert(logical_divide_extended(a, b) == logical_divide(a, b));
 }

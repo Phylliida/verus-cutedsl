@@ -15,6 +15,7 @@ use crate::proof::product_lemmas::*;
 verus! {
 
 /// Helper: the zipped layout (B ++ complement) is valid.
+/// Helper: the zipped layout (B ++ complement) is valid.
 pub proof fn lemma_zipped_valid(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
@@ -28,16 +29,69 @@ pub proof fn lemma_zipped_valid(a: &LayoutSpec, b: &LayoutSpec)
         zipped.valid()
     }),
 {
+    lemma_zipped_setup(a, b);
+}
+
+/// Comprehensive zipped layout setup: valid + non-negative strides + size == M.
+///
+/// Combines `lemma_complement_valid`, `lemma_complement_shape_valid`,
+/// `lemma_complement_positive_strides`, `lemma_complement_rank`, and
+/// `lemma_complement_size` into one call. This eliminates the ~8-line
+/// inline validity proof that was repeated in every divide lemma.
+pub proof fn lemma_zipped_setup(a: &LayoutSpec, b: &LayoutSpec)
+    requires
+        divide_admissible(a, b),
+    ensures ({
+        let m = shape_size(a.shape);
+        let c = complement(b, m);
+        let zipped = LayoutSpec {
+            shape: b.shape.add(c.shape),
+            stride: b.stride.add(c.stride),
+        };
+        &&& zipped.valid()
+        &&& zipped.non_negative_strides()
+        &&& shape_size(zipped.shape) == m
+    }),
+{
     let m = shape_size(a.shape);
     let c = complement(b, m);
+    let zipped = LayoutSpec {
+        shape: b.shape.add(c.shape),
+        stride: b.stride.add(c.stride),
+    };
     crate::proof::complement_lemmas::lemma_complement_valid(b, m);
     crate::proof::complement_lemmas::lemma_complement_shape_valid(b, m);
-    assert forall|i: int| 0 <= i < b.shape.add(c.shape).len()
-    implies #[trigger] b.shape.add(c.shape)[i] > 0 by {
-        if i < b.shape.len() as int {} else {
-            assert(b.shape.add(c.shape)[i] == c.shape[(i - b.shape.len()) as int]);
-        }
+    crate::proof::complement_lemmas::lemma_complement_rank(b, m);
+    crate::proof::complement_lemmas::lemma_complement_positive_strides(b, m);
+    crate::proof::complement_lemmas::lemma_complement_size(b, m);
+
+    // Valid: all shape entries > 0
+    assert(zipped.valid()) by {
+        assert forall|i: int| 0 <= i < zipped.shape.len()
+        implies #[trigger] zipped.shape[i] > 0 by {
+            if i < b.shape.len() as int {} else {
+                assert(zipped.shape[i] == c.shape[(i - b.shape.len()) as int]);
+            }
+        };
     };
+
+    // Non-negative strides: B strides from complement_admissible, complement strides positive
+    assert(zipped.non_negative_strides()) by {
+        assert forall|i: int| 0 <= i < zipped.stride.len()
+        implies #[trigger] zipped.stride[i] >= 0 by {
+            if i < b.stride.len() as int {
+                assert(zipped.stride[i] == b.stride[i]);
+            } else {
+                assert(zipped.stride[i] == c.stride[(i - b.stride.len()) as int]);
+            }
+        };
+    };
+
+    // Size: shape_size(B.shape ++ C.shape) == shape_size(B.shape) * shape_size(C.shape) == M
+    crate::proof::product_lemmas::lemma_shape_size_append(b.shape, c.shape);
+    vstd::arithmetic::mul::lemma_mul_is_commutative(
+        shape_size(b.shape) as int, shape_size(c.shape) as int,
+    );
 }
 
 /// logical_divide produces a valid layout.

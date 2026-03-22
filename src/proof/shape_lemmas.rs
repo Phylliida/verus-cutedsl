@@ -28,6 +28,18 @@ pub proof fn lemma_shape_size_empty()
 {
 }
 
+/// For a valid shape with len >= 1, shape.take(1) =~= seq![first] and
+/// shape_size(shape.take(1)) == first.
+/// This pattern appears frequently when decomposing at mode 0.
+pub proof fn lemma_take1_eq_first(s: Seq<nat>)
+    requires shape_valid(s), s.len() >= 1,
+    ensures
+        s.take(1) =~= seq![s.first()],
+        shape_size(s.take(1)) == s.first(),
+{
+    lemma_shape_size_single(s.first());
+}
+
 /// Single-element shape has size equal to its extent.
 pub proof fn lemma_shape_size_single(m: nat)
     requires m > 0,
