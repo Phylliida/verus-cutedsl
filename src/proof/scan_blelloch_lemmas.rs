@@ -223,6 +223,146 @@ pub proof fn lemma_else_branch_not_divisible(j: int, stride: nat, s_prev: nat)
 // Down-sweep inductive step
 // ============================================================
 
+/// Helper: RIGHT position in Blelloch down-sweep step.
+proof fn lemma_blelloch_step_right(
+    data: Seq<int>, n: nat, total_levels: nat, k: nat, j: int,
+    stride: nat, s_prev: nat,
+)
+    requires
+        n == data.len(), n > 0, is_power_of_2(n),
+        pow2(total_levels) == n, total_levels > 0, k < total_levels,
+        blelloch_downsweep_invariant(data, n, total_levels, k),
+        stride == pow2((total_levels - k - 1) as nat),
+        s_prev == pow2((total_levels - k) as nat),
+        s_prev == 2 * stride, stride > 0, s_prev > 0,
+        0 <= j < n as int,
+        (j + 1) % (2 * stride as int) == 0, j >= stride as int,
+    ensures
+        blelloch_downsweep_state(data, n, total_levels, (k + 1) as nat)[j]
+            == blelloch_expected(data, n, total_levels, (k + 1) as nat, j),
+{
+    let prev = blelloch_downsweep_state(data, n, total_levels, k);
+    let f = |j: int| data[j];
+    let new_s = pow2((total_levels - (k + 1) as nat) as nat);
+    assert(new_s == stride);
+    assert((j + 1) % (s_prev as int) == 0);
+    assert(prev[j] == blelloch_expected(data, n, total_levels, k, j));
+    assert(prev[j] == sum::<int>(f, 0, j + 1 - s_prev as int));
+    let partner = j - stride as int;
+    assert(0 <= partner && partner < n as int);
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(j + 1, s_prev as int);
+    let q_right = (j + 1) / (s_prev as int);
+    assert(j + 1 == s_prev as int * q_right);
+    assert(q_right >= 1) by (nonlinear_arith)
+        requires j + 1 == s_prev as int * q_right, j + 1 > 0, s_prev > 0;
+    assert(partner + 1 == stride as int * (2 * q_right - 1)) by (nonlinear_arith)
+        requires partner == j - stride as int, j + 1 == s_prev as int * q_right, s_prev == 2 * stride;
+    let odd_factor = 2 * q_right - 1;
+    assert(odd_factor >= 1) by (nonlinear_arith) requires q_right >= 1, odd_factor == 2 * q_right - 1;
+    assert(partner + 1 == s_prev as int * (q_right - 1) + stride as int) by (nonlinear_arith)
+        requires partner + 1 == stride as int * odd_factor, odd_factor == 2 * q_right - 1, s_prev == 2 * stride;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+        partner + 1, s_prev as int, q_right - 1, stride as int
+    );
+    assert((partner + 1) % (s_prev as int) != 0) by (nonlinear_arith)
+        requires (partner + 1) % (s_prev as int) == stride as int, stride > 0;
+    assert(prev[partner] == blelloch_expected(data, n, total_levels, k, partner));
+    assert(prev[partner] == tree_reduce_state(data, n, total_levels)[partner]);
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+        partner + 1, stride as int, odd_factor, 0
+    );
+    let d = (total_levels - k - 1) as nat;
+    lemma_tree_reduce_value_at_exact_level(data, n, total_levels, d, partner);
+    assert(partner + 1 - stride as int == j + 1 - s_prev as int) by (nonlinear_arith)
+        requires partner == j - stride as int, s_prev == 2 * stride;
+    assert(j + 1 - s_prev as int >= 0) by (nonlinear_arith)
+        requires j + 1 == s_prev as int * q_right, q_right >= 1, s_prev > 0;
+    lemma_sum_split::<int>(f, 0, j + 1 - s_prev as int, j + 1 - stride as int);
+    assert((j + 1) % (new_s as int) == 0) by {
+        lemma_mod_pow2_weaken((j + 1) as nat, (total_levels - k) as nat, (total_levels - k - 1) as nat);
+    };
+}
+
+/// Helper: LEFT position in Blelloch down-sweep step.
+proof fn lemma_blelloch_step_left(
+    data: Seq<int>, n: nat, total_levels: nat, k: nat, j: int,
+    stride: nat, s_prev: nat,
+)
+    requires
+        n == data.len(), n > 0, is_power_of_2(n),
+        pow2(total_levels) == n, total_levels > 0, k < total_levels,
+        blelloch_downsweep_invariant(data, n, total_levels, k),
+        stride == pow2((total_levels - k - 1) as nat),
+        s_prev == pow2((total_levels - k) as nat),
+        s_prev == 2 * stride, stride > 0, s_prev > 0,
+        0 <= j < n as int,
+        (j + 1) % (2 * stride as int) == stride as int,
+    ensures
+        blelloch_downsweep_state(data, n, total_levels, (k + 1) as nat)[j]
+            == blelloch_expected(data, n, total_levels, (k + 1) as nat, j),
+{
+    let prev = blelloch_downsweep_state(data, n, total_levels, k);
+    let f = |j: int| data[j];
+    let partner_right = j + stride as int;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(j + 1, (2 * stride as int));
+    let q_left = (j + 1) / (2 * stride as int);
+    assert(j + 1 == (2 * stride as int) * q_left + stride as int);
+    assert(partner_right + 1 == (2 * stride as int) * (q_left + 1)) by (nonlinear_arith)
+        requires partner_right == j + stride as int, j + 1 == (2 * stride as int) * q_left + stride as int;
+    lemma_pow2_mul((total_levels - k) as nat, k);
+    assert(n == s_prev * pow2(k)) by { assert((total_levels - k) as nat + k == total_levels); };
+    assert(partner_right + 1 <= n as int) by (nonlinear_arith)
+        requires
+            j + 1 == (2 * stride as int) * q_left + stride as int,
+            j + 1 <= n as int,
+            partner_right + 1 == (2 * stride as int) * (q_left + 1),
+            n == s_prev * pow2(k), s_prev == 2 * stride, stride > 0;
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+        partner_right + 1, s_prev as int, q_left + 1, 0
+    );
+    assert(prev[partner_right] == blelloch_expected(data, n, total_levels, k, partner_right));
+    assert(prev[partner_right] == sum::<int>(f, 0, partner_right + 1 - s_prev as int));
+    assert(partner_right + 1 - s_prev as int == j + 1 - stride as int) by (nonlinear_arith)
+        requires partner_right == j + stride as int, s_prev == 2 * stride;
+    assert((j + 1) % (stride as int) == 0) by {
+        assert(j + 1 == stride as int * (2 * q_left + 1)) by (nonlinear_arith)
+            requires j + 1 == (2 * stride as int) * q_left + stride as int;
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
+            j + 1, stride as int, 2 * q_left + 1, 0
+        );
+    };
+}
+
+/// Helper: UNCHANGED position in Blelloch down-sweep step.
+proof fn lemma_blelloch_step_unchanged(
+    data: Seq<int>, n: nat, total_levels: nat, k: nat, j: int,
+    stride: nat, s_prev: nat,
+)
+    requires
+        n == data.len(), n > 0, is_power_of_2(n),
+        pow2(total_levels) == n, total_levels > 0, k < total_levels,
+        blelloch_downsweep_invariant(data, n, total_levels, k),
+        stride == pow2((total_levels - k - 1) as nat),
+        s_prev == pow2((total_levels - k) as nat),
+        s_prev == 2 * stride, stride > 0, s_prev > 0,
+        0 <= j < n as int,
+        !((j + 1) % (2 * stride as int) == 0 && j >= stride as int),
+        (j + 1) % (2 * stride as int) != stride as int,
+    ensures
+        blelloch_downsweep_state(data, n, total_levels, (k + 1) as nat)[j]
+            == blelloch_expected(data, n, total_levels, (k + 1) as nat, j),
+{
+    let prev = blelloch_downsweep_state(data, n, total_levels, k);
+    lemma_else_branch_not_divisible(j, stride, s_prev);
+    assert((j + 1) % (s_prev as int) != 0) by {
+        if (j + 1) % (s_prev as int) == 0 {
+            lemma_mod_pow2_weaken((j + 1) as nat, (total_levels - k) as nat, (total_levels - k - 1) as nat);
+        }
+    };
+    assert(prev[j] == blelloch_expected(data, n, total_levels, k, j));
+    assert(prev[j] == tree_reduce_state(data, n, total_levels)[j]);
+}
+
 /// Blelloch down-sweep invariant: inductive step from k to k+1.
 pub proof fn lemma_blelloch_step(data: Seq<int>, n: nat, total_levels: nat, k: nat)
     requires
@@ -255,158 +395,12 @@ pub proof fn lemma_blelloch_step(data: Seq<int>, n: nat, total_levels: nat, k: n
     assert forall|j: int| 0 <= j < n as int
     implies #[trigger] next[j] == blelloch_expected(data, n, total_levels, (k + 1) as nat, j)
     by {
-        let new_s = pow2((total_levels - (k + 1) as nat) as nat);
-        assert(new_s == stride);
-
         if (j + 1) % (2 * stride as int) == 0 && j >= stride as int {
-            // ========== RIGHT position ==========
-            // Gets prev[j] + prev[j - stride]
-            assert((j + 1) % (s_prev as int) == 0);
-
-            // By IH: prev[j] = sum(data, 0, j+1-s_prev)
-            assert(prev[j] == blelloch_expected(data, n, total_levels, k, j));
-            assert(prev[j] == sum::<int>(f, 0, j + 1 - s_prev as int));
-
-            let partner = j - stride as int;
-            assert(0 <= partner && partner < n as int);
-
-            // Show (partner+1) % s_prev != 0
-            // partner+1 = j+1-stride, (j+1) = s_prev*q = 2*stride*q
-            // partner+1 = 2*stride*q - stride = stride*(2q-1)
-            // stride*(2q-1) % (2*stride) = stride (since 2q-1 odd) != 0
-            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(j + 1, s_prev as int);
-            let q_right = (j + 1) / (s_prev as int);
-            assert(j + 1 == s_prev as int * q_right);
-            assert(q_right >= 1) by (nonlinear_arith)
-                requires j + 1 == s_prev as int * q_right, j + 1 > 0, s_prev > 0;
-
-            // partner+1 = stride*(2*q_right - 1)
-            assert(partner + 1 == stride as int * (2 * q_right - 1)) by (nonlinear_arith)
-                requires
-                    partner == j - stride as int,
-                    j + 1 == s_prev as int * q_right,
-                    s_prev == 2 * stride;
-
-            // (2*q_right - 1) is odd, so stride*(2q-1) mod (2*stride) = stride
-            let odd_factor = 2 * q_right - 1;
-            assert(odd_factor >= 1) by (nonlinear_arith) requires q_right >= 1, odd_factor == 2 * q_right - 1;
-            assert(partner + 1 == s_prev as int * (q_right - 1) + stride as int) by (nonlinear_arith)
-                requires
-                    partner + 1 == stride as int * odd_factor,
-                    odd_factor == 2 * q_right - 1,
-                    s_prev == 2 * stride;
-            vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
-                partner + 1, s_prev as int, q_right - 1, stride as int
-            );
-            assert((partner + 1) % (s_prev as int) == stride as int);
-            assert((partner + 1) % (s_prev as int) != 0) by (nonlinear_arith)
-                requires (partner + 1) % (s_prev as int) == stride as int, stride > 0;
-
-            // By IH: prev[partner] = tree_reduce_state[partner]
-            assert(prev[partner] == blelloch_expected(data, n, total_levels, k, partner));
-            assert(prev[partner] == tree_reduce_state(data, n, total_levels)[partner]);
-
-            // (partner+1) % stride == 0
-            vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
-                partner + 1, stride as int, odd_factor, 0
-            );
-            assert((partner + 1) % (stride as int) == 0);
-
-            // (partner+1) % pow2(total_levels-k) != 0 (shown above as (partner+1)%s_prev != 0)
-            // Exact level for partner is total_levels-k-1
-            let d = (total_levels - k - 1) as nat;
-            lemma_tree_reduce_value_at_exact_level(data, n, total_levels, d, partner);
-            // tree_reduce_state[partner] = sum(data, partner+1-stride, partner+1)
-
-            assert(partner + 1 - stride as int == j + 1 - s_prev as int) by (nonlinear_arith)
-                requires partner == j - stride as int, s_prev == 2 * stride;
-
-            // j+1 >= s_prev (since j+1 = s_prev*q_right and q_right >= 1)
-            assert(j + 1 - s_prev as int >= 0) by (nonlinear_arith)
-                requires j + 1 == s_prev as int * q_right, q_right >= 1, s_prev > 0;
-
-            // sum_split: sum(0, j+1-stride) = sum(0, j+1-s_prev) + sum(j+1-s_prev, j+1-stride)
-            lemma_sum_split::<int>(f, 0, j + 1 - s_prev as int, j + 1 - stride as int);
-
-            // Expected at k+1: (j+1) % stride == 0, so sum(data, 0, j+1-stride)
-            assert((j + 1) % (new_s as int) == 0) by {
-                lemma_mod_pow2_weaken((j + 1) as nat, (total_levels - k) as nat, (total_levels - k - 1) as nat);
-            };
-
+            lemma_blelloch_step_right(data, n, total_levels, k, j, stride, s_prev);
         } else if (j + 1) % (2 * stride as int) == stride as int {
-            // ========== LEFT position ==========
-            // Gets prev[j + stride] (old right value)
-            let partner_right = j + stride as int;
-
-            // partner_right < n
-            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(j + 1, (2 * stride as int));
-            let q_left = (j + 1) / (2 * stride as int);
-            assert(j + 1 == (2 * stride as int) * q_left + stride as int);
-            // partner_right + 1 = j + 1 + stride = 2*stride*(q_left+1)
-            assert(partner_right + 1 == (2 * stride as int) * (q_left + 1)) by (nonlinear_arith)
-                requires
-                    partner_right == j + stride as int,
-                    j + 1 == (2 * stride as int) * q_left + stride as int;
-
-            // n = pow2(total_levels) = s_prev * pow2(k) = 2*stride * pow2(k)
-            lemma_pow2_mul((total_levels - k) as nat, k);
-            assert(n == s_prev * pow2(k)) by {
-                assert((total_levels - k) as nat + k == total_levels);
-            };
-            // j+1 <= n, so 2*stride*q_left + stride <= 2*stride*pow2(k)
-            // q_left + 1 <= pow2(k), so partner_right + 1 = 2*stride*(q_left+1) <= n
-            assert(partner_right + 1 <= n as int) by (nonlinear_arith)
-                requires
-                    j + 1 == (2 * stride as int) * q_left + stride as int,
-                    j + 1 <= n as int,
-                    partner_right + 1 == (2 * stride as int) * (q_left + 1),
-                    n == s_prev * pow2(k),
-                    s_prev == 2 * stride,
-                    stride > 0;
-            assert(0 <= partner_right && partner_right < n as int);
-
-            // (partner_right + 1) % s_prev == 0
-            vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
-                partner_right + 1, s_prev as int, q_left + 1, 0
-            );
-
-            // By IH: prev[partner_right] = sum(data, 0, partner_right + 1 - s_prev)
-            assert(prev[partner_right] == blelloch_expected(data, n, total_levels, k, partner_right));
-            assert(prev[partner_right] == sum::<int>(f, 0, partner_right + 1 - s_prev as int));
-
-            // partner_right + 1 - s_prev = j + stride + 1 - 2*stride = j + 1 - stride
-            assert(partner_right + 1 - s_prev as int == j + 1 - stride as int) by (nonlinear_arith)
-                requires partner_right == j + stride as int, s_prev == 2 * stride;
-
-            // Expected at k+1: (j+1) % stride == 0, so sum(data, 0, j+1-stride)
-            assert((j + 1) % (stride as int) == 0) by {
-                // j+1 = 2*stride*q_left + stride = stride*(2*q_left + 1)
-                assert(j + 1 == stride as int * (2 * q_left + 1)) by (nonlinear_arith)
-                    requires j + 1 == (2 * stride as int) * q_left + stride as int;
-                vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
-                    j + 1, stride as int, 2 * q_left + 1, 0
-                );
-            };
+            lemma_blelloch_step_left(data, n, total_levels, k, j, stride, s_prev);
         } else {
-            // ========== UNCHANGED position ==========
-            // next[j] = prev[j]
-
-            // Prove (j+1) % stride != 0
-            lemma_else_branch_not_divisible(j, stride, s_prev);
-
-            // (j+1) % s_prev != 0 (since s_prev = 2*stride and stride doesn't divide j+1)
-            assert((j + 1) % (s_prev as int) != 0) by {
-                if (j + 1) % (s_prev as int) == 0 {
-                    lemma_mod_pow2_weaken((j + 1) as nat, (total_levels - k) as nat, (total_levels - k - 1) as nat);
-                }
-            };
-
-            // By IH: prev[j] = tree_reduce_state[j]
-            assert(prev[j] == blelloch_expected(data, n, total_levels, k, j));
-            assert(prev[j] == tree_reduce_state(data, n, total_levels)[j]);
-
-            // Expected at k+1: (j+1) % stride != 0, so tree_reduce_state[j]
-            // next[j] = prev[j] = tree_reduce_state[j] = expected
+            lemma_blelloch_step_unchanged(data, n, total_levels, k, j, stride, s_prev);
         }
     }
 }
