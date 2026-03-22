@@ -1453,15 +1453,24 @@ pub proof fn lemma_compose_recursive_single_correct(
         //   because a.shape.len() > 0 and b_stride >= m and b_stride % m == 0
         // So: compose_recursive_single(a, b_shape, b_stride).offset(x) == a_rest.offset(r2x) == a.offset(bx)
         assert(a.shape.len() > 0);
-        // Spec unfolding: result == recursive result (extensionally)
+        // Spec unfolding: result has same shape/stride as recursive result
         let result = compose_recursive_single(a, b_shape, b_stride);
         let result_rest = compose_recursive_single(a_rest, b_shape, r2);
         assert(result.shape =~= result_rest.shape);
         assert(result.stride =~= result_rest.stride);
         // Same shape + stride → same offset
         lemma_offset_eq_layout(result.shape, result.stride, result_rest.shape, result_rest.stride, x);
-        // result.offset(x) == result_rest.offset(x) == a_rest.offset(r2*x) == a.offset(bx)
+        // The helper gives us offset equality for constructed layouts
+        // Connect to our result/result_rest:
+        assert(result.offset(x) == result_rest.offset(x));
+        // IH result (verbatim from postcondition):
+        assert(result_rest.offset(x) == a_rest.offset(r2 * x));
+        // Transitivity: result == result_rest == a_rest.offset(...)
+        assert(result.offset(x) == a_rest.offset(r2 * x));
+        // RHS = a.offset(bx) == a_rest.offset(r2x) == a_rest.offset(r2*x)
         assert(a.offset(bx) == a_rest.offset(r2x));
+        assert(a.offset(b_stride * x) == a_rest.offset(r2 * x));
+        // LHS == a_rest.offset(r2*x) == RHS
         return;
     }
 
