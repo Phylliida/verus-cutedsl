@@ -1337,6 +1337,149 @@ pub open spec fn compose_recursive_admissible(
 }
 
 
+/// compose_recursive_single always produces shape.len() == stride.len().
+/// Uses minimal requires (no recursive admissibility predicate needed).
+proof fn lemma_crs_len_match(a: LayoutSpec, b_shape: nat, b_stride: nat)
+    requires a.valid(), b_shape > 0,
+    ensures
+        compose_recursive_single(a, b_shape, b_stride).shape.len()
+            == compose_recursive_single(a, b_shape, b_stride).stride.len(),
+    decreases a.shape.len(),
+{
+    if a.shape.len() == 0 {
+    } else {
+        let m = a.shape.first();
+        let a_rest = LayoutSpec { shape: a.shape.skip(1), stride: a.stride.skip(1) };
+        assert(a_rest.valid()) by {
+            assert forall|i: int| 0 <= i < a_rest.shape.len()
+            implies #[trigger] a_rest.shape[i] > 0 by { assert(a_rest.shape[i] == a.shape[i + 1]); };
+        };
+        if b_stride * b_shape <= m {
+        } else if b_stride < m && m % b_stride == 0 && b_shape > 0 {
+            let q = m / b_stride;
+            assert(q > 0nat) by {
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
+                if q == 0 { vstd::arithmetic::mul::lemma_mul_basics(b_stride as int); }
+            };
+            assert(b_shape / q > 0nat) by {
+                if b_shape / q == 0 {
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(b_shape as int, q as int);
+                    vstd::arithmetic::mul::lemma_mul_basics(q as int);
+                    // b_shape < q = m/b_stride, so b_stride * b_shape < m, contradicting entry
+                    assert(b_shape < q);
+                    assert(b_stride * b_shape < b_stride * q) by (nonlinear_arith)
+                        requires b_shape < q, b_stride > 0;
+                    assert(b_stride * q == m) by {
+                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
+                    };
+                }
+            };
+            lemma_crs_len_match(a_rest, b_shape / q, 1);
+        } else if b_stride >= m && b_stride % m == 0 {
+            lemma_crs_len_match(a_rest, b_shape, b_stride / m);
+        }
+    }
+}
+
+/// compose_recursive_single always produces valid shape (all entries > 0).
+/// Uses minimal requires (no recursive admissibility predicate needed).
+proof fn lemma_crs_shape_valid(a: LayoutSpec, b_shape: nat, b_stride: nat)
+    requires a.valid(), b_shape > 0,
+    ensures shape_valid(compose_recursive_single(a, b_shape, b_stride).shape),
+    decreases a.shape.len(),
+{
+    if a.shape.len() == 0 {
+        assert(shape_valid(seq![b_shape]));
+    } else {
+        let m = a.shape.first();
+        let a_rest = LayoutSpec { shape: a.shape.skip(1), stride: a.stride.skip(1) };
+        assert(a_rest.valid()) by {
+            assert forall|i: int| 0 <= i < a_rest.shape.len()
+            implies #[trigger] a_rest.shape[i] > 0 by { assert(a_rest.shape[i] == a.shape[i + 1]); };
+        };
+        if b_stride * b_shape <= m {
+            assert(shape_valid(seq![b_shape]));
+        } else if b_stride < m && m % b_stride == 0 && b_shape > 0 {
+            let q = m / b_stride;
+            assert(q > 0nat) by {
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
+                if q == 0 { vstd::arithmetic::mul::lemma_mul_basics(b_stride as int); }
+            };
+            let bq = b_shape / q;
+            assert(bq > 0nat) by {
+                if bq == 0 {
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(b_shape as int, q as int);
+                    vstd::arithmetic::mul::lemma_mul_basics(q as int);
+                    assert(b_shape < q);
+                    assert(b_stride * b_shape < b_stride * q) by (nonlinear_arith)
+                        requires b_shape < q, b_stride > 0;
+                    assert(b_stride * q == m) by {
+                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
+                    };
+                }
+            };
+            lemma_crs_shape_valid(a_rest, bq, 1);
+        } else if b_stride >= m && b_stride % m == 0 {
+            lemma_crs_shape_valid(a_rest, b_shape, b_stride / m);
+        } else {
+            // Fallback: same as case 1
+            assert(shape_valid(seq![b_shape]));
+        }
+    }
+}
+
+/// compose_recursive_single preserves total size: shape_size(result.shape) == b_shape.
+proof fn lemma_crs_size(a: LayoutSpec, b_shape: nat, b_stride: nat)
+    requires a.valid(), b_shape > 0,
+    ensures shape_size(compose_recursive_single(a, b_shape, b_stride).shape) == b_shape,
+    decreases a.shape.len(),
+{
+    if a.shape.len() == 0 {
+        lemma_shape_size_single(b_shape);
+    } else {
+        let m = a.shape.first();
+        let a_rest = LayoutSpec { shape: a.shape.skip(1), stride: a.stride.skip(1) };
+        assert(a_rest.valid()) by {
+            assert forall|i: int| 0 <= i < a_rest.shape.len()
+            implies #[trigger] a_rest.shape[i] > 0 by { assert(a_rest.shape[i] == a.shape[i + 1]); };
+        };
+        if b_stride * b_shape <= m {
+            lemma_shape_size_single(b_shape);
+        } else if b_stride < m && m % b_stride == 0 && b_shape > 0 {
+            let q = m / b_stride;
+            assert(q > 0nat) by {
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
+                if q == 0 { vstd::arithmetic::mul::lemma_mul_basics(b_stride as int); }
+            };
+            let bq = b_shape / q;
+            assert(bq > 0nat) by {
+                if bq == 0 {
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(b_shape as int, q as int);
+                    vstd::arithmetic::mul::lemma_mul_basics(q as int);
+                    assert(b_shape < q);
+                    assert(b_stride * q == m) by {
+                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
+                    };
+                    assert(b_stride * b_shape < m) by (nonlinear_arith)
+                        requires b_shape < q, b_stride > 0, b_stride * q == m;
+                }
+            };
+            lemma_crs_size(a_rest, bq, 1);
+            // result.shape = [q] ++ rest.shape, size = q * shape_size(rest.shape) = q * bq
+            let rest = compose_recursive_single(a_rest, bq, 1);
+            crate::proof::product_lemmas::lemma_shape_size_append(seq![q], rest.shape);
+            lemma_shape_size_single(q);
+            // q * bq == b_shape (from fundamental_div_mod when b_shape % q == 0)
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(b_shape as int, q as int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(q as int, bq as int);
+        } else if b_stride >= m && b_stride % m == 0 {
+            lemma_crs_size(a_rest, b_shape, b_stride / m);
+        } else {
+            lemma_shape_size_single(b_shape);
+        }
+    }
+}
+
 /// Correctness of recursive single-mode composition:
 ///   compose_recursive_single(A, N, r).offset(x) == A.offset(r * x)
 ///
@@ -1574,13 +1717,10 @@ pub proof fn lemma_compose_recursive_single_correct(
             };
             assert(shape_size(inner_layout.shape) == q) by { lemma_shape_size_single(q); };
             crate::proof::product_lemmas::lemma_shape_size_append(inner_layout.shape, rest_layout.shape);
-            assert(x < shape_size(result.shape)) by {
-                assert(shape_size(result.shape) >= q * 1) by (nonlinear_arith)
-                    requires q > 0;
-                // x < b_shape = q * bq, and shape_size(result.shape) = q * shape_size(rest.shape) >= q * bq
-                // ... need shape_size(rest.shape) >= bq. Use assume for this bound:
-                assume(x < shape_size(result.shape));
-            };
+            // x < shape_size(result.shape) from size preservation:
+            // shape_size(result.shape) = q * shape_size(rest.shape) = q * bq = b_shape > x
+            lemma_crs_size(a_rest, bq, 1);
+            // shape_size(rest.shape) == bq, so shape_size(result.shape) == q * bq == b_shape
             lemma_delinearize_concat(x, inner_layout.shape, rest_layout.shape);
             lemma_delinearize_len(x_inner, inner_layout.shape);
             lemma_delinearize_len(x_outer, rest_layout.shape);
