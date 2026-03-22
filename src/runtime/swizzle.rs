@@ -76,22 +76,20 @@ pub fn swizzle_exec(x: u64, b: u32, m: u32, s: u32) -> (result: u64)
 proof fn lemma_pow2_16()
     ensures pow2(16) == 65536nat,
 {
-    reveal_with_fuel(pow2, 18);
+    assert(pow2(16) == 65536nat) by (compute_only);
 }
 
 proof fn lemma_pow2_32()
     ensures pow2(32) == 4294967296nat,
 {
-    lemma_pow2_16();
-    reveal_with_fuel(pow2, 34);
+    assert(pow2(32) == 4294967296nat) by (compute_only);
 }
 
 /// pow2(63) <= u64::MAX + 1, so pow2(63) - 1 <= u64::MAX.
 proof fn lemma_pow2_63_bound()
     ensures pow2(63) <= (u64::MAX as nat) + 1,
 {
-    lemma_pow2_32();
-    reveal_with_fuel(pow2, 34);
+    assert(pow2(63) == 9223372036854775808nat) by (compute_only);
 }
 
 /// Compute swizzled layout offset at runtime.
