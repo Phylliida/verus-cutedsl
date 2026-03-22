@@ -64,14 +64,17 @@ pub open spec fn num_tiles(a: &LayoutSpec, b: &LayoutSpec) -> nat
     shape_size(a.shape) / shape_size(b.shape)
 }
 
-/// Extended logical divide: uses compose_extended for correct behavior
-/// with non-column-major multi-rank A.
+/// Extended logical divide: uses compose_extended instead of compose.
 ///
-/// For column-major A or rank-1 A, this produces the same result as logical_divide.
-/// For non-column-major multi-rank A, logical_divide may produce incorrect strides
-/// (it uses compose which only handles B's image within A's first mode), while
-/// logical_divide_extended uses compose_extended which handles stride alignment
-/// with arbitrary modes of A.
+/// WARNING: This is NOT a general fix for multi-rank non-column-major A.
+/// When B is rank-1 and the complement's stride doesn't match a prefix product
+/// of A, compose_extended falls back to the same incorrect stride as compose.
+/// For correct multi-rank divide with rank-1 B, use `logical_divide_mode` instead.
+///
+/// This function IS correct for:
+/// - Rank-1 A (compose_extended == compose, both correct)
+/// - Column-major A (all strides are prefix products, fallback is correct)
+/// - Multi-rank B whose strides all match prefix products of A
 pub open spec fn logical_divide_extended(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
     recommends divide_admissible(a, b),
 {

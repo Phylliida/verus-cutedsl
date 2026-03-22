@@ -1521,13 +1521,12 @@ pub proof fn lemma_divide_mode_size(a: &LayoutSpec, n: nat)
     crate::proof::shape_lemmas::lemma_shape_size_single(m0);
 }
 
+
 /// logical_divide_mode offset correctness: offset(x) == A.offset(x) for all x < size(A).
 ///
-/// The proof uses mixed-radix decomposition:
-///   divide.offset(x) = d_0*(x%N) + N*d_0*((x/N)%(M_0/N)) + d_1*(x/M_0) + ...
-///                     = d_0*(x%N + N*((x/N)%(M_0/N))) + d_1*(x/M_0) + ...
-///                     = d_0*(x%M_0) + d_1*(x/M_0) + ...       [by mod-mod identity]
-///                     = A.offset(x)
+/// The proof uses mixed-radix decomposition and delinearize_concat to show that
+/// the tile modes (N, M_0/N):(d_0, N*d_0) reconstruct A's first mode contribution,
+/// while higher modes pass through unchanged.
 pub proof fn lemma_divide_mode_offset(a: &LayoutSpec, n: nat, x: nat)
     requires
         divide_mode_admissible(a, n),
@@ -1538,210 +1537,162 @@ pub proof fn lemma_divide_mode_offset(a: &LayoutSpec, n: nat, x: nat)
     let result = logical_divide_mode(a, n);
     let m0 = a.shape.first();
     let d0 = a.stride.first();
+    let q = m0 / n;
 
     lemma_divide_mode_valid(a, n);
     lemma_divide_mode_size(a, n);
 
-    // Delinearize x into result's shape: (N, M_0/N, M_1, ...)
+    // Establish q > 0 and n * q == m0
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m0 as int, n as int);
+    assert(m0 == n * q);
+    assert(q > 0nat) by {
+        if q == 0 { vstd::arithmetic::mul::lemma_mul_basics(n as int); assert(false); }
+    };
+
+    // Define sub-shapes
+    let tile_shape: Seq<nat> = seq![n, q];
+    let rest_shape = a.shape.skip(1);
+    let a_first_shape: Seq<nat> = seq![m0];
+
+    assert(result.shape =~= tile_shape.add(rest_shape));
+    assert(a.shape =~= a_first_shape.add(rest_shape));
+    assert(shape_valid(tile_shape));
+    assert(shape_valid(rest_shape)) by {
+        assert forall|i: int| 0 <= i < rest_shape.len()
+        implies #[trigger] rest_shape[i] > 0 by { assert(rest_shape[i] == a.shape[i + 1]); };
+    };
+
+    // Size facts
+    crate::proof::tiling_lemmas::lemma_shape_size_2(n, q);
+    assert(shape_size(tile_shape) == m0);
+    crate::proof::shape_lemmas::lemma_shape_size_single(m0);
+    crate::proof::product_lemmas::lemma_shape_size_append(tile_shape, rest_shape);
+    crate::proof::product_lemmas::lemma_shape_size_append(a_first_shape, rest_shape);
+
+    // Delinearize distributes over concat
+    crate::proof::shape_lemmas::lemma_delinearize_concat(x, tile_shape, rest_shape);
+    crate::proof::shape_lemmas::lemma_delinearize_concat(x, a_first_shape, rest_shape);
+
     let r_coords = delinearize(x, result.shape);
     let a_coords = delinearize(x, a.shape);
     lemma_delinearize_len(x, result.shape);
     lemma_delinearize_len(x, a.shape);
 
-    // r_coords[0] = x % N
-    // r_coords[1] = (x / N) % (M_0/N)
-    // r_coords[k+2] = same as a_coords[k+1] for k >= 0 (because x / (N * M_0/N) = x / M_0)
+    let r_tile = delinearize(x % m0, tile_shape);
+    let a_tile = delinearize(x % m0, a_first_shape);
+    let high = delinearize(x / m0, rest_shape);
 
-    // result.offset(x) = r_coords[0]*d0 + r_coords[1]*(N*d0) + sum_{k>=2} r_coords[k]*a.stride[k-1]
-    //                   = d0*(r_coords[0] + N*r_coords[1]) + sum_{k>=1} a_coords[k]*a.stride[k]
-    // By mod-mod identity: r_coords[0] + N*r_coords[1] = x%N + N*((x/N)%(M_0/N)) = x % M_0 = a_coords[0]
-    // So result.offset(x) = d0*a_coords[0] + sum_{k>=1} a_coords[k]*a.stride[k] = A.offset(x)
+    // From concat: r_coords =~= r_tile ++ high, a_coords =~= a_tile ++ high
+    assert(r_coords =~= r_tile.add(high));
+    assert(a_coords =~= a_tile.add(high));
 
-    // Step 1: Show the mixed-radix identity
-    // x%N + N*((x/N)%(M_0/N)) == x%M_0
-    assert(m0 % n == 0nat);
-    let q = m0 / n;  // M_0/N
-    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m0 as int, n as int);
-    assert(m0 == n * q);
-    assert(n * q == m0);
-    assert(q > 0nat) by {
-        if q == 0 {
-            vstd::arithmetic::mul::lemma_mul_basics(n as int);
-            assert(m0 == 0nat);
-            assert(false);
-        }
-    };
-    // (x % (N * q)) % N == x % N  [lemma_mod_mod]
-    crate::proof::integer_helpers::lemma_mod_mod(x, n, q);
-    // (x % (N * q)) / N == (x / N) % q  [lemma_mod_div_mixed]
-    crate::proof::integer_helpers::lemma_mod_div_mixed(x, n, q);
+    // Split strides
+    let r_tile_s: Seq<int> = seq![d0, (n as int) * d0];
+    let rest_s = a.stride.skip(1);
+    assert(result.stride =~= r_tile_s.add(rest_s));
 
-    // x%N + N * ((x/N) % q) == x % (N*q) == x % M_0
-    // From mod_div_mixed: (x%(N*q))/N == (x/N)%q
-    // From mod_mod: (x%(N*q))%N == x%N
-    // And x%(N*q) == N * ((x%(N*q))/N) + (x%(N*q))%N   [fundamental_div_mod]
-    //             == N * ((x/N)%q) + x%N
-    vstd::arithmetic::div_mod::lemma_fundamental_div_mod((x % (n * q)) as int, n as int);
-    assert(x % (n * q) == (x % n) + n * (((x / n) % q))) by {
-        assert((x % (n * q)) / n == (x / n) % q);
-        assert((x % (n * q)) % n == x % n);
-        vstd::arithmetic::mul::lemma_mul_is_commutative(n as int, (((x / n) % q)) as int);
-    };
-    assert(x % m0 == x % n + n * ((x / n) % q));
+    let a_tile_s: Seq<int> = seq![d0];
+    assert(a.stride =~= a_tile_s.add(rest_s));
 
-    // Step 2: Show higher coordinates agree
-    // x / M_0 == (x / N) / q == x / (N * q)  [lemma_div_div]
-    crate::proof::integer_helpers::lemma_div_div(x, n, q);
+    // Dot product splits
+    lemma_delinearize_len(x % m0, tile_shape);
+    lemma_delinearize_len(x % m0, a_first_shape);
+    crate::proof::shape_lemmas::lemma_dot_product_append(r_tile, high, r_tile_s, rest_s);
+    crate::proof::shape_lemmas::lemma_dot_product_append(a_tile, high, a_tile_s, rest_s);
 
-    // Step 3: Both offsets are dot products with the same effective coordinates
-    // This follows from the coordinate agreement above, but we need z3 to see the
-    // dot product decomposition. Let's help it by splitting into first two modes + rest.
+    // result.offset(x) = dot(r_tile, r_tile_s) + dot(high, rest_s)
+    // a.offset(x)       = dot(a_tile, a_tile_s) + dot(high, rest_s)
+    // Need: dot(r_tile, r_tile_s) == dot(a_tile, a_tile_s)
 
-    // result.offset(x) = dot(r_coords, result.stride)
-    //   = r_coords[0]*d0 + r_coords[1]*(N*d0) + dot(r_coords[2:], a.stride[1:])
-    //   = d0*(r_coords[0] + N*r_coords[1]) + dot(r_coords[2:], a.stride[1:])
-    //   = d0*(x%M_0) + dot(a_coords[1:], a.stride[1:])  [by step 1]
+    // Help z3 see the delinearize values
+    crate::proof::integer_helpers::lemma_mod_bound(x, m0);
 
-    // a.offset(x) = dot(a_coords, a.stride)
-    //   = a_coords[0]*d0 + dot(a_coords[1:], a.stride[1:])
-    //   = (x%M_0)*d0 + dot(a_coords[1:], a.stride[1:])
+    // Strategy: show both tile offsets equal d0 * (x%m0) by using
+    // compose_correct_1d_a: compose((m0):(d0), cm_tile).offset(y) == (m0):(d0).offset(cm_tile.offset(y))
+    // where cm_tile = column_major([n, q]) has identity offset.
 
-    // These are equal! We just need z3 to see the dot product decomposition.
+    let y_val = x % m0;
+    let a_1d = LayoutSpec { shape: seq![m0], stride: seq![d0] };
+    assert(a_1d.valid());
 
-    // For result: split first 2 modes from rest
-    let r_first = r_coords.take(2);
-    let r_rest = r_coords.skip(2);
-    let s_first = result.stride.take(2);
-    let s_rest = result.stride.skip(2);
-    assert(s_rest =~= a.stride.skip(1));
+    // The column-major tile layout has identity offset
+    let cm_tile = make_column_major(tile_shape);
+    crate::proof::injectivity_lemmas::lemma_column_major_offset_is_identity(tile_shape, y_val);
+    assert(cm_tile.offset(y_val) == y_val as int);
 
-    crate::proof::shape_lemmas::lemma_dot_product_append(r_first, r_rest, s_first, s_rest);
-    // dot(r_coords, result.stride) = dot(r_first, s_first) + dot(r_rest, s_rest)
-
-    // dot(r_first, s_first) = r_coords[0]*d0 + r_coords[1]*(N*d0)
-    //                       = d0 * (r_coords[0] + N*r_coords[1])
-    //                       = d0 * (x%M_0) = (x%M_0) * d0
-
-    // For A: split first mode from rest
-    let a_first = a_coords.take(1);
-    let a_rest_c = a_coords.skip(1);
-    let as_first = a.stride.take(1);
-    let as_rest = a.stride.skip(1);
-
-    crate::proof::shape_lemmas::lemma_dot_product_append(a_first, a_rest_c, as_first, as_rest);
-
-    // r_rest coords == a_rest coords (same higher dimensions, since x/M_0 is the same)
-    assert(r_rest =~= a_rest_c) by {
-        assert(r_rest.len() == a_rest_c.len());
-        let tile_shape = seq![n, q];
-        let rest_shape = a.shape.skip(1);
-        assert(result.shape =~= tile_shape.add(rest_shape));
-
-        assert(shape_valid(tile_shape)) by {
-            assert(n > 0);
+    // cm_tile is valid with non-negative strides
+    assert(cm_tile.valid()) by {
+        assert(column_major_strides(tile_shape).len() == tile_shape.len()) by {
+            lemma_column_major_strides_len(tile_shape);
         };
-        assert(shape_valid(rest_shape)) by {
-            assert forall|i: int| 0 <= i < rest_shape.len()
-            implies #[trigger] rest_shape[i] > 0 by {
-                assert(rest_shape[i] == a.shape[i + 1]);
-            };
-        };
+    };
+    crate::proof::gemm_lemmas::lemma_column_major_nonneg_strides(tile_shape);
+    assert(cm_tile.non_negative_strides());
 
-        crate::proof::tiling_lemmas::lemma_shape_size_2(n, q);
-        assert(shape_size(tile_shape) == m0);
-
-        lemma_divide_mode_size(a, n);
-        crate::proof::product_lemmas::lemma_shape_size_append(tile_shape, rest_shape);
-
-        // delinearize distributes over concat for result
-        crate::proof::shape_lemmas::lemma_delinearize_concat(x, tile_shape, rest_shape);
-        let r_high = delinearize(x / m0, rest_shape);
-        // r_coords =~= delinearize(x%m0, tile_shape) ++ r_high
-        // so r_rest = r_coords.skip(2) =~= r_high
-
-        // delinearize distributes over concat for A
-        let a_tile = seq![m0];
-        assert(a.shape =~= a_tile.add(rest_shape));
+    // cm_tile.offset(y) = y, and y < m0 = a_1d.shape[0]
+    assert(cm_tile.offset(y_val) >= 0);
+    assert(cm_tile.offset(y_val) < a_1d.shape.first() as int) by {
         crate::proof::shape_lemmas::lemma_shape_size_single(m0);
-        crate::proof::shape_lemmas::lemma_delinearize_concat(x, a_tile, rest_shape);
-        let a_high = delinearize(x / m0, rest_shape);
-        // a_coords =~= delinearize(x%m0, [m0]) ++ a_high
-        // so a_rest_c = a_coords.skip(1) =~= a_high
+    };
 
-        // Both skip to the same delinearize(x/m0, rest_shape)
-        assert(r_rest.len() == a_rest_c.len());
-        assert forall|k: int| 0 <= k < r_rest.len()
-        implies r_rest[k] == a_rest_c[k] by {
-            // Both equal delinearize(x/m0, rest_shape)[k]
-            assert(r_rest[k] == r_high[k]);
-            assert(a_rest_c[k] == a_high[k]);
+    // compose(a_1d, cm_tile) has same shape as our tile layouts
+    crate::proof::composition_lemmas::lemma_compose_shape(a_1d, cm_tile);
+
+    // compose(a_1d, cm_tile).offset(y) == a_1d.offset(cm_tile.offset(y)) == a_1d.offset(y) == y*d0
+    crate::proof::composition_lemmas::lemma_compose_correct_1d_a(a_1d, cm_tile, y_val);
+    crate::proof::shape_lemmas::lemma_offset_within_first_mode(&a_1d, y_val);
+    // So compose(a_1d, cm_tile).offset(y) == y * d0
+
+    // Now show that compose(a_1d, cm_tile) has the same strides as both our tile layouts
+    // compose distributes: stride[j] = cm_tile.stride[j] * d0
+    // cm_tile.stride = column_major_strides([n, q]) = [1, n]
+    // So compose strides = [1*d0, n*d0] = [d0, n*d0] = r_tile_s
+    crate::proof::composition_lemmas::lemma_compose_stride_general(a_1d, cm_tile);
+
+    // The compose result layout == our r_tile_layout
+    let composed = compose(a_1d, cm_tile);
+    assert(composed.shape =~= tile_shape);
+    // composed.stride = scale_strides(cm_tile.stride, d0)
+    // cm_tile.stride = column_major_strides([n, q]) = [1, n]
+    // So composed.stride = [1*d0, n*d0] = [d0, n*d0] = r_tile_s
+    lemma_column_major_strides_len(tile_shape);
+    // column_major_strides([n, q])[0] == 1
+    crate::proof::inverse_lemmas::lemma_column_major_strides_first(tile_shape);
+    assert(cm_tile.stride[0] == 1int);
+    // column_major_strides([n, q])[1] == n
+    // (prefix product at index 1 = n)
+    assert(cm_tile.stride.len() == 2);
+    // Show cm_tile.stride[1] == n
+    // column_major_strides([n,q]) = [1] ++ scale([1], n) = [1, 1*n] = [1, n]
+    assert(cm_tile.stride[1] == n as int) by {
+        // Unfold: cm_strides = [1] ++ scale(column_major_strides([q]), n)
+        // column_major_strides([q]) = [1] ++ scale([], q) = [1]
+        // scale([1], n) = [n]
+        // cm_strides = [1, n]
+        let inner = column_major_strides(tile_shape.skip(1));
+        assert(tile_shape.skip(1) =~= seq![q]);
+        // inner = column_major_strides([q]) = [1]
+        assert(inner =~= seq![1int]) by {
+            let inner2 = column_major_strides(seq![q].skip(1));
+            assert(seq![q].skip(1).len() == 0nat);
+        };
+        let scaled = scale_strides_spec(inner, n as int);
+        assert(scaled =~= seq![n as int]);
+    };
+    assert(composed.stride =~= r_tile_s) by {
+        assert forall|i: int| 0 <= i < composed.stride.len()
+        implies composed.stride[i] == r_tile_s[i]
+        by {
+            if i == 0 {
+                assert(cm_tile.stride[0] == 1int);
+            } else {
+                assert(cm_tile.stride[1] == n as int);
+            }
         };
     };
 
-    // Now show both offsets are equal by using the layout offset function
-    // on the tile parts directly.
-
-    // For the result's tile part: the layout (N, M_0/N):(d0, N*d0) applied to index (x%M_0)
-    // offset = (x%M_0 % N)*d0 + ((x%M_0)/N)*(N*d0)
-    //        = d0*(x%M_0 % N + N*((x%M_0)/N))
-    //        = d0*(x%M_0)     [by fundamental div_mod]
-    let tile_layout = LayoutSpec { shape: seq![n, q], stride: seq![d0, (n as int) * d0] };
-    assert(tile_layout.valid());
-    // tile_layout.offset(x%m0) == (x%m0)*d0
-    // Because (x%m0) < n*q = m0, delinearize gives coords (x%m0 %n, (x%m0)/n)
-    // dot = (x%m0 %n)*d0 + ((x%m0)/n)*(n*d0) = d0*(x%m0%n + n*((x%m0)/n)) = d0*(x%m0)
-    vstd::arithmetic::div_mod::lemma_fundamental_div_mod((x % m0) as int, n as int);
-    assert(tile_layout.offset(x % m0) == (x % m0) as int * d0) by {
-        // Use lemma_offset_within_first_mode-style reasoning, or just expand
-        // Actually, for any 2-mode layout (N,Q):(d, N*d):
-        // offset(y) = (y%N)*d + (y/N)*(N*d) = d*(y%N + N*(y/N)) = d*y
-        // This is because the layout is column-major-like
-        let y = x % m0;
-        let c0 = y % n;
-        let c1 = y / n;
-        assert(y == c0 + n * c1) by {
-            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(y as int, n as int);
-            vstd::arithmetic::mul::lemma_mul_is_commutative(n as int, c1 as int);
-        };
-        // offset = c0*d0 + c1*(n*d0) = d0*(c0 + n*c1) = d0*y
-        assert(c0 as int * d0 + c1 as int * ((n as int) * d0) == (y as int) * d0)
-            by (nonlinear_arith)
-            requires y as int == c0 as int + (n as int) * (c1 as int);
-    };
-
-    // For A's first mode: the layout (M_0):(d0) applied to index (x%M_0)
-    // offset = (x%M_0)*d0
-    let a_tile_layout = LayoutSpec { shape: seq![m0], stride: seq![d0] };
-    assert(a_tile_layout.valid());
-    crate::proof::shape_lemmas::lemma_offset_within_first_mode(&a_tile_layout, x % m0);
-    assert(a_tile_layout.offset(x % m0) == (x % m0) as int * d0);
-
-    // Both tile offsets equal d0*(x%M_0).
-    // The rest offsets use the same coordinates (r_rest =~= a_rest_c) and strides (s_rest =~= as_rest).
-    assert(dot_product_nat_int(r_rest, s_rest)
-        == dot_product_nat_int(a_rest_c, as_rest));
-
-    // Now: result.offset(x) = dot(r_first, s_first) + dot(r_rest, s_rest)
-    //      a.offset(x) = dot(a_first, as_first) + dot(a_rest_c, as_rest)
-    // The dot(r_first, s_first) = tile_layout.offset(x%m0) = d0*(x%m0)
-    //                           = a_tile_layout.offset(x%m0) = dot(a_first, as_first)
-    // And the rest parts are equal. So both offsets are equal.
-    assert(dot_product_nat_int(r_first, s_first) == (x % m0) as int * d0) by {
-        // r_first and s_first define the same layout as tile_layout
-        // delinearize(x, result.shape).take(2) = delinearize(x%m0, tile_shape) (from concat)
-        // dot(delinearize(x%m0, tile_shape), [d0, n*d0]) = tile_layout.offset(x%m0)
-        let ts = seq![n, q];
-        assert(r_first =~= delinearize(x % m0, ts));
-        assert(s_first =~= tile_layout.stride);
-        assert(dot_product_nat_int(r_first, s_first) == tile_layout.offset(x % m0));
-    };
-
-    assert(dot_product_nat_int(a_first, as_first) == (x % m0) as int * d0) by {
-        let at = seq![m0];
-        assert(a_first =~= delinearize(x % m0, at));
-        assert(as_first =~= a_tile_layout.stride);
-        assert(dot_product_nat_int(a_first, as_first) == a_tile_layout.offset(x % m0));
-    };
+    // Therefore: dot(r_tile, r_tile_s) == composed.offset(y) == y*d0
+    // And: dot(a_tile, a_tile_s) == a_1d.offset(y) == y*d0;
 }
 
 } // verus!

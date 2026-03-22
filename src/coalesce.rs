@@ -121,10 +121,10 @@ pub open spec fn flatten(layout: LayoutSpec) -> LayoutSpec {
 ///
 /// The extra coalesce pass is needed because removing unit modes can expose new
 /// coalesceable pairs (see `flatten` doc for counterexample).
-// TODO: prove full_flatten is idempotent (requires showing coalesce doesn't create unit modes,
-// so after coalesce(flatten(L)) there are no units and no coalesceable pairs)
-// TODO: prove full_flatten canonicality: offset_equivalent(L1, L2) ==> full_flatten(L1) == full_flatten(L2)
-// (for injective layouts with non-negative strides)
+// DONE: idempotence proved in lemma_full_flatten_idempotent (coalesce_lemmas.rs)
+// DONE: column-major canonicality proved in lemma_full_flatten_column_major
+// DONE: rank-1 canonicality proved in lemma_rank1_offset_equivalent_implies_equal
+// OPEN: full canonicality for arbitrary offset-equivalent layouts (deep theorem)
 pub open spec fn full_flatten(layout: LayoutSpec) -> LayoutSpec {
     coalesce(flatten(layout))
 }

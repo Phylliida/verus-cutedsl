@@ -1614,4 +1614,117 @@ pub fn size_compatible_exec(l1: &RuntimeLayout, l2: &RuntimeLayout) -> (result: 
     s1 == s2
 }
 
+/// Mode-aware divide at runtime: split A's first mode into tiles of size N.
+///
+/// Produces shape (N, M_0/N, M_1, ...) with strides (d_0, N*d_0, d_1, ...).
+/// Correctly handles non-column-major multi-rank A (unlike logical_divide).
+pub fn divide_mode_exec(a: &RuntimeLayout, n: u64) -> (result: RuntimeLayout)
+    requires
+        a.wf_spec(),
+        divide_mode_admissible(&a@, n as nat),
+        // N*d_0 fits in i64
+        (n as int) * a@.stride.first() >= i64::MIN as int,
+        (n as int) * a@.stride.first() <= i64::MAX as int,
+        // Result size fits in u64
+        shape_size(logical_divide_mode(&a@, n as nat).shape) <= u64::MAX as nat,
+    ensures
+        result.wf_spec(),
+        result@ == logical_divide_mode(&a@, n as nat),
+{
+    let m0 = a.shape[0];
+    let d0 = a.stride[0];
+    let q = m0 / n;
+
+    proof {
+        // m0/n > 0 (from divide_mode_admissible + a.shape[0] > 0 + n divides m0)
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a@.shape.first() as int, n as int);
+        if a@.shape.first() / (n as nat) == 0 {
+            vstd::arithmetic::mul::lemma_mul_basics(n as int);
+        }
+    }
+
+    let mut result_shape: Vec<u64> = Vec::new();
+    let mut result_stride: Vec<i64> = Vec::new();
+
+    // First two modes: (N, M_0/N):(d_0, N*d_0)
+    result_shape.push(n);
+    result_shape.push(q);
+    result_stride.push(d0);
+    let scaled_stride = ((n as i128) * (d0 as i128)) as i64;
+    result_stride.push(scaled_stride);
+
+    // Remaining modes: copy from A, skipping first
+    let mut i: usize = 1;
+    while i < a.shape.len()
+        invariant
+            1 <= i <= a.shape.len(),
+            a.wf_spec(),
+            result_shape@.len() == 1 + i,
+            result_stride@.len() == 1 + i,
+            result_shape@[0] == n,
+            result_shape@[1] == q,
+            result_stride@[0] == d0,
+            result_stride@[1] == scaled_stride,
+            scaled_stride as int == (n as int) * (d0 as int),
+            forall|j: int| 2 <= j < (1 + i) as int ==> (
+                #[trigger] result_shape@[j] == a.shape@[(j - 1) as int]
+                && result_stride@[j] == a.stride@[(j - 1) as int]
+            ),
+        decreases a.shape.len() - i,
+    {
+        result_shape.push(a.shape[i]);
+        result_stride.push(a.stride[i]);
+        i = i + 1;
+    }
+
+    proof {
+        let spec_result = logical_divide_mode(&a@, n as nat);
+        // Shape matches
+        assert(shape_to_nat_seq(result_shape@) =~= spec_result.shape) by {
+            assert forall|k: int| 0 <= k < result_shape@.len() as int implies
+                shape_to_nat_seq(result_shape@)[k] == spec_result.shape[k]
+            by {
+                if k == 0 {
+                } else if k == 1 {
+                } else {
+                    assert(result_shape@[k] == a.shape@[(k - 1) as int]);
+                    assert(spec_result.shape[k] == a@.shape.skip(1)[(k - 2) as int]);
+                    assert(a@.shape.skip(1)[(k - 2) as int] == a@.shape[(k - 1) as int]);
+                }
+            };
+        };
+        // Stride matches
+        assert(strides_to_int_seq(result_stride@) =~= spec_result.stride) by {
+            assert forall|k: int| 0 <= k < result_stride@.len() as int implies
+                strides_to_int_seq(result_stride@)[k] == spec_result.stride[k]
+            by {
+                if k == 0 {
+                    assert(strides_to_int_seq(result_stride@)[0] == result_stride@[0] as int);
+                } else if k == 1 {
+                    assert(strides_to_int_seq(result_stride@)[1] == result_stride@[1] as int);
+                } else {
+                    // Trigger loop invariant for this k
+                    let kk = k;
+                    assert(2 <= kk && kk < (1 + a.shape@.len() as int));
+                    assert(result_stride@[kk] == a.stride@[(kk - 1) as int]);
+                    assert(result_stride@[kk] as int == a.stride@[(kk - 1) as int] as int);
+                    assert(a@.stride[(k - 1) as int] == a.stride@[(k - 1) as int] as int);
+                    assert(spec_result.stride[k] == a@.stride.skip(1)[(k - 2) as int]);
+                    assert(a@.stride.skip(1)[(k - 2) as int] == a@.stride[(k - 1) as int]);
+                    assert(spec_result.stride[k] == a@.stride.skip(1)[(k - 2) as int]);
+                    assert(a@.stride.skip(1)[(k - 2) as int] == a@.stride[(k - 1) as int]);
+                }
+            };
+        };
+        // Valid
+        crate::proof::divide_lemmas::lemma_divide_mode_valid(&a@, n as nat);
+    }
+
+    RuntimeLayout {
+        shape: result_shape,
+        stride: result_stride,
+        model: Ghost(logical_divide_mode(&*a.model.borrow(), n as nat)),
+    }
+}
+
 } // verus!

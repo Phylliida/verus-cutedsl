@@ -383,7 +383,7 @@ pub proof fn lemma_gemm_b_offset_tiling_consistent(
 // ══════════════════════════════════════════════════════════════
 
 /// Column-major layouts have non-negative strides (strides are prefix products of nat shape).
-proof fn lemma_column_major_nonneg_strides(shape: Seq<nat>)
+pub proof fn lemma_column_major_nonneg_strides(shape: Seq<nat>)
     requires shape_valid(shape),
     ensures make_column_major(shape).non_negative_strides(),
     decreases shape.len(),
