@@ -1403,95 +1403,344 @@ pub proof fn lemma_divide_extended_size(a: &LayoutSpec, b: &LayoutSpec)
     lemma_divide_size(a, b);
 }
 
-/// logical_divide_extended offset correctness for rank-1 column-major B.
+/// logical_divide_extended offset correctness for rank-1 A with column-major B.
 ///
-/// When B = (N):(1), divide partitions A's index space into tiles of size N.
-/// compose_extended correctly handles the complement modes whose strides
-/// may align with higher prefix products of A.
+/// When B = (N):(1) and A has rank 1, compose_extended == compose for rank-1 A,
+/// so logical_divide_extended == logical_divide, and existing proofs apply.
 ///
-/// Status: Proved for rank-1 A (where compose == compose_extended).
-/// Multi-rank A requires a multi-mode compose_extended correctness lemma
-/// (induction over B's modes showing compose_extended(A, B).offset(x) == A.offset(B.offset(x))).
-/// The single-mode building block (lemma_compose_single_mode_extended_correct) is proved;
-/// the multi-mode generalization is the remaining gap.
-// TODO: Remove assume(false) by proving lemma_compose_extended_correct for multi-mode B,
-// then instantiating it with the zipped layout.
+/// For multi-rank A, use lemma_divide_offset_column_major (column-major A)
+/// or lemma_divide_offset (rank-1 A) with the original logical_divide.
+/// Note: logical_divide_extended with rank-1 B and non-column-major multi-rank A
+/// is NOT correct in general — the complement mode may cross A's first mode boundary,
+/// and compose_extended's fallback stride (N*d_0) doesn't correctly represent
+/// A.offset(N*y) when N*y >= A.shape[0].
 pub proof fn lemma_divide_extended_offset(a: &LayoutSpec, b: &LayoutSpec, x: nat)
     requires
         divide_admissible(a, b),
+        a.shape.len() == 1,
         b.shape.len() == 1,
         b.stride[0] == 1,
         x < shape_size(a.shape),
     ensures
         logical_divide_extended(a, b).offset(x) == a.offset(x),
 {
-    // For rank-1 B = (N):(1), logical_divide_extended == logical_divide
-    // because compose_extended falls back to compose_single_mode for each mode
-    // when the strides don't match prefix products OR when they do and b_shape fits.
-    //
-    // The key insight: for rank-1 B, the zipped layout has at most 3 modes:
-    // (N, M_0/N, M/M_0):(1, N, M_0)
-    //
-    // Mode 0 (stride 1, shape N): compose_single_mode_extended stride-1 case → d_0.
-    //   Same as compose_single_mode. ✓
-    //
-    // Mode 1 (stride N, shape M_0/N): find_split_mode looks for N in prefix_products.
-    //   If N < M_0: doesn't match (prefix_products = [1, M_0, ...]). Falls back to N*d_0.
-    //   Same as compose_single_mode. ✓
-    //
-    // Mode 2+ (stride ≥ M_0): these are complement modes from higher dimensions.
-    //   For complement strides that match prefix products, compose_extended uses the
-    //   correct A.stride[idx]. But compose_single_mode gives stride*d_0 which may differ.
-    //   However, for rank-1 A, compose_extended == compose (as shown earlier).
-    //   For multi-rank A with mode 2 stride = M_0: compose_extended picks d_1.
-    //
-    // Since all modes within A's first mode agree between compose and compose_extended,
-    // and modes beyond use compose_extended's correct stride, the result is correct.
-    //
-    // For simplicity, we leverage the existing rank-1 A proof by noting that when B has
-    // rank 1, the zipped layout's first two modes fit within A's first mode.
-    // The result follows from compose correctness within the first mode.
-
-    // Use existing rank-1 A proof path:
-    // compose(A, zipped) and compose_extended(A, zipped) agree on modes 0 and 1
-    // (both within A's first mode). For higher modes, compose_extended is needed.
-    // For now, prove the case where compose and compose_extended agree (rank-1 A covered),
-    // and leave multi-rank non-CM A as a documented limitation.
-
-    // B = (N):(1) with N > 0 is column-major
+    // B = (N):(1) is column-major
     assert(b.stride =~= column_major_strides(b.shape)) by {
         lemma_column_major_strides_len(b.shape);
-        assert(b.shape.len() == 1);
-        // column_major_strides(seq![N]) = seq![1]
     };
 
-    if a.shape.len() == 1 {
-        // Rank-1 A: logical_divide and logical_divide_extended agree
-        // because compose_single_mode_extended falls back to compose_single_mode
-        // for rank-1 A (no prefix products beyond [1, M_0], and idx=1 is out of bounds).
-        // Use existing lemma for logical_divide, then show extended agrees.
-        lemma_divide_offset(a, b, x);
-        // divide_offset proved: logical_divide(a, b).offset(x) == a.offset(x)
-        // Now show logical_divide_extended gives same offset.
-        // For rank-1 A, compose and compose_extended produce the same stride for each mode:
-        // stride-1 case is identical, and general case: find_split_mode for rank-1 A
-        // only has prefix_products [1, M_0]. For strides > 1 and < M_0, falls back.
-        // For stride == M_0, idx = 1 >= shape.len() = 1, so also falls back.
-        // Both produce b_stride * a.stride[0] in all fallback cases.
-        // So logical_divide_extended(a, b) == logical_divide(a, b)
-        // TODO: strengthen to structural equality (needs compose_extended == compose for rank-1 A)
-        assume(logical_divide_extended(a, b).offset(x) == a.offset(x));
-    } else {
-        // Multi-rank A: the general case.
-        // compose_extended correctly handles the complement mode with stride M_0
-        // by finding prefix_product[1] = M_0 and using A.stride[1].
-        // For now, use the compose correctness when zipped image fits in first mode.
-        // zipped.offset(x) == x, and x < M_0 * M_1 * ... <= shape_size(a.shape)
-        // but x could be >= a.shape[0], so compose_correct doesn't directly apply.
-        // This case requires the full compose_extended multi-mode correctness proof.
-        // TODO: prove general multi-rank A case using compose_extended multi-mode induction
-        assume(logical_divide_extended(a, b).offset(x) == a.offset(x));
-    }
+    // Use existing divide_offset for rank-1 A
+    lemma_divide_offset(a, b, x);
+
+    // Show logical_divide_extended == logical_divide for rank-1 A
+    let m = shape_size(a.shape);
+    let c = complement(b, m);
+    let a_val = LayoutSpec { shape: a.shape, stride: a.stride };
+    let zipped = LayoutSpec {
+        shape: b.shape.add(c.shape),
+        stride: b.stride.add(c.stride),
+    };
+    lemma_complement_valid(b, m);
+    lemma_complement_shape_valid(b, m);
+    assert(zipped.valid()) by {
+        assert forall|i: int| 0 <= i < zipped.shape.len()
+        implies #[trigger] zipped.shape[i] > 0 by {
+            if i < b.shape.len() as int {} else {
+                assert(zipped.shape[i] == c.shape[(i - b.shape.len()) as int]);
+            }
+        };
+    };
+    crate::proof::composition_lemmas::lemma_compose_extended_eq_rank1(a_val, zipped);
+    assert(logical_divide_extended(a, b) == logical_divide(a, b));
+}
+
+// ══════════════════════════════════════════════════════════════
+// logical_divide_mode: correct multi-rank divide
+// ══════════════════════════════════════════════════════════════
+
+/// logical_divide_mode produces a valid layout.
+pub proof fn lemma_divide_mode_valid(a: &LayoutSpec, n: nat)
+    requires divide_mode_admissible(a, n),
+    ensures logical_divide_mode(a, n).valid(),
+{
+    let result = logical_divide_mode(a, n);
+    let m0 = a.shape.first();
+    // m0 >= n because m0 % n == 0 and m0 > 0 and n > 0
+    // m0 = n * (m0/n) + 0, and m0 > 0 means m0/n >= 1
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m0 as int, n as int);
+    assert(m0 == n * (m0 / n));
+    assert(m0 / n > 0nat) by {
+        if m0 / n == 0 {
+            vstd::arithmetic::mul::lemma_mul_basics(n as int);
+            assert(m0 == 0nat);
+        }
+    };
+    assert forall|i: int| 0 <= i < result.shape.len()
+    implies #[trigger] result.shape[i] > 0 by {
+        if i == 0 { assert(result.shape[0] == n); }
+        else if i == 1 { assert(result.shape[1] == m0 / n); }
+        else { assert(result.shape[i] == a.shape[i - 1]); }
+    };
+}
+
+/// logical_divide_mode preserves size.
+pub proof fn lemma_divide_mode_size(a: &LayoutSpec, n: nat)
+    requires divide_mode_admissible(a, n),
+    ensures shape_size(logical_divide_mode(a, n).shape) == shape_size(a.shape),
+{
+    let result = logical_divide_mode(a, n);
+    let m0 = a.shape.first();
+    // result.shape = [N, M_0/N] ++ a.shape.skip(1)
+    // size = N * (M_0/N) * shape_size(a.shape.skip(1))
+    //      = M_0 * shape_size(a.shape.skip(1))
+    //      = shape_size(a.shape)
+
+    // shape_size([N, M_0/N] ++ rest) = shape_size([N, M_0/N]) * shape_size(rest)
+    let tile_shape = seq![n, m0 / n];
+    let rest = a.shape.skip(1);
+    assert(result.shape =~= tile_shape.add(rest));
+    crate::proof::product_lemmas::lemma_shape_size_append(tile_shape, rest);
+
+    // shape_size([N, M_0/N]) = N * (M_0/N) = M_0
+    // M_0/N > 0 (same argument as in valid lemma)
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m0 as int, n as int);
+    assert(m0 == n * (m0 / n));
+    assert(m0 / n > 0nat) by {
+        if m0 / n == 0 {
+            vstd::arithmetic::mul::lemma_mul_basics(n as int);
+            assert(m0 == 0nat);
+            assert(false);
+        }
+    };
+    crate::proof::tiling_lemmas::lemma_shape_size_2(n, m0 / n);
+    assert(n * (m0 / n) == m0);
+
+    // shape_size(a.shape) = M_0 * shape_size(a.shape.skip(1))
+    crate::runtime::shape_helpers::lemma_shape_size_split(a.shape, 1);
+    assert(a.shape.take(1) =~= seq![m0]);
+    crate::proof::shape_lemmas::lemma_shape_size_single(m0);
+}
+
+/// logical_divide_mode offset correctness: offset(x) == A.offset(x) for all x < size(A).
+///
+/// The proof uses mixed-radix decomposition:
+///   divide.offset(x) = d_0*(x%N) + N*d_0*((x/N)%(M_0/N)) + d_1*(x/M_0) + ...
+///                     = d_0*(x%N + N*((x/N)%(M_0/N))) + d_1*(x/M_0) + ...
+///                     = d_0*(x%M_0) + d_1*(x/M_0) + ...       [by mod-mod identity]
+///                     = A.offset(x)
+pub proof fn lemma_divide_mode_offset(a: &LayoutSpec, n: nat, x: nat)
+    requires
+        divide_mode_admissible(a, n),
+        x < shape_size(a.shape),
+    ensures
+        logical_divide_mode(a, n).offset(x) == a.offset(x),
+{
+    let result = logical_divide_mode(a, n);
+    let m0 = a.shape.first();
+    let d0 = a.stride.first();
+
+    lemma_divide_mode_valid(a, n);
+    lemma_divide_mode_size(a, n);
+
+    // Delinearize x into result's shape: (N, M_0/N, M_1, ...)
+    let r_coords = delinearize(x, result.shape);
+    let a_coords = delinearize(x, a.shape);
+    lemma_delinearize_len(x, result.shape);
+    lemma_delinearize_len(x, a.shape);
+
+    // r_coords[0] = x % N
+    // r_coords[1] = (x / N) % (M_0/N)
+    // r_coords[k+2] = same as a_coords[k+1] for k >= 0 (because x / (N * M_0/N) = x / M_0)
+
+    // result.offset(x) = r_coords[0]*d0 + r_coords[1]*(N*d0) + sum_{k>=2} r_coords[k]*a.stride[k-1]
+    //                   = d0*(r_coords[0] + N*r_coords[1]) + sum_{k>=1} a_coords[k]*a.stride[k]
+    // By mod-mod identity: r_coords[0] + N*r_coords[1] = x%N + N*((x/N)%(M_0/N)) = x % M_0 = a_coords[0]
+    // So result.offset(x) = d0*a_coords[0] + sum_{k>=1} a_coords[k]*a.stride[k] = A.offset(x)
+
+    // Step 1: Show the mixed-radix identity
+    // x%N + N*((x/N)%(M_0/N)) == x%M_0
+    assert(m0 % n == 0nat);
+    let q = m0 / n;  // M_0/N
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m0 as int, n as int);
+    assert(m0 == n * q);
+    assert(n * q == m0);
+    assert(q > 0nat) by {
+        if q == 0 {
+            vstd::arithmetic::mul::lemma_mul_basics(n as int);
+            assert(m0 == 0nat);
+            assert(false);
+        }
+    };
+    // (x % (N * q)) % N == x % N  [lemma_mod_mod]
+    crate::proof::integer_helpers::lemma_mod_mod(x, n, q);
+    // (x % (N * q)) / N == (x / N) % q  [lemma_mod_div_mixed]
+    crate::proof::integer_helpers::lemma_mod_div_mixed(x, n, q);
+
+    // x%N + N * ((x/N) % q) == x % (N*q) == x % M_0
+    // From mod_div_mixed: (x%(N*q))/N == (x/N)%q
+    // From mod_mod: (x%(N*q))%N == x%N
+    // And x%(N*q) == N * ((x%(N*q))/N) + (x%(N*q))%N   [fundamental_div_mod]
+    //             == N * ((x/N)%q) + x%N
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod((x % (n * q)) as int, n as int);
+    assert(x % (n * q) == (x % n) + n * (((x / n) % q))) by {
+        assert((x % (n * q)) / n == (x / n) % q);
+        assert((x % (n * q)) % n == x % n);
+        vstd::arithmetic::mul::lemma_mul_is_commutative(n as int, (((x / n) % q)) as int);
+    };
+    assert(x % m0 == x % n + n * ((x / n) % q));
+
+    // Step 2: Show higher coordinates agree
+    // x / M_0 == (x / N) / q == x / (N * q)  [lemma_div_div]
+    crate::proof::integer_helpers::lemma_div_div(x, n, q);
+
+    // Step 3: Both offsets are dot products with the same effective coordinates
+    // This follows from the coordinate agreement above, but we need z3 to see the
+    // dot product decomposition. Let's help it by splitting into first two modes + rest.
+
+    // result.offset(x) = dot(r_coords, result.stride)
+    //   = r_coords[0]*d0 + r_coords[1]*(N*d0) + dot(r_coords[2:], a.stride[1:])
+    //   = d0*(r_coords[0] + N*r_coords[1]) + dot(r_coords[2:], a.stride[1:])
+    //   = d0*(x%M_0) + dot(a_coords[1:], a.stride[1:])  [by step 1]
+
+    // a.offset(x) = dot(a_coords, a.stride)
+    //   = a_coords[0]*d0 + dot(a_coords[1:], a.stride[1:])
+    //   = (x%M_0)*d0 + dot(a_coords[1:], a.stride[1:])
+
+    // These are equal! We just need z3 to see the dot product decomposition.
+
+    // For result: split first 2 modes from rest
+    let r_first = r_coords.take(2);
+    let r_rest = r_coords.skip(2);
+    let s_first = result.stride.take(2);
+    let s_rest = result.stride.skip(2);
+    assert(s_rest =~= a.stride.skip(1));
+
+    crate::proof::shape_lemmas::lemma_dot_product_append(r_first, r_rest, s_first, s_rest);
+    // dot(r_coords, result.stride) = dot(r_first, s_first) + dot(r_rest, s_rest)
+
+    // dot(r_first, s_first) = r_coords[0]*d0 + r_coords[1]*(N*d0)
+    //                       = d0 * (r_coords[0] + N*r_coords[1])
+    //                       = d0 * (x%M_0) = (x%M_0) * d0
+
+    // For A: split first mode from rest
+    let a_first = a_coords.take(1);
+    let a_rest_c = a_coords.skip(1);
+    let as_first = a.stride.take(1);
+    let as_rest = a.stride.skip(1);
+
+    crate::proof::shape_lemmas::lemma_dot_product_append(a_first, a_rest_c, as_first, as_rest);
+
+    // r_rest coords == a_rest coords (same higher dimensions, since x/M_0 is the same)
+    assert(r_rest =~= a_rest_c) by {
+        assert(r_rest.len() == a_rest_c.len());
+        assert forall|k: int| 0 <= k < r_rest.len()
+        implies r_rest[k] == a_rest_c[k]
+        by {
+            // r_rest[k] = r_coords[k+2] = delinearize(x, result.shape)[k+2]
+            // a_rest_c[k] = a_coords[k+1] = delinearize(x, a.shape)[k+1]
+            // result.shape = [N, M_0/N] ++ a.shape.skip(1)
+            // After the first two modes, the shapes are the same
+            // and the "remaining index" is x / (N * M_0/N) = x / M_0
+            // which is the same as x / M_0 = the remaining index for A after first mode
+        };
+        // This requires delinearize distributing over shape concatenation
+        // and the first two modes consuming exactly M_0 = A.shape[0]
+
+        // Use delinearize_concat: delinearize(x, [N, M_0/N] ++ rest)
+        //   = delinearize(x % (N*M_0/N), [N, M_0/N]) ++ delinearize(x / (N*M_0/N), rest)
+        //   = delinearize(x % M_0, [N, M_0/N]) ++ delinearize(x / M_0, rest)
+        let tile_shape = seq![n, q];
+        let rest_shape = a.shape.skip(1);
+        assert(result.shape =~= tile_shape.add(rest_shape));
+
+        assert(shape_valid(tile_shape)) by {
+            assert(n > 0);
+            assert(q > 0nat) by {
+                vstd::arithmetic::div_mod::lemma_div_pos_is_pos(m0 as int, n as int);
+                assert(m0 >= n) by {
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m0 as int, n as int);
+                };
+            };
+        };
+        assert(shape_valid(rest_shape)) by {
+            assert forall|i: int| 0 <= i < rest_shape.len()
+            implies #[trigger] rest_shape[i] > 0 by {
+                assert(rest_shape[i] == a.shape[i + 1]);
+            };
+        };
+
+        crate::proof::tiling_lemmas::lemma_shape_size_2(n, q);
+        assert(shape_size(tile_shape) == n * q);
+        assert(shape_size(tile_shape) == m0);
+
+        lemma_divide_mode_size(a, n);
+        crate::proof::shape_lemmas::lemma_shape_size_positive(result.shape);
+        assert(x < shape_size(result.shape));
+        assert(shape_size(result.shape) == shape_size(a.shape));
+
+        crate::proof::product_lemmas::lemma_shape_size_append(tile_shape, rest_shape);
+        assert(shape_size(result.shape) == m0 * shape_size(rest_shape));
+
+        crate::proof::shape_lemmas::lemma_delinearize_concat(x, tile_shape, rest_shape);
+        // delinearize(x, tile ++ rest) =~= delinearize(x%M_0, tile) ++ delinearize(x/M_0, rest)
+
+        // Similarly for A: delinearize(x, [M_0] ++ rest)
+        let a_tile = seq![m0];
+        assert(a.shape =~= a_tile.add(rest_shape));
+        crate::proof::shape_lemmas::lemma_shape_size_single(m0);
+
+        crate::runtime::shape_helpers::lemma_shape_size_split(a.shape, 1);
+        assert(a.shape.take(1) =~= a_tile);
+        assert(shape_size(a_tile) == m0);
+        assert(shape_size(a.shape) == m0 * shape_size(rest_shape));
+
+        crate::proof::shape_lemmas::lemma_delinearize_concat(x, a_tile, rest_shape);
+        // delinearize(x, [M_0] ++ rest) =~= delinearize(x%M_0, [M_0]) ++ delinearize(x/M_0, rest)
+
+        // The rest parts are identical: delinearize(x/M_0, rest_shape)
+        assert forall|k: int| 0 <= k < r_rest.len()
+        implies r_rest[k] == a_rest_c[k] by {
+            // r_rest[k] = delinearize(x, result.shape)[k+2]
+            //           = delinearize(x/M_0, rest_shape)[k]  (from concat decomposition)
+            // a_rest_c[k] = delinearize(x, a.shape)[k+1]
+            //             = delinearize(x/M_0, rest_shape)[k]  (from concat decomposition)
+        };
+    };
+
+    // Now show the first parts agree:
+    // dot(r_first, s_first) == dot(a_first, as_first)
+    // LHS = r_coords[0]*d0 + r_coords[1]*(N*d0) = d0*(x%N + N*((x/N)%q)) = d0*(x%M_0)
+    // RHS = a_coords[0]*d0 = (x%M_0)*d0
+    assert(dot_product_nat_int(r_first, s_first) == (x % m0) as int * d0) by {
+        assert(r_first =~= seq![x % n, (x / n) % q]);
+        assert(s_first =~= seq![d0, (n as int) * d0]);
+        // dot = (x%N)*d0 + ((x/N)%q)*(N*d0) + 0
+        // = d0 * (x%N + N*((x/N)%q))
+        // = d0 * (x%M_0)
+        assert(dot_product_nat_int(r_first, s_first)
+            == (x % n) as int * d0 + ((x / n) % q) as int * ((n as int) * d0)) by {
+            assert(r_first.skip(1) =~= seq![(x / n) % q]);
+            assert(s_first.skip(1) =~= seq![(n as int) * d0]);
+            // dot of skip(1) is single element
+            assert(r_first.skip(1).skip(1).len() == 0nat);
+        };
+        // Factor out d0: (x%N)*d0 + ((x/N)%q)*N*d0 = d0*(x%N + N*((x/N)%q)) = d0*(x%M_0)
+        let xn = (x % n) as int;
+        let xnq = ((x / n) % q) as int;
+        assert(xn * d0 + xnq * ((n as int) * d0) == ((x % m0) as int) * d0) by (nonlinear_arith)
+            requires
+                (x % m0) as int == xn + (n as int) * xnq;
+    };
+
+    assert(dot_product_nat_int(a_first, as_first) == (x % m0) as int * d0) by {
+        assert(a_first =~= seq![x % m0]);
+        assert(as_first =~= seq![d0]);
+        assert(a_first.skip(1).len() == 0nat);
+    };
+
+    // Both dot products equal d0*(x%M_0) + dot(rest_coords, rest_strides)
+    assert(dot_product_nat_int(r_rest, s_rest)
+        == dot_product_nat_int(a_rest_c, as_rest));
 }
 
 } // verus!

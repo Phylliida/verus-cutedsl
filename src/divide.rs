@@ -85,4 +85,45 @@ pub open spec fn logical_divide_extended(a: &LayoutSpec, b: &LayoutSpec) -> Layo
     compose_extended(a_val, zipped)
 }
 
+/// Mode-aware logical divide: correctly partitions A's first mode by B.
+///
+/// For rank-1 B = (N):(1) with N dividing A.shape[0], this divides A's first
+/// mode into tiles of size N, keeping higher modes unchanged:
+///   shape:  (N, M_0/N, M_1, M_2, ...)
+///   stride: (d_0, N*d_0, d_1, d_2, ...)
+///
+/// Unlike `logical_divide` and `logical_divide_extended`, this correctly handles
+/// non-column-major multi-rank A because it respects A's mode boundaries.
+///
+/// Example showing the difference:
+///   A = (4, 3):(1, 10), B = (2):(1)
+///   logical_divide:          uses complement(B, 12) = (1, 6):(1, 2), gets wrong strides
+///   logical_divide_mode:     (2, 2, 3):(1, 2, 10) — correct! offset(x) == A.offset(x)
+///
+/// The first two modes (N, M_0/N):(d_0, N*d_0) reconstruct A's first mode via
+/// mixed-radix decomposition: x%N indexes within a tile, (x/N)%(M_0/N) indexes
+/// across tiles, and x%N + N*((x/N)%(M_0/N)) == x%M_0 by the mod-mod identity.
+pub open spec fn logical_divide_mode(a: &LayoutSpec, n: nat) -> LayoutSpec
+    recommends
+        a.valid(),
+        a.shape.len() > 0,
+        n > 0,
+        a.shape.first() % n == 0,
+{
+    let m0 = a.shape.first();
+    let d0 = a.stride.first();
+    LayoutSpec {
+        shape: seq![n, m0 / n].add(a.shape.skip(1)),
+        stride: seq![d0, (n as int) * d0].add(a.stride.skip(1)),
+    }
+}
+
+/// Admissibility for logical_divide_mode.
+pub open spec fn divide_mode_admissible(a: &LayoutSpec, n: nat) -> bool {
+    &&& a.valid()
+    &&& a.shape.len() > 0
+    &&& n > 0
+    &&& a.shape.first() % n == 0
+}
+
 } // verus!
