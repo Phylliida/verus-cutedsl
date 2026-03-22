@@ -106,6 +106,11 @@ pub open spec fn is_prefix(s: BlockScanState) -> bool {
     matches!(s, BlockScanState::Prefix { .. })
 }
 
+/// Whether a block has published (not Invalid).
+pub open spec fn is_published(s: BlockScanState) -> bool {
+    !matches!(s, BlockScanState::Invalid)
+}
+
 /// Extract value from a Prefix state.
 pub open spec fn prefix_value(s: BlockScanState) -> int
     recommends is_prefix(s),

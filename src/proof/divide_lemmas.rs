@@ -1320,4 +1320,87 @@ pub proof fn lemma_divide_bijective_column_major(a: &LayoutSpec, b: &LayoutSpec)
     crate::proof::injectivity_lemmas::lemma_identity_offset_implies_bijective(div);
 }
 
+// ══════════════════════════════════════════════════════════════
+// logical_divide_extended: shape and size properties
+// ══════════════════════════════════════════════════════════════
+
+/// logical_divide_extended has the same shape as logical_divide.
+///
+/// Both use the same zipped layout (B, complement(B, M)) — only the composition
+/// method differs. Since compose and compose_extended produce the same shape
+/// (always b.shape), the shapes agree.
+pub proof fn lemma_divide_extended_shape(a: &LayoutSpec, b: &LayoutSpec)
+    requires
+        divide_admissible(a, b),
+    ensures
+        logical_divide_extended(a, b).shape =~= logical_divide(a, b).shape,
+{
+    let m = shape_size(a.shape);
+    let c = complement(b, m);
+    let a_val = LayoutSpec { shape: a.shape, stride: a.stride };
+    let zipped = LayoutSpec {
+        shape: b.shape.add(c.shape),
+        stride: b.stride.add(c.stride),
+    };
+    // Prove zipped is valid
+    lemma_complement_valid(b, m);
+    lemma_complement_shape_valid(b, m);
+    assert(zipped.valid()) by {
+        assert forall|i: int| 0 <= i < zipped.shape.len()
+        implies #[trigger] zipped.shape[i] > 0 by {
+            if i < b.shape.len() as int {} else {
+                let c_val = complement(b, m);
+                assert(zipped.shape[i] == c_val.shape[(i - b.shape.len()) as int]);
+            }
+        };
+    };
+
+    lemma_compose_rank(a_val, zipped);
+    crate::proof::composition_lemmas::lemma_compose_shape(a_val, zipped);
+    lemma_compose_extended_shape(a_val, zipped);
+}
+
+/// Helper: compose_extended preserves shape (same as compose).
+proof fn lemma_compose_extended_shape(a: LayoutSpec, b: LayoutSpec)
+    requires
+        a.valid(),
+        b.valid(),
+        a.shape.len() > 0,
+    ensures
+        compose_extended(a, b).shape =~= b.shape,
+    decreases b.shape.len(),
+{
+    if b.shape.len() == 0 {
+    } else if b.shape.len() == 1 {
+        crate::proof::composition_lemmas::lemma_compose_extended_shape(a, b.shape.first(), b.stride.first() as nat);
+    } else {
+        let rest_b = LayoutSpec { shape: b.shape.skip(1), stride: b.stride.skip(1) };
+        assert(rest_b.valid()) by {
+            assert forall|i: int| 0 <= i < rest_b.shape.len()
+            implies #[trigger] rest_b.shape[i] > 0 by {
+                assert(rest_b.shape[i] == b.shape[i + 1]);
+            };
+        };
+        lemma_compose_extended_shape(a, rest_b);
+        let first = compose_single_mode_extended(a, b.shape.first(), b.stride.first() as nat);
+        crate::proof::composition_lemmas::lemma_compose_extended_shape(a, b.shape.first(), b.stride.first() as nat);
+        // first.shape =~= seq![b.shape.first()]
+        // rest.shape =~= rest_b.shape
+        // b.shape =~= seq![b.shape.first()] ++ rest_b.shape
+        assert(b.shape =~= seq![b.shape.first()].add(rest_b.shape));
+    }
+}
+
+/// logical_divide_extended has the same size as logical_divide (== size(A)).
+pub proof fn lemma_divide_extended_size(a: &LayoutSpec, b: &LayoutSpec)
+    requires
+        divide_admissible(a, b),
+    ensures
+        shape_size(logical_divide_extended(a, b).shape)
+            == shape_size(a.shape),
+{
+    lemma_divide_extended_shape(a, b);
+    lemma_divide_size(a, b);
+}
+
 } // verus!

@@ -3397,4 +3397,54 @@ pub proof fn lemma_left_inverse_of_flatten_correct(layout: &LayoutSpec, i: nat)
     assert(fl.offset(i) == layout.offset(i));
 }
 
+// ══════════════════════════════════════════════════════════════
+// Inverse unification: left_inverse and right_inverse agree
+// ══════════════════════════════════════════════════════════════
+
+/// Left inverse and right inverse produce the same offset at each index.
+///
+/// For layouts satisfying both correctness conditions (bijective + sorted + tractable +
+/// fully coalesced + positive strides), the two inverses agree:
+///   left_inverse(L).offset(j) == right_inverse(L).offset(j)
+///
+/// Proof: Let r = R(j). By right inverse: L(r) = j. By left inverse: LI(L(r)) = r.
+/// So LI(j) = r = R(j).
+pub proof fn lemma_inverse_offset_agree(layout: &LayoutSpec, j: nat)
+    requires
+        // Right inverse conditions
+        layout.valid(),
+        layout.is_bijective_upto(layout.size()),
+        j < right_inverse(layout).size(),
+        // Left inverse conditions
+        is_fully_coalesced(layout),
+        layout.shape.len() > 0,
+        forall|k: int| 0 <= k < layout.stride.len() ==> layout.stride[k] > 0,
+        layout.is_sorted(),
+        layout.is_tractable(),
+    ensures
+        left_inverse(layout).offset(j)
+            == right_inverse(layout).offset(j),
+{
+    let r_layout = right_inverse(layout);
+    let r = r_layout.offset(j);
+
+    // Step 1: R(j) is in [0, L.size())
+    lemma_right_inverse_image_bound(layout, j);
+    assert(r >= 0);
+    assert((r as nat) < layout.size());
+
+    // Step 2: L(R(j)) = j (right inverse correctness)
+    lemma_right_inverse_correct(layout, j);
+    assert(layout.offset(r as nat) == j as int);
+
+    // Step 3: LI(L(R(j))) = R(j) (left inverse correctness with i = R(j))
+    // is_bijective_upto implies is_injective
+    assert(layout.is_injective());
+    lemma_left_inverse_correct(layout, r as nat);
+    assert(left_inverse(layout).offset(layout.offset(r as nat) as nat) == r);
+
+    // Step 4: Combine: LI(j) = LI(L(R(j))) = R(j)
+    assert(layout.offset(r as nat) as nat == j);
+}
+
 } // verus!
