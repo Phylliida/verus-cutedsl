@@ -1192,4 +1192,280 @@ pub proof fn lemma_full_flatten_offset_equivalent(layout: LayoutSpec)
     };
 }
 
+// ══════════════════════════════════════════════════════════════
+// No unit modes: helpers for full_flatten idempotency
+// ══════════════════════════════════════════════════════════════
+
+/// Predicate: all shape entries are > 1 (no unit modes).
+pub open spec fn has_no_unit_modes(layout: &LayoutSpec) -> bool {
+    forall|i: int| 0 <= i < layout.shape.len() ==> #[trigger] layout.shape[i] > 1
+}
+
+/// remove_units_iter(L, 0) produces a layout with no unit modes.
+pub proof fn lemma_remove_units_no_units(layout: LayoutSpec)
+    requires layout.valid(),
+    ensures has_no_unit_modes(&remove_units_iter(layout, 0)),
+{
+    lemma_remove_units_iter_no_units(layout, 0);
+}
+
+/// remove_units_iter(L, pos) produces a layout with no unit modes from pos onwards.
+proof fn lemma_remove_units_iter_no_units(layout: LayoutSpec, pos: nat)
+    requires
+        layout.valid(),
+        pos <= layout.shape.len(),
+        // Modes before pos are already non-unit
+        forall|i: int| 0 <= i < pos as int ==> #[trigger] layout.shape[i] > 1,
+    ensures
+        has_no_unit_modes(&remove_units_iter(layout, pos)),
+    decreases layout.shape.len() - pos,
+{
+    if pos as int >= layout.shape.len() as int {
+        // Done: all modes checked, result is layout itself
+    } else if layout.shape[pos as int] == 1 {
+        // Remove this unit mode
+        let removed = LayoutSpec {
+            shape: layout.shape.take(pos as int).add(layout.shape.skip(pos as int + 1)),
+            stride: layout.stride.take(pos as int).add(layout.stride.skip(pos as int + 1)),
+        };
+        // removed is valid
+        lemma_shape_size_positive(layout.shape);
+        assert(removed.valid()) by {
+            assert forall|i: int| 0 <= i < removed.shape.len()
+            implies #[trigger] removed.shape[i] > 0 by {
+                if i < pos as int {
+                    assert(removed.shape[i] == layout.shape[i]);
+                } else {
+                    assert(removed.shape[i] == layout.shape[i + 1]);
+                }
+            };
+        };
+        assert(pos <= removed.shape.len());
+        // Modes before pos in removed are still non-unit
+        assert forall|i: int| 0 <= i < pos as int
+        implies #[trigger] removed.shape[i] > 1 by {
+            assert(removed.shape[i] == layout.shape[i]);
+        };
+        lemma_remove_units_iter_no_units(removed, pos);
+    } else {
+        // shape[pos] > 1 (since valid implies > 0, and != 1 means > 1)
+        assert(layout.shape[pos as int] > 1);
+        assert forall|i: int| 0 <= i < (pos + 1) as int
+        implies #[trigger] layout.shape[i] > 1 by {
+            if i < pos as int {} else {
+                assert(i == pos as int);
+            }
+        };
+        lemma_remove_units_iter_no_units(layout, pos + 1);
+    }
+}
+
+/// remove_units_iter on a layout with no unit modes is identity.
+proof fn lemma_remove_units_noop(layout: LayoutSpec, pos: nat)
+    requires
+        layout.valid(),
+        pos <= layout.shape.len(),
+        has_no_unit_modes(&layout),
+    ensures
+        remove_units_iter(layout, pos) == layout,
+    decreases layout.shape.len() - pos,
+{
+    if pos as int >= layout.shape.len() as int {
+    } else {
+        // shape[pos] > 1, so != 1
+        assert(layout.shape[pos as int] > 1);
+        assert(layout.shape[pos as int] != 1);
+        lemma_remove_units_noop(layout, pos + 1);
+    }
+}
+
+/// Coalescing two modes with shape > 1 produces shape > 1.
+/// shape[i] * shape[i+1] >= 2 * 2 = 4 > 1 when both > 1.
+proof fn lemma_coalesce_pair_preserves_no_units(layout: LayoutSpec, i: nat)
+    requires
+        layout.valid(),
+        (i as int) < layout.shape.len() as int - 1,
+        modes_coalesceable(&layout, i as int),
+        has_no_unit_modes(&layout),
+    ensures
+        has_no_unit_modes(&coalesce_pair(layout, i)),
+{
+    let result = coalesce_pair(layout, i);
+    assert forall|j: int| 0 <= j < result.shape.len()
+    implies #[trigger] result.shape[j] > 1 by {
+        if j < i as int {
+            // result.shape[j] == layout.shape[j] > 1
+            assert(result.shape[j] == layout.shape[j]);
+        } else if j == i as int {
+            // result.shape[j] == layout.shape[i] * layout.shape[i+1] >= 2*2 = 4 > 1
+            assert(result.shape[j] == layout.shape[i as int] * layout.shape[i as int + 1]);
+            assert(layout.shape[i as int] > 1);
+            assert(layout.shape[i as int + 1] > 1);
+            assert(layout.shape[i as int] * layout.shape[i as int + 1] > 1) by (nonlinear_arith)
+                requires layout.shape[i as int] > 1, layout.shape[i as int + 1] > 1;
+        } else {
+            // result.shape[j] == layout.shape[j+1] > 1
+            assert(result.shape[j] == layout.shape[j + 1]);
+        }
+    };
+}
+
+/// coalesce_pass preserves no-unit-modes property.
+proof fn lemma_coalesce_pass_preserves_no_units(layout: LayoutSpec, start: nat)
+    requires
+        layout.valid(),
+        has_no_unit_modes(&layout),
+    ensures
+        has_no_unit_modes(&coalesce_pass(layout, start)),
+    decreases layout.shape.len() - start,
+{
+    if start as int >= layout.shape.len() as int - 1 {
+        // No more pairs to check
+    } else if modes_coalesceable(&layout, start as int) {
+        let merged = coalesce_pair(layout, start);
+        // merged is valid (from existing lemma, using idx=0)
+        lemma_shape_size_positive(layout.shape);
+        lemma_coalesce_pair_offset_general(layout, start, 0);
+        // merged has no unit modes
+        lemma_coalesce_pair_preserves_no_units(layout, start);
+        // Recurse at same position
+        lemma_coalesce_pass_preserves_no_units(merged, start);
+    } else {
+        lemma_coalesce_pass_preserves_no_units(layout, start + 1);
+    }
+}
+
+/// coalesce preserves no-unit-modes property.
+pub proof fn lemma_coalesce_preserves_no_units(layout: LayoutSpec)
+    requires
+        layout.valid(),
+        has_no_unit_modes(&layout),
+    ensures
+        has_no_unit_modes(&coalesce(layout)),
+{
+    lemma_coalesce_pass_preserves_no_units(layout, 0);
+}
+
+/// full_flatten produces a layout with no unit modes.
+pub proof fn lemma_full_flatten_no_units(layout: LayoutSpec)
+    requires layout.valid(),
+    ensures has_no_unit_modes(&full_flatten(layout)),
+{
+    // flatten(L) = remove_units(coalesce(L), 0)
+    // coalesce(L) is valid
+    lemma_shape_size_positive(layout.shape);
+    lemma_coalesce(layout, 0);
+    // remove_units produces no unit modes
+    lemma_remove_units_no_units(coalesce(layout));
+    // flatten(L) has no unit modes
+    // full_flatten(L) = coalesce(flatten(L))
+    // flatten(L) is valid
+    lemma_flatten_valid(layout);
+    // coalesce preserves no-unit-modes
+    lemma_coalesce_preserves_no_units(flatten(layout));
+}
+
+/// full_flatten is idempotent: full_flatten(full_flatten(L)) == full_flatten(L).
+pub proof fn lemma_full_flatten_idempotent(layout: LayoutSpec)
+    requires layout.valid(),
+    ensures full_flatten(full_flatten(layout)) == full_flatten(layout),
+{
+    let ff = full_flatten(layout);
+    // ff is valid
+    lemma_full_flatten_valid(layout);
+    // ff is fully coalesced
+    lemma_full_flatten_fully_coalesced(layout);
+    // ff has no unit modes
+    lemma_full_flatten_no_units(layout);
+
+    // full_flatten(ff) = coalesce(flatten(ff))
+    // flatten(ff) = remove_units(coalesce(ff), 0)
+    // coalesce(ff) == ff (already fully coalesced)
+    crate::proof::inverse_lemmas::lemma_fully_coalesced_identity(&ff);
+    assert(coalesce(ff) == ff);
+    // remove_units(ff, 0) == ff (no unit modes to remove)
+    lemma_remove_units_noop(ff, 0);
+    assert(remove_units_iter(ff, 0) == ff);
+    // flatten(ff) == ff
+    assert(flatten(ff) == ff);
+    // coalesce(flatten(ff)) == coalesce(ff) == ff
+}
+
+// ══════════════════════════════════════════════════════════════
+// full_flatten canonicality (partial results)
+// ══════════════════════════════════════════════════════════════
+
+/// Column-major layouts with size > 1 full_flatten to make_identity(size).
+pub proof fn lemma_full_flatten_column_major(shape: Seq<nat>)
+    requires
+        shape_valid(shape),
+        shape.len() > 0,
+        shape_size(shape) > 1,
+    ensures
+        full_flatten(make_column_major(shape)) == make_identity(shape_size(shape)),
+{
+    let layout = make_column_major(shape);
+    let m = shape_size(shape);
+
+    // coalesce(column_major) == make_identity(M)
+    crate::proof::inverse_lemmas::lemma_coalesce_column_major(shape);
+    let id = make_identity(m);
+    assert(coalesce(layout) == id);
+
+    // id = (M):(1), M > 1 → no unit modes
+    assert(has_no_unit_modes(&id));
+    assert(id.valid()) by {
+        assert(id.shape =~= seq![m]);
+        assert(id.stride =~= seq![1int]);
+    };
+    lemma_remove_units_noop(id, 0);
+    // flatten(layout) = remove_units(id, 0) = id
+    assert(flatten(layout) == id);
+
+    // coalesce(id) == id (fully coalesced, rank 1)
+    crate::proof::inverse_lemmas::lemma_fully_coalesced_identity(&id);
+    // full_flatten(layout) = coalesce(flatten(layout)) = coalesce(id) = id
+}
+
+/// Two rank-1 layouts with the same size and stride are structurally equal.
+/// This is the base case for canonicality.
+pub proof fn lemma_rank1_offset_equivalent_implies_equal(
+    l1: &LayoutSpec, l2: &LayoutSpec,
+)
+    requires
+        l1.valid(),
+        l2.valid(),
+        l1.shape.len() == 1,
+        l2.shape.len() == 1,
+        l1.size() == l2.size(),
+        l1.size() > 1,
+        // Offset equivalent
+        forall|x: nat| x < l1.size() ==> l1.offset(x) == l2.offset(x),
+    ensures
+        *l1 == *l2,
+{
+    // l1 = (M):(d), l2 = (N):(e), M == N > 1
+    let m = l1.shape.first();
+    let n = l2.shape.first();
+    let d = l1.stride.first();
+    let e = l2.stride.first();
+
+    // M == N from size equality
+    lemma_shape_size_single(m);
+    lemma_shape_size_single(n);
+    assert(m == n);
+
+    // d == e from offset(1) == offset(1)
+    // offset(1) for rank-1 = 1 * stride[0]
+    lemma_offset_within_first_mode(l1, 1);
+    lemma_offset_within_first_mode(l2, 1);
+    assert(l1.offset(1) == d);
+    assert(l2.offset(1) == e);
+    assert(d == e);
+
+    // Structural equality
+    assert(l1.shape =~= l2.shape);
+    assert(l1.stride =~= l2.stride);
+}
+
 } // verus!
