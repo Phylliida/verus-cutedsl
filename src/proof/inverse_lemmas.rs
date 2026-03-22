@@ -388,7 +388,7 @@ proof fn lemma_coalesce_pair_zero_column_major(shape: Seq<nat>)
 }
 
 /// Coalescing a column-major layout produces the identity layout.
-proof fn lemma_coalesce_column_major(shape: Seq<nat>)
+pub proof fn lemma_coalesce_column_major(shape: Seq<nat>)
     requires
         shape_valid(shape),
         shape.len() > 0,

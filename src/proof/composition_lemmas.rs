@@ -969,4 +969,110 @@ proof fn lemma_find_pp_index_correct(pp: Seq<nat>, target: nat, pos: nat)
     }
 }
 
+// ══════════════════════════════════════════════════════════════
+// compose_extended == compose for rank-1 A
+// ══════════════════════════════════════════════════════════════
+
+/// For rank-1 A, compose_single_mode_extended == compose_single_mode.
+///
+/// prefix_products of rank-1 shape [M] = [1, M]. find_split_mode can only find:
+/// - idx=0 (r==1): handled by stride-1 branch OR fallback gives r*d = d (same result)
+/// - idx=1 (r==M): idx >= shape.len(), so fallback gives r*d (same as compose_single_mode)
+/// - no match: fallback gives r*d (same as compose_single_mode)
+pub proof fn lemma_single_mode_extended_eq_rank1(
+    a: LayoutSpec, b_shape: nat, b_stride: nat,
+)
+    requires
+        a.valid(),
+        a.shape.len() == 1,
+        b_shape > 0,
+    ensures
+        compose_single_mode_extended(a, b_shape, b_stride) == compose_single_mode(a, b_shape, b_stride),
+{
+    let d = a.stride.first();
+    let m = a.shape.first();
+
+    if b_stride == 1 && b_shape <= m && a.shape.len() > 0 {
+        // Both take the stride-1 branch: (b_shape):(d)
+    } else {
+        // compose_single_mode gives (b_shape):(b_stride * d) in the else branch
+        // compose_single_mode_extended checks find_split_mode(&a, b_stride)
+        let pp = crate::inverse::shape_prefix_products(a.shape);
+        // pp = [1, M] for rank-1 A
+        crate::proof::inverse_lemmas::lemma_prefix_products_len(a.shape);
+        crate::proof::inverse_lemmas::lemma_prefix_products_first(a.shape);
+        crate::proof::inverse_lemmas::lemma_prefix_products_value(a.shape, 1);
+        assert(pp.len() == 2);
+        assert(pp[0] == 1nat);
+        // pp[1] == shape_size(a.shape.take(1)) == m
+        assert(a.shape.take(1) =~= seq![m]);
+        lemma_shape_size_single(m);
+        assert(shape_size(a.shape.take(1)) == m);
+        assert(pp[1] == m);
+
+        match find_split_mode(&a, b_stride) {
+            Some(idx) => {
+                lemma_find_pp_index_correct(pp, b_stride, 0);
+                assert(pp[idx as int] == b_stride);
+                // idx is either 0 or 1
+                if idx == 0 {
+                    // b_stride == pp[0] == 1
+                    // We're in the else branch, so either b_shape > m or shape.len() == 0
+                    // shape.len() == 1 > 0, so b_shape > m
+                    // idx < shape.len() is 0 < 1 = true
+                    // b_shape <= a.shape[0] = m is false
+                    // So fallback: (b_shape):(b_stride * d) = (b_shape):(1*d) = (b_shape):(d)
+                    // compose_single_mode else: (b_shape):(1*d) = (b_shape):(d)
+                    assert(b_stride == 1nat);
+                    assert(b_shape > m);
+                } else {
+                    // idx == 1, idx < shape.len() is 1 < 1 = false
+                    // Fallback: (b_shape):(b_stride * d)
+                    assert(idx == 1nat);
+                    assert(!(idx < a.shape.len()));
+                }
+            }
+            None => {
+                // No match, fallback: (b_shape):(b_stride * d)
+            }
+        }
+    }
+}
+
+/// For rank-1 A, compose_extended == compose (structural equality).
+pub proof fn lemma_compose_extended_eq_rank1(a: LayoutSpec, b: LayoutSpec)
+    requires
+        a.valid(),
+        a.shape.len() == 1,
+        b.valid(),
+    ensures
+        compose_extended(a, b) == compose(a, b),
+    decreases b.shape.len(),
+{
+    if b.shape.len() == 0 {
+        // Both return empty layout
+    } else if b.shape.len() == 1 {
+        lemma_single_mode_extended_eq_rank1(a, b.shape.first(), b.stride.first() as nat);
+    } else {
+        let bs = b.shape.first();
+        let bd = b.stride.first() as nat;
+        let rest_b = LayoutSpec { shape: b.shape.skip(1), stride: b.stride.skip(1) };
+        assert(rest_b.valid()) by {
+            assert forall|i: int| 0 <= i < rest_b.shape.len()
+            implies #[trigger] rest_b.shape[i] > 0 by {
+                assert(rest_b.shape[i] == b.shape[i + 1]);
+            };
+        };
+
+        // Single mode: extended == basic
+        lemma_single_mode_extended_eq_rank1(a, bs, bd);
+
+        // Rest: extended == basic by induction
+        lemma_compose_extended_eq_rank1(a, rest_b);
+
+        // Both produce first.shape ++ rest.shape, first.stride ++ rest.stride
+        // where first and rest are the same for both
+    }
+}
+
 } // verus!

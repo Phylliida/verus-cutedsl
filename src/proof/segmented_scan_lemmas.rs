@@ -89,4 +89,117 @@ pub proof fn lemma_segmented_scan_base(data: Seq<i64>, flags: Seq<bool>)
     lemma_sum_single::<int>(f, 0);
 }
 
+// ============================================================
+// Additional segmented scan properties
+// ============================================================
+
+/// segment_start is monotonically non-decreasing.
+pub proof fn lemma_segment_start_monotone(flags: Seq<bool>, i: int, j: int)
+    requires
+        0 <= i <= j,
+        j < flags.len() as int,
+    ensures
+        segment_start(flags, i) <= segment_start(flags, j),
+    decreases j - i,
+{
+    if i == j {
+    } else {
+        // j > i, so j > 0
+        if flags[j] {
+            // segment_start(flags, j) == j >= i >= segment_start(flags, i)
+            lemma_segment_start_bounds(flags, i);
+        } else {
+            // segment_start(flags, j) == segment_start(flags, j-1)
+            lemma_segment_start_monotone(flags, i, j - 1);
+        }
+    }
+}
+
+/// Within a segment, all positions share the same segment_start.
+pub proof fn lemma_same_segment(flags: Seq<bool>, i: int, j: int)
+    requires
+        0 <= i <= j,
+        j < flags.len() as int,
+        // No flag between i and j (exclusive of i, inclusive of j when j > i)
+        forall|k: int| i < k <= j ==> !#[trigger] flags[k],
+        // i is either 0 or a flag
+        i == 0 || flags[i],
+    ensures
+        segment_start(flags, j) == i,
+    decreases j - i,
+{
+    if i == j {
+        if i == 0 {
+            // segment_start(flags, 0) == 0 == i
+        } else {
+            // flags[i] is true
+            lemma_segment_start_at_flag(flags, i);
+        }
+    } else {
+        // j > i, flags[j] is false (from forall)
+        assert(!flags[j]);
+        lemma_segment_start_continuity(flags, j);
+        lemma_same_segment(flags, i, j - 1);
+    }
+}
+
+/// The segmented scan within a segment equals the non-segmented sum
+/// from segment_start to i+1.
+/// This is essentially the definition, but useful as a standalone lemma.
+pub proof fn lemma_segmented_scan_is_segment_sum(data: Seq<i64>, flags: Seq<bool>, i: int)
+    requires
+        data.len() == flags.len(),
+        0 <= i,
+        i < data.len() as int,
+    ensures
+        segmented_inclusive_scan_int(data, flags)[i]
+            == sum::<int>(|j: int| data[j] as int, segment_start(flags, i), i + 1),
+{
+    // Direct from definition
+}
+
+/// At a segment boundary (flags[i] == true), the scan resets to data[i].
+pub proof fn lemma_segmented_scan_reset(data: Seq<i64>, flags: Seq<bool>, i: int)
+    requires
+        data.len() == flags.len(),
+        0 <= i,
+        i < data.len() as int,
+        i == 0 || flags[i],
+    ensures
+        segmented_inclusive_scan_int(data, flags)[i] == data[i] as int,
+{
+    if i == 0 {
+        lemma_segmented_scan_base(data, flags);
+    } else {
+        lemma_segmented_scan_step(data, flags, i);
+    }
+}
+
+/// Segment start is always a valid flag position (within bounds).
+pub proof fn lemma_segment_start_in_range(flags: Seq<bool>, i: int)
+    requires
+        0 <= i,
+        i < flags.len() as int,
+    ensures
+        0 <= segment_start(flags, i),
+        segment_start(flags, i) < flags.len() as int,
+{
+    lemma_segment_start_bounds(flags, i);
+}
+
+/// The segmented scan result is non-negative when all data is non-negative
+/// and we're at a segment boundary.
+pub proof fn lemma_segmented_scan_nonneg_at_boundary(data: Seq<i64>, flags: Seq<bool>, i: int)
+    requires
+        data.len() == flags.len(),
+        0 <= i,
+        i < data.len() as int,
+        i == 0 || flags[i],
+        data[i] >= 0,
+    ensures
+        segmented_inclusive_scan_int(data, flags)[i] >= 0,
+{
+    lemma_segmented_scan_reset(data, flags, i);
+}
+
 } // verus!

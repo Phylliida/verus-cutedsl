@@ -1450,13 +1450,18 @@ pub proof fn lemma_rank1_offset_equivalent_implies_equal(
     let d = l1.stride.first();
     let e = l2.stride.first();
 
-    // M == N from size equality
+    // size == shape[0] for rank-1 layouts
+    assert(l1.shape =~= seq![m]);
+    assert(l2.shape =~= seq![n]);
     lemma_shape_size_single(m);
     lemma_shape_size_single(n);
+    assert(l1.size() == m);
+    assert(l2.size() == n);
     assert(m == n);
 
     // d == e from offset(1) == offset(1)
-    // offset(1) for rank-1 = 1 * stride[0]
+    // Need 1 < m (which follows from size > 1)
+    assert(1nat < m);
     lemma_offset_within_first_mode(l1, 1);
     lemma_offset_within_first_mode(l2, 1);
     assert(l1.offset(1) == d);
