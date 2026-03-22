@@ -1507,12 +1507,21 @@ pub proof fn lemma_compose_recursive_single_correct(
                 requires m * bq <= m * shape_size(a_rest.shape), m > 0;
         };
 
-        // IH
+        // IH: establish rest_layout.offset(x_outer) == a_rest.offset(x_outer)
+        let rest_layout = compose_recursive_single(a_rest, bq, 1);
         if a_rest.shape.len() > 0 {
+            // Verify IH precondition holds
+            assert(compose_recursive_admissible(a_rest, bq, 1));
+            assert(x_outer < bq);
             lemma_compose_recursive_single_correct(a_rest, bq, 1, x_outer);
+            // IH postcondition: rest_layout.offset(x_outer) == a_rest.offset(1 * x_outer)
+            // Which is: rest_layout.offset(x_outer) == a_rest.offset(x_outer) since 1*x = x
         } else {
             crate::proof::offset_lemmas::lemma_offset_zero(a_rest);
+            // rest_layout for 0-mode a_rest: shape=[bq], stride=[0], offset = 0
+            // a_rest.offset(x_outer) = 0 for 0-mode layout
         }
+        assert(rest_layout.offset(x_outer) == a_rest.offset(x_outer));
 
         // Modular scaling: bx%m == b_stride*x_inner, bx/m == x_outer
         crate::proof::integer_helpers::lemma_mod_scale(x, b_stride, q);
@@ -1548,7 +1557,7 @@ pub proof fn lemma_compose_recursive_single_correct(
 
         // result = inner ++ rest, offset decomposes via concat
         let inner_layout = LayoutSpec { shape: seq![q], stride: seq![(b_stride as int) * d] };
-        let rest_layout = compose_recursive_single(a_rest, bq, 1);
+        // rest_layout already defined above
         let result = compose_recursive_single(a, b_shape, b_stride);
 
         // result.offset(x) = inner.offset(x_inner) + rest.offset(x_outer)
@@ -1559,8 +1568,7 @@ pub proof fn lemma_compose_recursive_single_correct(
 
         // Chain the equalities explicitly
         assert(inner_layout.offset(x_inner) == (b_stride * x_inner) as int * d);
-        vstd::arithmetic::mul::lemma_mul_basics(x_outer as int);
-        assert(rest_layout.offset(x_outer) == a_rest.offset(x_outer));
+        // rest_layout.offset(x_outer) == a_rest.offset(x_outer) was established above
         assert(result.offset(x) == (b_stride * x_inner) as int * d + a_rest.offset(x_outer));
         assert(a.offset(bx) == (b_stride * x_inner) as int * d + a_rest.offset(x_outer));
         return;
