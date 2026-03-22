@@ -1666,10 +1666,10 @@ pub fn divide_mode_exec(a: &RuntimeLayout, n: u64) -> (result: RuntimeLayout)
             result_stride@[0] == d0,
             result_stride@[1] == scaled_stride,
             scaled_stride as int == (n as int) * (d0 as int),
-            forall|j: int| 2 <= j < (1 + i) as int ==> (
-                #[trigger] result_shape@[j] == a.shape@[(j - 1) as int]
-                && result_stride@[j] == a.stride@[(j - 1) as int]
-            ),
+            forall|j: int| 2 <= j < (1 + i) as int ==>
+                #[trigger] result_shape@[j] == a.shape@[(j - 1) as int],
+            forall|j: int| 2 <= j < (1 + i) as int ==>
+                #[trigger] result_stride@[j] == a.stride@[(j - 1) as int],
         decreases a.shape.len() - i,
     {
         result_shape.push(a.shape[i]);
@@ -1678,6 +1678,9 @@ pub fn divide_mode_exec(a: &RuntimeLayout, n: u64) -> (result: RuntimeLayout)
     }
 
     proof {
+        // After the loop, i == a.shape.len()
+        // result_stride has length 1 + a.shape.len()
+        // The loop invariant gives us the facts about indices 2..1+a.shape.len()
         let spec_result = logical_divide_mode(&a@, n as nat);
         // Shape matches
         assert(shape_to_nat_seq(result_shape@) =~= spec_result.shape) by {
@@ -1703,14 +1706,13 @@ pub fn divide_mode_exec(a: &RuntimeLayout, n: u64) -> (result: RuntimeLayout)
                 } else if k == 1 {
                     assert(strides_to_int_seq(result_stride@)[1] == result_stride@[1] as int);
                 } else {
-                    // Trigger loop invariant for this k
-                    let kk = k;
-                    assert(2 <= kk && kk < (1 + a.shape@.len() as int));
-                    assert(result_stride@[kk] == a.stride@[(kk - 1) as int]);
-                    assert(result_stride@[kk] as int == a.stride@[(kk - 1) as int] as int);
-                    assert(a@.stride[(k - 1) as int] == a.stride@[(k - 1) as int] as int);
+                    // result_stride@[k] == a.stride@[k-1] from loop invariant
+                    // spec_result.stride[k] == a@.stride[k-1] from spec definition
                     assert(spec_result.stride[k] == a@.stride.skip(1)[(k - 2) as int]);
                     assert(a@.stride.skip(1)[(k - 2) as int] == a@.stride[(k - 1) as int]);
+                    // a@.stride[k-1] == a.stride@[k-1] as int (from wf_spec)
+                    // result_stride@[k] as int == a.stride@[k-1] as int == a@.stride[k-1]
+                    // strides_to_int_seq(result_stride@)[k] == result_stride@[k] as int
                     assert(spec_result.stride[k] == a@.stride.skip(1)[(k - 2) as int]);
                     assert(a@.stride.skip(1)[(k - 2) as int] == a@.stride[(k - 1) as int]);
                 }

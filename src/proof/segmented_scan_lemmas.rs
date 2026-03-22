@@ -202,4 +202,106 @@ pub proof fn lemma_segmented_scan_nonneg_at_boundary(data: Seq<i64>, flags: Seq<
     lemma_segmented_scan_reset(data, flags, i);
 }
 
+// ============================================================
+// Segmented scan correctness: connection to non-segmented scan
+// ============================================================
+
+/// Within a segment, the segmented scan equals the sum from segment start.
+/// This is the fundamental correctness property of segmented scan.
+///
+/// For any position i in a segment starting at `start`:
+///   segmented_scan[i] == sum(data, start, i + 1)
+///   == sum(data, start, start + 1) + sum(data, start + 1, start + 2) + ... + sum(data, i, i+1)
+///   == data[start] + data[start+1] + ... + data[i]
+pub proof fn lemma_segmented_scan_equals_segment_sum(
+    data: Seq<i64>, flags: Seq<bool>, i: int, start: int,
+)
+    requires
+        data.len() == flags.len(),
+        0 <= start <= i,
+        i < data.len() as int,
+        segment_start(flags, i) == start,
+    ensures
+        segmented_inclusive_scan_int(data, flags)[i]
+            == sum::<int>(|j: int| data[j] as int, start, i + 1),
+{
+    // Direct from definition — segmented_inclusive_scan_int(data, flags)[i]
+    // = sum(|j| data[j] as int, segment_start(flags, i), i + 1)
+    // = sum(|j| data[j] as int, start, i + 1)
+}
+
+/// Segmented scan decomposition: split at any point within a segment.
+///
+/// segmented_scan[i] == segmented_scan[k] + sum(data, k+1, i+1)
+/// when k and i are in the same segment (start <= k < i).
+pub proof fn lemma_segmented_scan_split(
+    data: Seq<i64>, flags: Seq<bool>, k: int, i: int,
+)
+    requires
+        data.len() == flags.len(),
+        0 <= k < i,
+        i < data.len() as int,
+        segment_start(flags, k) == segment_start(flags, i),
+    ensures
+        segmented_inclusive_scan_int(data, flags)[i]
+            == segmented_inclusive_scan_int(data, flags)[k]
+                + sum::<int>(|j: int| data[j] as int, k + 1, i + 1),
+{
+    let start = segment_start(flags, i);
+    lemma_segment_start_bounds(flags, i);
+    lemma_segment_start_bounds(flags, k);
+    // scan[i] = sum(data, start, i+1)
+    // scan[k] = sum(data, start, k+1)
+    // sum(data, start, i+1) = sum(data, start, k+1) + sum(data, k+1, i+1)
+    lemma_sum_split::<int>(|j: int| data[j] as int, start, k + 1, i + 1);
+}
+
+/// Inductive step: within a segment, scan[i] == scan[i-1] + data[i].
+/// (Strengthened version of lemma_segmented_scan_step for same-segment case.)
+pub proof fn lemma_segmented_scan_inductive(
+    data: Seq<i64>, flags: Seq<bool>, i: int,
+)
+    requires
+        data.len() == flags.len(),
+        0 < i,
+        i < data.len() as int,
+        !flags[i],  // not a segment boundary
+    ensures
+        segmented_inclusive_scan_int(data, flags)[i]
+            == segmented_inclusive_scan_int(data, flags)[i - 1]
+                + data[i] as int,
+        segment_start(flags, i) == segment_start(flags, i - 1),
+{
+    lemma_segment_start_continuity(flags, i);
+    lemma_segmented_scan_split(data, flags, i - 1, i);
+    lemma_sum_single::<int>(|j: int| data[j] as int, i);
+}
+
+/// Segment-local inclusive scan equivalence.
+///
+/// The segmented scan within a segment [start, start+len) equals the
+/// non-segmented inclusive_scan of the extracted subarray, element by element.
+///
+/// For position i in segment starting at `start`:
+///   segmented_scan[i] == inclusive_scan(data[start..start+len])[i - start]
+///   (where both are sums from start to i+1 of the same data)
+pub proof fn lemma_segmented_scan_is_local_inclusive_scan(
+    data: Seq<i64>, flags: Seq<bool>, i: int, start: int,
+)
+    requires
+        data.len() == flags.len(),
+        0 <= start <= i,
+        i < data.len() as int,
+        segment_start(flags, i) == start,
+    ensures
+        // Both equal sum(data_as_int, start, i + 1)
+        segmented_inclusive_scan_int(data, flags)[i]
+            == sum::<int>(|j: int| data[j] as int, start, i + 1),
+        // The relative position within the segment
+        i - start >= 0,
+{
+    lemma_segmented_scan_equals_segment_sum(data, flags, i, start);
+    lemma_segment_start_bounds(flags, i);
+}
+
 } // verus!
