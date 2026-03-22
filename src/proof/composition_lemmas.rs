@@ -680,4 +680,293 @@ pub proof fn lemma_compose_extended_shape(a: LayoutSpec, b_shape: nat, b_stride:
 {
 }
 
+// ══════════════════════════════════════════════════════════════
+// Extended composition correctness
+// ══════════════════════════════════════════════════════════════
+
+/// Core helper: when index = prefix_product[i] * x with x < shape[i],
+/// the offset equals x * stride[i].
+///
+/// This works because delinearize gives coords = (0, ..., 0, x, 0, ..., 0)
+/// with x at position i, so the dot product with strides is just x * stride[i].
+pub proof fn lemma_offset_at_split_mode(layout: &LayoutSpec, i: nat, x: nat)
+    requires
+        layout.valid(),
+        layout.shape.len() > 0,
+        i < layout.shape.len(),
+        x < layout.shape[i as int],
+        // Need index in bounds for delinearize_index_formula
+        shape_size(layout.shape.take(i as int)) * x < shape_size(layout.shape),
+    ensures
+        layout.offset(shape_size(layout.shape.take(i as int)) * x)
+            == (x as int) * layout.stride[i as int],
+{
+    let s = layout.shape;
+    let d = layout.stride;
+    let pp_i = shape_size(s.take(i as int));
+    let idx = pp_i * x;
+
+    let coords = delinearize(idx, s);
+    lemma_delinearize_len(idx, s);
+
+    // Show each coordinate k:
+    // k < i: coords[k] == 0
+    // k == i: coords[k] == x
+    // k > i: coords[k] == 0
+
+    // We prove each case separately to help z3
+    assert forall|k: int| 0 <= k < s.len() as int && k < i as int
+    implies #[trigger] coords[k as int] == 0nat
+    by {
+        crate::runtime::shape_helpers::lemma_delinearize_index_formula(idx, s, k as nat);
+        let pp_k = shape_size(s.take(k));
+        if k < i as int {
+            // pp_i = pp_k * shape_size(s.take(i).skip(k))
+            // using: s.take(i) splits as s.take(k) ++ s.take(i).skip(k)
+            let sub = s.take(i as int);
+            assert(sub.take(k) =~= s.take(k));
+            crate::runtime::shape_helpers::lemma_shape_size_split(sub, k as nat);
+            let middle = shape_size(sub.skip(k as int));
+            assert(pp_i == pp_k * middle);
+
+            // idx = pp_k * (middle * x)
+            assert(idx == pp_k * (middle * x)) by {
+                vstd::arithmetic::mul::lemma_mul_is_associative(pp_k as int, middle as int, x as int);
+            };
+
+            // idx / pp_k == middle * x
+            lemma_shape_size_positive(s.take(k));
+            crate::proof::integer_helpers::lemma_div_mul_cancel(pp_k, middle * x);
+
+            // middle = s[k] * s[k+1] * ... * s[i-1], so middle % s[k] == 0
+            // sub.skip(k) has first element s[k], so middle = s[k] * shape_size(sub.skip(k).skip(1))
+            assert(sub.skip(k as int).first() == s[k]) by {
+                assert(sub[k] == s[k]);
+            };
+            // shape_size(sub.skip(k)) = sub.skip(k)[0] * shape_size(sub.skip(k).skip(1))
+            //                         = s[k] * (rest)
+            // so middle % s[k] == 0
+            assert(sub.skip(k as int).len() > 0) by {
+                assert(sub.len() == i as int);
+            };
+            assert(shape_valid(sub.skip(k as int))) by {
+                assert forall|j: int| 0 <= j < sub.skip(k as int).len()
+                implies #[trigger] sub.skip(k as int)[j] > 0
+                by {
+                    assert(sub.skip(k as int)[j] == s[k + j]);
+                };
+            };
+            crate::runtime::shape_helpers::lemma_shape_size_split(sub.skip(k as int), 1);
+            assert(sub.skip(k as int).take(1) =~= seq![s[k]]);
+            lemma_shape_size_single(s[k]);
+            // middle = s[k] * shape_size(sub.skip(k).skip(1))
+            let rest_size = shape_size(sub.skip(k as int).skip(1));
+            assert(middle == s[k] * rest_size);
+            // So middle is a multiple of s[k]
+            vstd::arithmetic::mul::lemma_mul_is_commutative(s[k] as int, rest_size as int);
+            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(rest_size as int, s[k] as int);
+            assert(middle % s[k] == 0nat);
+            // (x * middle) % s[k] == 0
+            crate::proof::integer_helpers::lemma_multiple_scaled(middle as int, x, s[k] as int);
+            // lemma_multiple_scaled gives (x * middle) % s[k] == 0
+            // But we need (middle * x) % s[k] == 0
+            vstd::arithmetic::mul::lemma_mul_is_commutative(x as int, middle as int);
+            // idx / pp_k == middle * x
+            assert(idx / pp_k == middle * x);
+            assert((middle * x) % s[k] == 0nat);
+            assert((idx / pp_k) % s[k] == 0nat);
+            vstd::arithmetic::div_mod::lemma_small_mod(0nat, s[k]);
+        }
+    };
+
+    // Case k == i: coords[i] == x
+    assert(coords[i as int] == x) by {
+        crate::runtime::shape_helpers::lemma_delinearize_index_formula(idx, s, i);
+        lemma_shape_size_positive(s.take(i as int));
+        vstd::arithmetic::mul::lemma_mul_is_commutative(pp_i as int, x as int);
+        crate::proof::integer_helpers::lemma_div_mul_cancel(pp_i, x);
+        crate::proof::integer_helpers::lemma_mod_small(x, s[i as int]);
+    };
+
+    // Case k > i: coords[k] == 0
+    assert forall|k: int| 0 <= k < s.len() as int && k > i as int
+    implies #[trigger] coords[k as int] == 0nat
+    by {
+        crate::runtime::shape_helpers::lemma_delinearize_index_formula(idx, s, k as nat);
+        let pp_k = shape_size(s.take(k));
+        let sub = s.take(k);
+        assert(sub.take(i as int) =~= s.take(i as int));
+        assert(shape_valid(sub)) by {
+            assert forall|j: int| 0 <= j < sub.len()
+            implies #[trigger] sub[j] > 0
+            by { assert(sub[j] == s[j]); };
+        };
+        crate::runtime::shape_helpers::lemma_shape_size_split(sub, i);
+        let middle = shape_size(sub.skip(i as int));
+        assert(pp_k == pp_i * middle);
+
+        assert(sub.skip(i as int).first() == s[i as int]) by {
+            assert(sub[i as int] == s[i as int]);
+        };
+        assert(sub.skip(i as int).len() > 0);
+        assert(shape_valid(sub.skip(i as int))) by {
+            assert forall|j: int| 0 <= j < sub.skip(i as int).len()
+            implies #[trigger] sub.skip(i as int)[j] > 0
+            by { assert(sub.skip(i as int)[j] == s[(i as int) + j]); };
+        };
+        crate::proof::inverse_lemmas::lemma_shape_size_geq_entry(sub.skip(i as int), 0);
+        assert(middle >= s[i as int]);
+        assert(middle > x);
+        lemma_shape_size_positive(s.take(i as int));
+        assert(pp_i > 0nat);
+        assert(pp_i * middle > pp_i * x) by {
+            vstd::arithmetic::mul::lemma_mul_inequality(x as int, (middle - 1) as int, pp_i as int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(pp_i as int, x as int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(pp_i as int, (middle - 1) as int);
+            vstd::arithmetic::mul::lemma_mul_is_distributive_sub(pp_i as int, middle as int, 1int);
+        };
+        assert(idx < pp_k);
+        assert(pp_k > 0nat) by {
+            vstd::arithmetic::mul::lemma_mul_strictly_positive(pp_i as int, middle as int);
+        };
+        crate::proof::integer_helpers::lemma_div_small(idx, pp_k);
+        assert(idx / pp_k == 0nat);
+        vstd::arithmetic::div_mod::lemma_small_mod(0nat, s[k]);
+        assert((idx / pp_k) % s[k] == 0nat);
+    };
+
+    // Now dot_product(coords, d) == x * d[i]
+    // All coords except i are 0, and coords[i] == x
+    assert forall|k: int| 0 <= k < coords.len() && k != i as int
+    implies coords[k] == 0nat
+    by {
+        if k < i as int {
+            assert(coords[k as int] == 0nat);
+        } else {
+            assert(k > i as int);
+            assert(coords[k as int] == 0nat);
+        }
+    };
+    lemma_dot_product_unit(coords, d, i, x);
+}
+
+/// Helper: dot product of a vector with a single nonzero entry at position i
+/// equals that entry times the corresponding stride.
+proof fn lemma_dot_product_unit(coords: Seq<nat>, strides: Seq<int>, i: nat, x: nat)
+    requires
+        coords.len() == strides.len(),
+        i < coords.len(),
+        coords[i as int] == x,
+        forall|k: int| 0 <= k < coords.len() && k != i as int ==> coords[k] == 0nat,
+    ensures
+        dot_product_nat_int(coords, strides) == (x as int) * strides[i as int],
+    decreases coords.len(),
+{
+    if coords.len() == 0 {
+        assert(false); // unreachable: i < coords.len()
+    } else if coords.len() == 1 {
+        assert(i == 0);
+        assert(coords.first() == x);
+        // dot = x * strides[0] + dot(empty, empty) = x * strides[0]
+        assert(coords.skip(1).len() == 0nat);
+        assert(dot_product_nat_int(coords.skip(1), strides.skip(1)) == 0int);
+    } else {
+        if i == 0 {
+            assert forall|k: int| 0 <= k < coords.skip(1).len()
+            implies #[trigger] coords.skip(1)[k] == 0nat by {
+                assert(coords.skip(1)[k] == coords[k + 1]);
+            };
+            lemma_dot_product_zero_coords(coords.skip(1), strides.skip(1));
+        } else {
+            assert(coords.first() == 0nat);
+            assert(coords.skip(1)[(i - 1) as int] == x) by {
+                assert(coords.skip(1)[(i - 1) as int] == coords[i as int]);
+            };
+            assert forall|k: int| 0 <= k < coords.skip(1).len() && k != (i - 1) as int
+            implies #[trigger] coords.skip(1)[k] == 0nat by {
+                assert(coords.skip(1)[k] == coords[k + 1]);
+            };
+            lemma_dot_product_unit(coords.skip(1), strides.skip(1), (i - 1) as nat, x);
+            assert(strides.skip(1)[(i - 1) as int] == strides[i as int]);
+        }
+    }
+}
+
+/// Correctness of compose_single_mode_extended: when B's stride matches a prefix
+/// product of A and B's shape fits in the corresponding mode of A, the composed
+/// offset equals A.offset(b_stride * x).
+///
+/// This is the key theorem that generalizes compose beyond the "first mode" restriction.
+pub proof fn lemma_compose_single_mode_extended_correct(
+    a: LayoutSpec, b_shape: nat, b_stride: nat, x: nat,
+)
+    requires
+        a.valid(),
+        a.shape.len() > 0,
+        b_shape > 0,
+        x < b_shape,
+        // b_stride matches a prefix product at mode idx, and b_shape fits
+        find_split_mode(&a, b_stride).is_some(),
+        ({
+            let idx = find_split_mode(&a, b_stride).unwrap();
+            &&& idx < a.shape.len()
+            &&& b_shape <= a.shape[idx as int]
+        }),
+        // The composed index must be in bounds
+        b_stride * x < shape_size(a.shape),
+    ensures
+        compose_single_mode_extended(a, b_shape, b_stride).offset(x)
+            == a.offset(b_stride * x),
+{
+    let idx = find_split_mode(&a, b_stride).unwrap();
+    // compose_single_mode_extended returns (b_shape):(a.stride[idx])
+    // Its offset(x) = x * a.stride[idx]
+
+    // We need: a.offset(b_stride * x) == x * a.stride[idx]
+    // b_stride == shape_size(a.shape.take(idx)) (from find_split_mode)
+    // By lemma_offset_at_split_mode: a.offset(pp[idx] * x) == x * a.stride[idx]
+    // where pp[idx] == shape_size(a.shape.take(idx)) == b_stride
+
+    // First establish b_stride == shape_size(a.shape.take(idx))
+    crate::proof::inverse_lemmas::lemma_prefix_products_value(a.shape, idx);
+    let pp = crate::inverse::shape_prefix_products(a.shape);
+    // find_split_mode found pp[idx] == b_stride
+    // pp[idx] == shape_size(a.shape.take(idx))
+    lemma_find_pp_index_correct(pp, b_stride, 0);
+    assert(pp[idx as int] == b_stride);
+    assert(shape_size(a.shape.take(idx as int)) == b_stride);
+
+    // x < b_shape <= a.shape[idx]
+    assert(x < a.shape[idx as int]);
+
+    // shape_size(a.shape.take(idx)) * x = b_stride * x < shape_size(a.shape)
+    lemma_offset_at_split_mode(&a, idx, x);
+
+    // compose_single_mode_extended(a, b_shape, b_stride).offset(x) = x * a.stride[idx]
+    // which is a 1D layout (b_shape):(a.stride[idx])
+    lemma_1d_offset(b_shape, a.stride[idx as int], x);
+}
+
+/// Helper: find_pp_index returns an index where pp[idx] == target.
+proof fn lemma_find_pp_index_correct(pp: Seq<nat>, target: nat, pos: nat)
+    requires
+        find_pp_index(pp, target, pos).is_some(),
+        pos <= pp.len(),
+    ensures
+        ({
+            let idx = find_pp_index(pp, target, pos).unwrap();
+            idx < pp.len() && pp[idx as int] == target
+        }),
+    decreases pp.len() - pos,
+{
+    if pos >= pp.len() {
+        // find_pp_index returns None — contradicts is_some()
+    } else if pp[pos as int] == target {
+        // returns Some(pos)
+    } else {
+        // recurse
+        lemma_find_pp_index_correct(pp, target, pos + 1);
+    }
+}
+
 } // verus!

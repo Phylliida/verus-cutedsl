@@ -1129,4 +1129,67 @@ pub proof fn lemma_group_modes_offset_equivalent(layout: LayoutSpec, lo: nat, hi
     };
 }
 
+// ══════════════════════════════════════════════════════════════
+// full_flatten: the true canonical form
+// ══════════════════════════════════════════════════════════════
+
+/// full_flatten preserves validity.
+pub proof fn lemma_full_flatten_valid(layout: LayoutSpec)
+    requires layout.valid(),
+    ensures full_flatten(layout).valid(),
+{
+    lemma_flatten_valid(layout);
+    lemma_flatten_size(layout);
+    lemma_shape_size_positive(layout.shape);
+    lemma_coalesce(flatten(layout), 0);
+}
+
+/// full_flatten preserves size.
+pub proof fn lemma_full_flatten_size(layout: LayoutSpec)
+    requires layout.valid(),
+    ensures full_flatten(layout).size() == layout.size(),
+{
+    lemma_flatten_valid(layout);
+    lemma_flatten_size(layout);
+    lemma_shape_size_positive(layout.shape);
+    lemma_coalesce(flatten(layout), 0);
+}
+
+/// full_flatten preserves offset for all valid indices.
+pub proof fn lemma_full_flatten_offset(layout: LayoutSpec, idx: nat)
+    requires
+        layout.valid(),
+        idx < layout.size(),
+    ensures
+        full_flatten(layout).offset(idx) == layout.offset(idx),
+{
+    lemma_flatten_valid(layout);
+    lemma_flatten_offset(layout, idx);
+    lemma_flatten_size(layout);
+    lemma_coalesce(flatten(layout), idx);
+}
+
+/// full_flatten is fully coalesced.
+pub proof fn lemma_full_flatten_fully_coalesced(layout: LayoutSpec)
+    requires layout.valid(),
+    ensures is_fully_coalesced(&full_flatten(layout)),
+{
+    lemma_flatten_valid(layout);
+    lemma_coalesce_fully_coalesced(flatten(layout));
+}
+
+/// full_flatten is offset-equivalent to the original layout.
+pub proof fn lemma_full_flatten_offset_equivalent(layout: LayoutSpec)
+    requires layout.valid(),
+    ensures crate::layout::layout_offset_equivalent(&layout, &full_flatten(layout)),
+{
+    lemma_shape_size_positive(layout.shape);
+    lemma_full_flatten_valid(layout);
+    lemma_full_flatten_size(layout);
+    assert forall|x: nat| x < layout.size() implies layout.offset(x) == full_flatten(layout).offset(x)
+    by {
+        lemma_full_flatten_offset(layout, x);
+    };
+}
+
 } // verus!

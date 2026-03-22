@@ -102,9 +102,31 @@ pub open spec fn filter_non_unit(shape: Seq<nat>, start: int) -> Seq<int>
 }
 
 /// Flatten a layout: coalesce all adjacent coalesceable pairs, then remove unit modes.
-/// This produces the minimal representation of the layout's offset function.
+///
+/// WARNING: `flatten` is NOT idempotent. Removing unit modes can expose new coalesceable
+/// pairs that weren't adjacent before. For example:
+///   L = (3, 1, 2):(1, 7, 3) — fully coalesced
+///   flatten(L) = (3, 2):(1, 3) — unit mode removed, but now coalesceable!
+///   flatten(flatten(L)) = (6):(1) — different from flatten(L)
+///
+/// For a true canonical form, use `full_flatten` which applies an extra coalesce pass.
 pub open spec fn flatten(layout: LayoutSpec) -> LayoutSpec {
     remove_units_iter(coalesce(layout), 0)
+}
+
+/// Full flatten: coalesce, remove unit modes, then coalesce again.
+///
+/// This produces the true canonical form of the layout's offset function.
+/// Unlike `flatten`, `full_flatten` is idempotent: `full_flatten(full_flatten(L)) == full_flatten(L)`.
+///
+/// The extra coalesce pass is needed because removing unit modes can expose new
+/// coalesceable pairs (see `flatten` doc for counterexample).
+// TODO: prove full_flatten is idempotent (requires showing coalesce doesn't create unit modes,
+// so after coalesce(flatten(L)) there are no units and no coalesceable pairs)
+// TODO: prove full_flatten canonicality: offset_equivalent(L1, L2) ==> full_flatten(L1) == full_flatten(L2)
+// (for injective layouts with non-negative strides)
+pub open spec fn full_flatten(layout: LayoutSpec) -> LayoutSpec {
+    coalesce(flatten(layout))
 }
 
 /// Admissibility for group_modes: all adjacent pairs in [lo, hi) are coalesceable.
