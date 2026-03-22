@@ -1298,11 +1298,12 @@ pub proof fn lemma_divide_extended_shape(a: &LayoutSpec, b: &LayoutSpec)
 
     lemma_compose_rank(a_val, zipped);
     crate::proof::composition_lemmas::lemma_compose_shape(a_val, zipped);
-    lemma_compose_extended_shape(a_val, zipped);
+    lemma_compose_extended_multimode_shape(a_val, zipped);
 }
 
 /// Helper: compose_extended preserves shape (same as compose).
-pub proof fn lemma_compose_extended_shape(a: LayoutSpec, b: LayoutSpec)
+/// Multi-mode compose_extended preserves shape (deprecated: prefer compose_recursive).
+pub proof fn lemma_compose_extended_multimode_shape(a: LayoutSpec, b: LayoutSpec)
     requires
         a.valid(),
         b.valid(),
@@ -1322,7 +1323,7 @@ pub proof fn lemma_compose_extended_shape(a: LayoutSpec, b: LayoutSpec)
                 assert(rest_b.shape[i] == b.shape[i + 1]);
             };
         };
-        lemma_compose_extended_shape(a, rest_b);
+        lemma_compose_extended_multimode_shape(a, rest_b);
         let first = compose_single_mode_extended(a, b.shape.first(), b.stride.first() as nat);
         crate::proof::composition_lemmas::lemma_compose_extended_shape(a, b.shape.first(), b.stride.first() as nat);
         // first.shape =~= seq![b.shape.first()]

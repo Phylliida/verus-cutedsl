@@ -1230,7 +1230,7 @@ pub proof fn lemma_compose_extended_correct(a: LayoutSpec, b: LayoutSpec, x: nat
         assert(shape_valid(single.shape));
         assert(shape_valid(rest_c.shape)) by {
             // rest_c = compose_extended(a, b_rest), its shape =~= b_rest.shape (valid)
-            crate::proof::divide_lemmas::lemma_compose_extended_shape(a, b_rest);
+            crate::proof::divide_lemmas::lemma_compose_extended_multimode_shape(a, b_rest);
             assert(rest_c.shape =~= b_rest.shape);
             assert forall|i: int| 0 <= i < rest_c.shape.len()
             implies #[trigger] rest_c.shape[i] > 0 by {
@@ -1238,7 +1238,7 @@ pub proof fn lemma_compose_extended_correct(a: LayoutSpec, b: LayoutSpec, x: nat
             };
         };
         // x < b.size() = bs * b_rest.size() = shape_size(single.shape) * shape_size(rest_c.shape)
-        crate::proof::divide_lemmas::lemma_compose_extended_shape(a, b_rest);
+        crate::proof::divide_lemmas::lemma_compose_extended_multimode_shape(a, b_rest);
         lemma_delinearize_concat(x, single.shape, rest_c.shape);
         // Lengths for dot_product_append
         lemma_delinearize_len(x_rest, rest_c.shape);

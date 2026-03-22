@@ -111,7 +111,10 @@ pub open spec fn compose_single_mode_extended(a: LayoutSpec, b_shape: nat, b_str
     }
 }
 
-/// Extended multi-mode composition using prefix-product decomposition.
+/// DEPRECATED: Use `compose_recursive` instead, which correctly handles all cases.
+///
+/// This uses `compose_single_mode_extended` which only handles prefix-product-aligned
+/// strides and falls back incorrectly for non-aligned strides.
 pub open spec fn compose_extended(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
     recommends a.valid(), b.valid(),
     decreases b.shape.len(),

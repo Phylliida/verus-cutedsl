@@ -19,11 +19,11 @@ pub open spec fn divide_admissible(a: &LayoutSpec, b: &LayoutSpec) -> bool {
 
 /// Logical divide: partition A's index space into tiles of shape B.
 ///
-/// Result has two groups of modes:
-/// - "Tile" modes (from B): indices within a single tile
-/// - "Rest" modes (from complement(B, size(A))): iterates across tiles
+/// DEPRECATED: Only correct for rank-1 A or column-major A. Uses `compose` which
+/// can't handle mode boundary crossings. For general A, use `logical_divide_recursive`
+/// (CuTe-style recursive composition) or `logical_divide_mode` (first-mode division).
 ///
-/// Formally: logical_divide(A, B) = A ∘ (B, complement(B, size(A)))
+/// Formally: logical_divide(A, B) = compose(A, (B, complement(B, size(A))))
 pub open spec fn logical_divide(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
     recommends divide_admissible(a, b),
 {
@@ -64,17 +64,11 @@ pub open spec fn num_tiles(a: &LayoutSpec, b: &LayoutSpec) -> nat
     shape_size(a.shape) / shape_size(b.shape)
 }
 
-/// Extended logical divide: uses compose_extended instead of compose.
+/// DEPRECATED: Use `logical_divide_recursive` instead.
 ///
-/// WARNING: This is NOT a general fix for multi-rank non-column-major A.
-/// When B is rank-1 and the complement's stride doesn't match a prefix product
-/// of A, compose_extended falls back to the same incorrect stride as compose.
-/// For correct multi-rank divide with rank-1 B, use `logical_divide_mode` instead.
-///
-/// This function IS correct for:
-/// - Rank-1 A (compose_extended == compose, both correct)
-/// - Column-major A (all strides are prefix products, fallback is correct)
-/// - Multi-rank B whose strides all match prefix products of A
+/// This was an intermediate attempt that uses `compose_extended`, which only
+/// handles prefix-product-aligned strides and falls back incorrectly for others.
+/// `logical_divide_recursive` uses the fully correct `compose_recursive`.
 pub open spec fn logical_divide_extended(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
     recommends divide_admissible(a, b),
 {

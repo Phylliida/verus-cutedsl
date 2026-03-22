@@ -1197,8 +1197,9 @@ pub proof fn lemma_full_flatten_offset_equivalent(layout: LayoutSpec)
 // ══════════════════════════════════════════════════════════════
 
 /// Predicate: all shape entries are > 1 (no unit modes).
+/// Delegates to LayoutSpec::has_no_unit_modes (kept for backward compatibility).
 pub open spec fn has_no_unit_modes(layout: &LayoutSpec) -> bool {
-    forall|i: int| 0 <= i < layout.shape.len() ==> #[trigger] layout.shape[i] > 1
+    layout.has_no_unit_modes()
 }
 
 /// remove_units_iter(L, 0) produces a layout with no unit modes.

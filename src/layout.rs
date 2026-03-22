@@ -78,6 +78,12 @@ impl LayoutSpec {
             #[trigger] self.tractable_at(i)
     }
 
+    /// No unit modes: all shape entries are > 1 (no size-1 modes that contribute nothing
+    /// to the offset function).
+    pub open spec fn has_no_unit_modes(&self) -> bool {
+        forall|i: int| 0 <= i < self.shape.len() ==> #[trigger] self.shape[i] > 1
+    }
+
     // ══════════════════════════════════════════════════════════════
     // Injectivity and surjectivity
     // ══════════════════════════════════════════════════════════════
