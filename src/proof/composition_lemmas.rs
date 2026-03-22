@@ -1429,14 +1429,18 @@ proof fn lemma_crs_shape_valid(a: LayoutSpec, b_shape: nat, b_stride: nat)
 }
 
 /// compose_recursive_single preserves total size: shape_size(result.shape) == b_shape.
+/// (Requires admissibility to ensure straddle case has exact divisibility.)
 proof fn lemma_crs_size(a: LayoutSpec, b_shape: nat, b_stride: nat)
-    requires a.valid(), b_shape > 0,
+    requires compose_recursive_admissible(a, b_shape, b_stride),
     ensures shape_size(compose_recursive_single(a, b_shape, b_stride).shape) == b_shape,
     decreases a.shape.len(),
 {
     if a.shape.len() == 0 {
+        assert(compose_recursive_single(a, b_shape, b_stride).shape =~= seq![b_shape]);
         lemma_shape_size_single(b_shape);
-    } else {
+        return;
+    }
+    {
         let m = a.shape.first();
         let a_rest = LayoutSpec { shape: a.shape.skip(1), stride: a.stride.skip(1) };
         assert(a_rest.valid()) by {
@@ -1444,38 +1448,62 @@ proof fn lemma_crs_size(a: LayoutSpec, b_shape: nat, b_stride: nat)
             implies #[trigger] a_rest.shape[i] > 0 by { assert(a_rest.shape[i] == a.shape[i + 1]); };
         };
         if b_stride * b_shape <= m {
+            assert(compose_recursive_single(a, b_shape, b_stride).shape =~= seq![b_shape]);
             lemma_shape_size_single(b_shape);
+            return;
         } else if b_stride < m && m % b_stride == 0 && b_shape > 0 {
+            // Unfold admissibility for straddle branch
+            assert(b_stride > 0nat) by { if b_stride == 0 { assert(b_stride * b_shape == 0nat); } };
             let q = m / b_stride;
             assert(q > 0nat) by {
                 vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
                 if q == 0 { vstd::arithmetic::mul::lemma_mul_basics(b_stride as int); }
             };
+            // From admissibility: b_shape % q == 0
+            assert(b_shape % q == 0nat);
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(b_shape as int, q as int);
             let bq = b_shape / q;
-            assert(bq > 0nat) by {
-                if bq == 0 {
-                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(b_shape as int, q as int);
-                    vstd::arithmetic::mul::lemma_mul_basics(q as int);
-                    assert(b_shape < q);
-                    assert(b_stride * q == m) by {
-                        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
-                    };
-                    assert(b_stride * b_shape < m) by (nonlinear_arith)
-                        requires b_shape < q, b_stride > 0, b_stride * q == m;
-                }
-            };
-            lemma_crs_size(a_rest, bq, 1);
-            // result.shape = [q] ++ rest.shape, size = q * shape_size(rest.shape) = q * bq
+            assert(b_shape == q * bq);
+            assert(bq > 0nat) by { if bq == 0 { vstd::arithmetic::mul::lemma_mul_basics(q as int); } };
+            // IH
+            if a_rest.shape.len() > 0 {
+                lemma_crs_size(a_rest, bq, 1);
+            } else {
+                lemma_shape_size_single(bq);
+            }
             let rest = compose_recursive_single(a_rest, bq, 1);
+            // result.shape =~= [q] ++ rest.shape
+            assert(compose_recursive_single(a, b_shape, b_stride).shape
+                =~= seq![q].add(rest.shape));
+            // shape_size([q] ++ rest.shape) = q * shape_size(rest.shape) = q * bq
             crate::proof::product_lemmas::lemma_shape_size_append(seq![q], rest.shape);
             lemma_shape_size_single(q);
-            // q * bq == b_shape (from fundamental_div_mod when b_shape % q == 0)
+            // q * bq == b_shape
             vstd::arithmetic::div_mod::lemma_fundamental_div_mod(b_shape as int, q as int);
             vstd::arithmetic::mul::lemma_mul_is_commutative(q as int, bq as int);
+            return;
         } else if b_stride >= m && b_stride % m == 0 {
-            lemma_crs_size(a_rest, b_shape, b_stride / m);
+            // Unfold admissibility for skip branch
+            assert(!(b_stride * b_shape <= m));
+            assert(!(b_stride > 0 && b_stride < m && m % b_stride == 0));
+            assert(b_stride >= m && b_stride % m == 0);
+            if a_rest.shape.len() > 0 {
+                assert(compose_recursive_admissible(a_rest, b_shape, b_stride / m));
+                lemma_crs_size(a_rest, b_shape, b_stride / m);
+            } else {
+                // 0-mode: result = (b_shape):(0), size = b_shape
+                assert(compose_recursive_single(a_rest, b_shape, b_stride / m).shape =~= seq![b_shape]);
+                lemma_shape_size_single(b_shape);
+            }
+            // Spec unfolds: compose_recursive_single(a,...) == compose_recursive_single(a_rest,...)
+            let result = compose_recursive_single(a, b_shape, b_stride);
+            let result_rest = compose_recursive_single(a_rest, b_shape, b_stride / m);
+            assert(result.shape =~= result_rest.shape);
+            return;
         } else {
+            assert(compose_recursive_single(a, b_shape, b_stride).shape =~= seq![b_shape]);
             lemma_shape_size_single(b_shape);
+            return;
         }
     }
 }

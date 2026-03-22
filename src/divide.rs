@@ -129,4 +129,28 @@ pub open spec fn divide_mode_admissible(a: &LayoutSpec, n: nat) -> bool {
     &&& a.shape.first() % n == 0
 }
 
+/// CuTe-style logical divide using recursive composition.
+///
+/// Unlike `logical_divide` (which uses `compose` — only correct for rank-1/column-major A)
+/// and `logical_divide_extended` (which uses `compose_extended` — same limitation),
+/// this uses `compose_recursive` which correctly handles mode boundary crossings.
+///
+/// `compose_recursive_single` has been formally proved correct:
+///   compose_recursive_single(A, N, r).offset(x) == A.offset(r * x)
+/// for all admissible inputs (see `compose_recursive_admissible`).
+///
+/// The divide is: compose_recursive(A, (B, complement(B, size(A)))).
+pub open spec fn logical_divide_recursive(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
+    recommends divide_admissible(a, b),
+{
+    let m = shape_size(a.shape);
+    let c = complement(b, m);
+    let a_val = LayoutSpec { shape: a.shape, stride: a.stride };
+    let zipped = LayoutSpec {
+        shape: b.shape.add(c.shape),
+        stride: b.stride.add(c.stride),
+    };
+    compose_recursive(a_val, zipped)
+}
+
 } // verus!
