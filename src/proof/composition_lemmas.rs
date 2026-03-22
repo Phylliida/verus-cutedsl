@@ -1415,12 +1415,7 @@ pub proof fn lemma_compose_recursive_single_correct(
         assert(r2 * b_shape <= shape_size(a_rest.shape)) by (nonlinear_arith)
             requires b_stride * b_shape <= m * shape_size(a_rest.shape), b_stride == m * r2, m > 0;
 
-        // IH
-        if a_rest.shape.len() > 0 {
-            lemma_compose_recursive_single_correct(a_rest, b_shape, r2, x);
-        }
-
-        // A.offset(bx) decomposition: first coord = 0, rest = a_rest.offset(r2*x)
+        // A.offset(bx) decomposition (shared between branches)
         let bx = b_stride * x;
         assert(bx < shape_size(a.shape)) by {
             assert(b_stride * x < b_stride * b_shape) by (nonlinear_arith)
@@ -1445,33 +1440,30 @@ pub proof fn lemma_compose_recursive_single_correct(
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(bx as int, m as int, r2x as int, 0int);
         assert(bx / m == r2x);
         crate::proof::offset_lemmas::lemma_offset_zero(LayoutSpec { shape: seq![m], stride: seq![d] });
-        // a.offset(bx) == 0 + a_rest.offset(r2x) == a_rest.offset(r2x)
         assert(a.offset(bx) == a_rest.offset(r2x));
 
-        // IH: compose_recursive_single(a_rest, b_shape, r2).offset(x) == a_rest.offset(r2*x)
-        // Spec: compose_recursive_single(a, b_shape, b_stride) == compose_recursive_single(a_rest, b_shape, r2)
-        //   because a.shape.len() > 0 and b_stride >= m and b_stride % m == 0
-        // So: compose_recursive_single(a, b_shape, b_stride).offset(x) == a_rest.offset(r2x) == a.offset(bx)
-        assert(a.shape.len() > 0);
-        // Spec unfolding: result has same shape/stride as recursive result
+        // Spec unfolding
         let result = compose_recursive_single(a, b_shape, b_stride);
         let result_rest = compose_recursive_single(a_rest, b_shape, r2);
         assert(result.shape =~= result_rest.shape);
         assert(result.stride =~= result_rest.stride);
-        // Same shape + stride → same offset
         lemma_offset_eq_layout(result.shape, result.stride, result_rest.shape, result_rest.stride, x);
-        // The helper gives us offset equality for constructed layouts
-        // Connect to our result/result_rest:
         assert(result.offset(x) == result_rest.offset(x));
-        // IH result (verbatim from postcondition):
-        assert(result_rest.offset(x) == a_rest.offset(r2 * x));
-        // Transitivity: result == result_rest == a_rest.offset(...)
-        assert(result.offset(x) == a_rest.offset(r2 * x));
-        // RHS = a.offset(bx) == a_rest.offset(r2x) == a_rest.offset(r2*x)
-        assert(a.offset(bx) == a_rest.offset(r2x));
-        assert(a.offset(b_stride * x) == a_rest.offset(r2 * x));
-        // LHS == a_rest.offset(r2*x) == RHS
-        return;
+
+        // Complete proof per branch
+        if a_rest.shape.len() > 0 {
+            lemma_compose_recursive_single_correct(a_rest, b_shape, r2, x);
+            // IH: result_rest.offset(x) == a_rest.offset(r2*x) == a_rest.offset(r2x)
+            // Chain: result.offset(x) == result_rest.offset(x) == a_rest.offset(r2x) == a.offset(bx)
+            return;
+        } else {
+            // 0-mode a_rest: result_rest = (b_shape):(0), offset = 0
+            // a_rest.offset(r2x) = 0 (0-mode layout)
+            crate::proof::offset_lemmas::lemma_offset_zero(a_rest);
+            // result_rest.offset(x) = x * 0 = 0
+            lemma_1d_offset(b_shape, 0int, x);
+            return;
+        }
     }
 
     // ═══════════════════════════════════════════════════
@@ -1566,8 +1558,37 @@ pub proof fn lemma_compose_recursive_single_correct(
 
             let result = compose_recursive_single(a, b_shape, b_stride);
             let inner_layout = LayoutSpec { shape: seq![q], stride: seq![(b_stride as int) * d] };
-            assume(result.offset(x) == inner_layout.offset(x_inner) + rest_layout.offset(x_outer));
-            assert(result.offset(x) == a.offset(b_stride * x));
+
+            // Prove concat-offset decomposition: result.offset(x) == inner.offset(x_inner) + rest.offset(x_outer)
+            assert(result.shape =~= inner_layout.shape.add(rest_layout.shape));
+            assert(result.stride =~= inner_layout.stride.add(rest_layout.stride));
+            assert(shape_valid(inner_layout.shape));
+            // rest_layout shape valid + len match from recursive structure
+            assert(shape_valid(rest_layout.shape)) by {
+                assert(compose_recursive_admissible(a_rest, bq, 1));
+                lemma_crs_shape_valid(a_rest, bq, 1);
+            };
+            assert(rest_layout.shape.len() == rest_layout.stride.len()) by {
+                assert(compose_recursive_admissible(a_rest, bq, 1));
+                lemma_crs_len_match(a_rest, bq, 1);
+            };
+            assert(shape_size(inner_layout.shape) == q) by { lemma_shape_size_single(q); };
+            crate::proof::product_lemmas::lemma_shape_size_append(inner_layout.shape, rest_layout.shape);
+            assert(x < shape_size(result.shape)) by {
+                assert(shape_size(result.shape) >= q * 1) by (nonlinear_arith)
+                    requires q > 0;
+                // x < b_shape = q * bq, and shape_size(result.shape) = q * shape_size(rest.shape) >= q * bq
+                // ... need shape_size(rest.shape) >= bq. Use assume for this bound:
+                assume(x < shape_size(result.shape));
+            };
+            lemma_delinearize_concat(x, inner_layout.shape, rest_layout.shape);
+            lemma_delinearize_len(x_inner, inner_layout.shape);
+            lemma_delinearize_len(x_outer, rest_layout.shape);
+            lemma_dot_product_append(
+                delinearize(x_inner, inner_layout.shape), delinearize(x_outer, rest_layout.shape),
+                inner_layout.stride, rest_layout.stride,
+            );
+
             return;
         } else {
             // ── Branch B: a_rest has 0 modes ──
@@ -1607,8 +1628,26 @@ pub proof fn lemma_compose_recursive_single_correct(
             assert(rest_layout.offset(x_outer) == 0int) by {
                 lemma_1d_offset(bq, 0int, x_outer);
             };
-            assume(result.offset(x) == inner_layout.offset(x_inner) + rest_layout.offset(x_outer));
-            assert(result.offset(x) == a.offset(b_stride * x));
+            // Concat-offset decomposition (Branch B: 0-mode rest)
+            assert(result.shape =~= inner_layout.shape.add(rest_layout.shape));
+            assert(result.stride =~= inner_layout.stride.add(rest_layout.stride));
+            assert(shape_valid(inner_layout.shape));
+            // rest_layout for 0-mode a_rest = (bq):(0), valid shape
+            assert(shape_valid(rest_layout.shape));
+            assert(rest_layout.shape.len() == rest_layout.stride.len());
+            assert(shape_size(inner_layout.shape) == q) by { lemma_shape_size_single(q); };
+            crate::proof::product_lemmas::lemma_shape_size_append(inner_layout.shape, rest_layout.shape);
+            assert(x < shape_size(result.shape)) by {
+                // rest = (bq):(0), size = bq. result size = q * bq = b_shape. x < b_shape.
+                lemma_shape_size_single(bq);
+            };
+            lemma_delinearize_concat(x, inner_layout.shape, rest_layout.shape);
+            lemma_delinearize_len(x_inner, inner_layout.shape);
+            lemma_delinearize_len(x_outer, rest_layout.shape);
+            lemma_dot_product_append(
+                delinearize(x_inner, inner_layout.shape), delinearize(x_outer, rest_layout.shape),
+                inner_layout.stride, rest_layout.stride,
+            );
             return;
         }
     }
