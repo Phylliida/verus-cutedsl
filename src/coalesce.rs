@@ -101,32 +101,29 @@ pub open spec fn filter_non_unit(shape: Seq<nat>, start: int) -> Seq<int>
     }
 }
 
-/// Flatten a layout: coalesce all adjacent coalesceable pairs, then remove unit modes.
+/// Partial flatten: coalesce then remove unit modes (ONE pass).
 ///
-/// WARNING: `flatten` is NOT idempotent. Removing unit modes can expose new coalesceable
-/// pairs that weren't adjacent before. For example:
-///   L = (3, 1, 2):(1, 7, 3) — fully coalesced
-///   flatten(L) = (3, 2):(1, 3) — unit mode removed, but now coalesceable!
-///   flatten(flatten(L)) = (6):(1) — different from flatten(L)
+/// WARNING: NOT idempotent! Removing unit modes can expose new coalesceable pairs.
+/// Example: L = (3, 1, 2):(1, 7, 3) → flatten_partial = (3, 2):(1, 3) — now coalesceable!
 ///
-/// For a true canonical form, use `full_flatten` which applies an extra coalesce pass.
-pub open spec fn flatten(layout: LayoutSpec) -> LayoutSpec {
+/// For a true canonical form, use `flatten` (which applies an extra coalesce pass).
+pub open spec fn flatten_partial(layout: LayoutSpec) -> LayoutSpec {
     remove_units_iter(coalesce(layout), 0)
 }
 
-/// Full flatten: coalesce, remove unit modes, then coalesce again.
+/// Flatten a layout to canonical form: coalesce, remove unit modes, then coalesce again.
 ///
-/// This produces the true canonical form of the layout's offset function.
-/// Unlike `flatten`, `full_flatten` is idempotent: `full_flatten(full_flatten(L)) == full_flatten(L)`.
+/// This is the true canonical form of the layout's offset function:
+/// - Idempotent: `flatten(flatten(L)) == flatten(L)`
+/// - No unit modes: all shape entries > 1
+/// - Fully coalesced: no adjacent coalesceable pairs
 ///
-/// The extra coalesce pass is needed because removing unit modes can expose new
-/// coalesceable pairs (see `flatten` doc for counterexample).
-// DONE: idempotence proved in lemma_full_flatten_idempotent (coalesce_lemmas.rs)
-// DONE: column-major canonicality proved in lemma_full_flatten_column_major
-// DONE: rank-1 canonicality proved in lemma_rank1_offset_equivalent_implies_equal
-// OPEN: full canonicality for arbitrary offset-equivalent layouts (deep theorem)
-pub open spec fn full_flatten(layout: LayoutSpec) -> LayoutSpec {
-    coalesce(flatten(layout))
+/// The extra coalesce pass (vs `flatten_partial`) is needed because removing unit modes
+/// can expose new coalesceable pairs.
+// Proved: idempotence (lemma_flatten_idempotent), column-major canonicality,
+// rank-1 canonicality. Full canonicality for sorted+tractable layouts also proved.
+pub open spec fn flatten(layout: LayoutSpec) -> LayoutSpec {
+    coalesce(flatten_partial(layout))
 }
 
 /// Admissibility for group_modes: all adjacent pairs in [lo, hi) are coalesceable.

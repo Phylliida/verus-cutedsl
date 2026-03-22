@@ -1183,7 +1183,8 @@ pub fn remove_units_iter_exec(layout: RuntimeLayout) -> (result: RuntimeLayout)
     current
 }
 
-/// Flatten a layout at runtime: coalesce then remove unit modes.
+/// Flatten a layout at runtime to canonical form:
+/// coalesce, remove unit modes, then coalesce again.
 pub fn flatten_exec(layout: RuntimeLayout) -> (result: RuntimeLayout)
     requires layout.wf_spec(),
     ensures
@@ -1191,12 +1192,15 @@ pub fn flatten_exec(layout: RuntimeLayout) -> (result: RuntimeLayout)
         result@ == flatten(layout@),
 {
     let ghost orig = layout@;
+    // Step 1: coalesce + remove units = flatten_partial
     let coalesced = coalesce_exec(layout);
+    let partial = remove_units_iter_exec(coalesced);
+    // Step 2: coalesce again for canonical form
     proof {
-        crate::proof::coalesce_lemmas::lemma_flatten_valid(orig);
-        crate::proof::coalesce_lemmas::lemma_flatten_size(orig);
+        crate::proof::coalesce_lemmas::lemma_flatten_partial_valid(orig);
+        crate::proof::coalesce_lemmas::lemma_flatten_partial_size(orig);
     }
-    remove_units_iter_exec(coalesced)
+    coalesce_exec(partial)
 }
 
 /// Group (merge) contiguous modes [lo, hi) into a single mode.

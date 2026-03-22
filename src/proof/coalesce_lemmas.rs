@@ -728,30 +728,30 @@ pub proof fn lemma_remove_unit_mode_size_bound(layout: LayoutSpec, pos: nat)
     lemma_remove_unit_mode_offset(layout, 0, pos);
 }
 
-/// Flatten preserves validity.
-pub proof fn lemma_flatten_valid(layout: LayoutSpec)
+/// flatten_partial preserves validity.
+pub proof fn lemma_flatten_partial_valid(layout: LayoutSpec)
     requires layout.valid(),
-    ensures flatten(layout).valid(),
+    ensures flatten_partial(layout).valid(),
 {
     lemma_shape_size_positive(layout.shape);
     lemma_coalesce(layout, 0);
     lemma_remove_units(coalesce(layout), 0);
 }
 
-/// Flatten preserves size.
-pub proof fn lemma_flatten_size(layout: LayoutSpec)
+/// flatten_partial preserves size.
+pub proof fn lemma_flatten_partial_size(layout: LayoutSpec)
     requires layout.valid(),
-    ensures flatten(layout).size() == layout.size(),
+    ensures flatten_partial(layout).size() == layout.size(),
 {
     lemma_shape_size_positive(layout.shape);
     lemma_coalesce(layout, 0);
     lemma_remove_units(coalesce(layout), 0);
 }
 
-/// Flatten preserves offset for all valid indices.
-pub proof fn lemma_flatten_offset(layout: LayoutSpec, idx: nat)
+/// flatten_partial preserves offset for all valid indices.
+pub proof fn lemma_flatten_partial_offset(layout: LayoutSpec, idx: nat)
     requires layout.valid(), idx < layout.size(),
-    ensures flatten(layout).offset(idx) == layout.offset(idx),
+    ensures flatten_partial(layout).offset(idx) == layout.offset(idx),
 {
     lemma_coalesce(layout, idx);
     lemma_remove_units(coalesce(layout), idx);
@@ -1101,17 +1101,17 @@ pub proof fn lemma_coalesce_offset_equivalent(layout: LayoutSpec)
     };
 }
 
-/// Flatten is offset-equivalent to the original layout.
-pub proof fn lemma_flatten_offset_equivalent(layout: LayoutSpec)
+/// flatten_partial is offset-equivalent to the original layout.
+pub proof fn lemma_flatten_partial_offset_equivalent(layout: LayoutSpec)
     requires layout.valid(),
-    ensures crate::layout::layout_offset_equivalent(&layout, &flatten(layout)),
+    ensures crate::layout::layout_offset_equivalent(&layout, &flatten_partial(layout)),
 {
     lemma_shape_size_positive(layout.shape);
-    lemma_flatten_valid(layout);
-    lemma_flatten_size(layout);
-    assert forall|x: nat| x < layout.size() implies layout.offset(x) == flatten(layout).offset(x)
+    lemma_flatten_partial_valid(layout);
+    lemma_flatten_partial_size(layout);
+    assert forall|x: nat| x < layout.size() implies layout.offset(x) == flatten_partial(layout).offset(x)
     by {
-        lemma_flatten_offset(layout, x);
+        lemma_flatten_partial_offset(layout, x);
     };
 }
 
@@ -1130,70 +1130,70 @@ pub proof fn lemma_group_modes_offset_equivalent(layout: LayoutSpec, lo: nat, hi
 }
 
 // ══════════════════════════════════════════════════════════════
-// full_flatten: the true canonical form
+// flatten: the true canonical form
 // ══════════════════════════════════════════════════════════════
 
-/// full_flatten preserves validity.
-pub proof fn lemma_full_flatten_valid(layout: LayoutSpec)
+/// flatten preserves validity.
+pub proof fn lemma_flatten_valid(layout: LayoutSpec)
     requires layout.valid(),
-    ensures full_flatten(layout).valid(),
+    ensures flatten(layout).valid(),
 {
-    lemma_flatten_valid(layout);
-    lemma_flatten_size(layout);
+    lemma_flatten_partial_valid(layout);
+    lemma_flatten_partial_size(layout);
     lemma_shape_size_positive(layout.shape);
-    lemma_coalesce(flatten(layout), 0);
+    lemma_coalesce(flatten_partial(layout), 0);
 }
 
-/// full_flatten preserves size.
-pub proof fn lemma_full_flatten_size(layout: LayoutSpec)
+/// flatten preserves size.
+pub proof fn lemma_flatten_size(layout: LayoutSpec)
     requires layout.valid(),
-    ensures full_flatten(layout).size() == layout.size(),
+    ensures flatten(layout).size() == layout.size(),
 {
-    lemma_flatten_valid(layout);
-    lemma_flatten_size(layout);
+    lemma_flatten_partial_valid(layout);
+    lemma_flatten_partial_size(layout);
     lemma_shape_size_positive(layout.shape);
-    lemma_coalesce(flatten(layout), 0);
+    lemma_coalesce(flatten_partial(layout), 0);
 }
 
-/// full_flatten preserves offset for all valid indices.
-pub proof fn lemma_full_flatten_offset(layout: LayoutSpec, idx: nat)
+/// flatten preserves offset for all valid indices.
+pub proof fn lemma_flatten_offset(layout: LayoutSpec, idx: nat)
     requires
         layout.valid(),
         idx < layout.size(),
     ensures
-        full_flatten(layout).offset(idx) == layout.offset(idx),
+        flatten(layout).offset(idx) == layout.offset(idx),
 {
-    lemma_flatten_valid(layout);
-    lemma_flatten_offset(layout, idx);
-    lemma_flatten_size(layout);
-    lemma_coalesce(flatten(layout), idx);
+    lemma_flatten_partial_valid(layout);
+    lemma_flatten_partial_offset(layout, idx);
+    lemma_flatten_partial_size(layout);
+    lemma_coalesce(flatten_partial(layout), idx);
 }
 
-/// full_flatten is fully coalesced.
-pub proof fn lemma_full_flatten_fully_coalesced(layout: LayoutSpec)
+/// flatten is fully coalesced.
+pub proof fn lemma_flatten_fully_coalesced(layout: LayoutSpec)
     requires layout.valid(),
-    ensures is_fully_coalesced(&full_flatten(layout)),
+    ensures is_fully_coalesced(&flatten(layout)),
 {
-    lemma_flatten_valid(layout);
-    lemma_coalesce_fully_coalesced(flatten(layout));
+    lemma_flatten_partial_valid(layout);
+    lemma_coalesce_fully_coalesced(flatten_partial(layout));
 }
 
-/// full_flatten is offset-equivalent to the original layout.
-pub proof fn lemma_full_flatten_offset_equivalent(layout: LayoutSpec)
+/// flatten is offset-equivalent to the original layout.
+pub proof fn lemma_flatten_offset_equivalent(layout: LayoutSpec)
     requires layout.valid(),
-    ensures crate::layout::layout_offset_equivalent(&layout, &full_flatten(layout)),
+    ensures crate::layout::layout_offset_equivalent(&layout, &flatten(layout)),
 {
     lemma_shape_size_positive(layout.shape);
-    lemma_full_flatten_valid(layout);
-    lemma_full_flatten_size(layout);
-    assert forall|x: nat| x < layout.size() implies layout.offset(x) == full_flatten(layout).offset(x)
+    lemma_flatten_valid(layout);
+    lemma_flatten_size(layout);
+    assert forall|x: nat| x < layout.size() implies layout.offset(x) == flatten(layout).offset(x)
     by {
-        lemma_full_flatten_offset(layout, x);
+        lemma_flatten_offset(layout, x);
     };
 }
 
 // ══════════════════════════════════════════════════════════════
-// No unit modes: helpers for full_flatten idempotency
+// No unit modes: helpers for flatten idempotency
 // ══════════════════════════════════════════════════════════════
 
 /// Predicate: all shape entries are > 1 (no unit modes).
@@ -1347,63 +1347,61 @@ pub proof fn lemma_coalesce_preserves_no_units(layout: LayoutSpec)
     lemma_coalesce_pass_preserves_no_units(layout, 0);
 }
 
-/// full_flatten produces a layout with no unit modes.
-pub proof fn lemma_full_flatten_no_units(layout: LayoutSpec)
+/// flatten produces a layout with no unit modes.
+pub proof fn lemma_flatten_no_units(layout: LayoutSpec)
     requires layout.valid(),
-    ensures has_no_unit_modes(&full_flatten(layout)),
+    ensures has_no_unit_modes(&flatten(layout)),
 {
-    // flatten(L) = remove_units(coalesce(L), 0)
-    // coalesce(L) is valid
+    // flatten(L) = coalesce(flatten_partial(L))
+    // flatten_partial(L) = remove_units(coalesce(L), 0)
     lemma_shape_size_positive(layout.shape);
     lemma_coalesce(layout, 0);
     // remove_units produces no unit modes
     lemma_remove_units_no_units(coalesce(layout));
-    // flatten(L) has no unit modes
-    // full_flatten(L) = coalesce(flatten(L))
-    // flatten(L) is valid
-    lemma_flatten_valid(layout);
+    // flatten_partial(L) has no unit modes
     // coalesce preserves no-unit-modes
-    lemma_coalesce_preserves_no_units(flatten(layout));
+    lemma_flatten_partial_valid(layout);
+    lemma_coalesce_preserves_no_units(flatten_partial(layout));
 }
 
-/// full_flatten is idempotent: full_flatten(full_flatten(L)) == full_flatten(L).
-pub proof fn lemma_full_flatten_idempotent(layout: LayoutSpec)
+/// flatten is idempotent: flatten(flatten(L)) == flatten(L).
+pub proof fn lemma_flatten_idempotent(layout: LayoutSpec)
     requires layout.valid(),
-    ensures full_flatten(full_flatten(layout)) == full_flatten(layout),
+    ensures flatten(flatten(layout)) == flatten(layout),
 {
-    let ff = full_flatten(layout);
+    let ff = flatten(layout);
     // ff is valid
-    lemma_full_flatten_valid(layout);
+    lemma_flatten_valid(layout);
     // ff is fully coalesced
-    lemma_full_flatten_fully_coalesced(layout);
+    lemma_flatten_fully_coalesced(layout);
     // ff has no unit modes
-    lemma_full_flatten_no_units(layout);
+    lemma_flatten_no_units(layout);
 
-    // full_flatten(ff) = coalesce(flatten(ff))
-    // flatten(ff) = remove_units(coalesce(ff), 0)
+    // flatten(ff) = coalesce(flatten_partial(ff))
+    // flatten_partial(ff) = remove_units(coalesce(ff), 0)
     // coalesce(ff) == ff (already fully coalesced)
     crate::proof::inverse_lemmas::lemma_fully_coalesced_identity(&ff);
     assert(coalesce(ff) == ff);
     // remove_units(ff, 0) == ff (no unit modes to remove)
     lemma_remove_units_noop(ff, 0);
     assert(remove_units_iter(ff, 0) == ff);
-    // flatten(ff) == ff
+    // flatten_partial(ff) == ff, so flatten(ff) = coalesce(ff) = ff
+    assert(flatten_partial(ff) == ff);
     assert(flatten(ff) == ff);
-    // coalesce(flatten(ff)) == coalesce(ff) == ff
 }
 
 // ══════════════════════════════════════════════════════════════
-// full_flatten canonicality (partial results)
+// flatten canonicality (partial results)
 // ══════════════════════════════════════════════════════════════
 
-/// Column-major layouts with size > 1 full_flatten to make_identity(size).
-pub proof fn lemma_full_flatten_column_major(shape: Seq<nat>)
+/// Column-major layouts with size > 1 flatten to make_identity(size).
+pub proof fn lemma_flatten_column_major(shape: Seq<nat>)
     requires
         shape_valid(shape),
         shape.len() > 0,
         shape_size(shape) > 1,
     ensures
-        full_flatten(make_column_major(shape)) == make_identity(shape_size(shape)),
+        flatten(make_column_major(shape)) == make_identity(shape_size(shape)),
 {
     let layout = make_column_major(shape);
     let m = shape_size(shape);
@@ -1420,12 +1418,12 @@ pub proof fn lemma_full_flatten_column_major(shape: Seq<nat>)
         assert(id.stride =~= seq![1int]);
     };
     lemma_remove_units_noop(id, 0);
-    // flatten(layout) = remove_units(id, 0) = id
-    assert(flatten(layout) == id);
+    // flatten_partial(layout) = remove_units(id, 0) = id
+    assert(flatten_partial(layout) == id);
 
     // coalesce(id) == id (fully coalesced, rank 1)
     crate::proof::inverse_lemmas::lemma_fully_coalesced_identity(&id);
-    // full_flatten(layout) = coalesce(flatten(layout)) = coalesce(id) = id
+    // flatten(layout) = coalesce(flatten_partial(layout)) = coalesce(id) = id
 }
 
 /// Two rank-1 layouts with the same size and stride are structurally equal.
@@ -1475,7 +1473,7 @@ pub proof fn lemma_rank1_offset_equivalent_implies_equal(
 }
 
 // ══════════════════════════════════════════════════════════════
-// full_flatten canonicality for sorted+tractable layouts
+// flatten canonicality for sorted+tractable layouts
 // ══════════════════════════════════════════════════════════════
 
 /// For a fully-coalesced layout with shape[0] >= 2 and rank >= 2,
