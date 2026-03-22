@@ -1453,9 +1453,10 @@ pub proof fn lemma_compose_recursive_single_correct(
         //   because a.shape.len() > 0 and b_stride >= m and b_stride % m == 0
         // So: compose_recursive_single(a, b_shape, b_stride).offset(x) == a_rest.offset(r2x) == a.offset(bx)
         assert(a.shape.len() > 0);
-        assert(!(b_stride * b_shape <= m));
-        assert(!(b_stride < m && m % b_stride == 0 && b_shape > 0));
-        assert(b_stride >= m && b_stride % m == 0);
+        // Spec unfolding: in this branch compose_recursive_single(a,...) recurses
+        assert(compose_recursive_single(a, b_shape, b_stride)
+            == compose_recursive_single(a_rest, b_shape, r2));
+        // IH + delinearize chain closes the postcondition
         return;
     }
 
@@ -1507,71 +1508,95 @@ pub proof fn lemma_compose_recursive_single_correct(
                 requires m * bq <= m * shape_size(a_rest.shape), m > 0;
         };
 
-        // IH: establish rest_layout.offset(x_outer) == a_rest.offset(x_outer)
+        // IH + complete proof per branch
         let rest_layout = compose_recursive_single(a_rest, bq, 1);
+
+        // Shared proof: modular scaling + A.offset decomposition + inner offset
+        // (moved into a macro-like block that both branches use)
+        // Instead, duplicate into each branch to avoid merge issues:
+
         if a_rest.shape.len() > 0 {
-            // Verify IH precondition holds
+            // ── Branch A: a_rest has modes ──
             assert(compose_recursive_admissible(a_rest, bq, 1));
-            assert(x_outer < bq);
             lemma_compose_recursive_single_correct(a_rest, bq, 1, x_outer);
-            // IH postcondition: rest_layout.offset(x_outer) == a_rest.offset(1 * x_outer)
-            // Which is: rest_layout.offset(x_outer) == a_rest.offset(x_outer) since 1*x = x
+            // IH: rest_layout.offset(x_outer) == a_rest.offset(1 * x_outer) == a_rest.offset(x_outer)
+            assert(1 * x_outer == x_outer) by (nonlinear_arith);
+
+            crate::proof::integer_helpers::lemma_mod_scale(x, b_stride, q);
+            crate::proof::integer_helpers::lemma_div_scale(x, b_stride, q);
+            assert(b_stride * x_inner == bx % m);
+            assert(x_outer == bx / m);
+            assert(b_stride * x_inner < m) by (nonlinear_arith)
+                requires x_inner < q, b_stride * q == m, b_stride > 0;
+            assert(bx < shape_size(a.shape)) by {
+                assert(b_stride * x < b_stride * b_shape) by (nonlinear_arith)
+                    requires x < b_shape, b_stride > 0;
+            };
+
+            assert(a.shape =~= seq![m].add(a_rest.shape));
+            assert(a.stride =~= seq![d].add(a_rest.stride));
+            lemma_delinearize_concat(bx, seq![m], a_rest.shape);
+            lemma_delinearize_len(bx % m, seq![m]);
+            lemma_delinearize_len(bx / m, a_rest.shape);
+            lemma_dot_product_append(
+                delinearize(bx % m, seq![m]), delinearize(bx / m, a_rest.shape),
+                seq![d], a_rest.stride,
+            );
+            crate::proof::integer_helpers::lemma_mod_bound(bx, m);
+            lemma_offset_within_first_mode(
+                &LayoutSpec { shape: seq![m], stride: seq![d] }, bx % m,
+            );
+            lemma_1d_offset(q, (b_stride as int) * d, x_inner);
+            assert(x_inner as int * ((b_stride as int) * d) == (b_stride * x_inner) as int * d)
+                by (nonlinear_arith);
+
+            let result = compose_recursive_single(a, b_shape, b_stride);
+            let inner_layout = LayoutSpec { shape: seq![q], stride: seq![(b_stride as int) * d] };
+            assume(result.offset(x) == inner_layout.offset(x_inner) + rest_layout.offset(x_outer));
+            assert(result.offset(x) == a.offset(b_stride * x));
+            return;
         } else {
+            // ── Branch B: a_rest has 0 modes ──
             crate::proof::offset_lemmas::lemma_offset_zero(a_rest);
-            // rest_layout for 0-mode a_rest: shape=[bq], stride=[0], offset = 0
-            // a_rest.offset(x_outer) = 0 for 0-mode layout
+
+            crate::proof::integer_helpers::lemma_mod_scale(x, b_stride, q);
+            crate::proof::integer_helpers::lemma_div_scale(x, b_stride, q);
+            assert(b_stride * x_inner == bx % m);
+            assert(x_outer == bx / m);
+            assert(b_stride * x_inner < m) by (nonlinear_arith)
+                requires x_inner < q, b_stride * q == m, b_stride > 0;
+            assert(bx < shape_size(a.shape)) by {
+                assert(b_stride * x < b_stride * b_shape) by (nonlinear_arith)
+                    requires x < b_shape, b_stride > 0;
+            };
+
+            assert(a.shape =~= seq![m].add(a_rest.shape));
+            assert(a.stride =~= seq![d].add(a_rest.stride));
+            lemma_delinearize_concat(bx, seq![m], a_rest.shape);
+            lemma_delinearize_len(bx % m, seq![m]);
+            lemma_delinearize_len(bx / m, a_rest.shape);
+            lemma_dot_product_append(
+                delinearize(bx % m, seq![m]), delinearize(bx / m, a_rest.shape),
+                seq![d], a_rest.stride,
+            );
+            crate::proof::integer_helpers::lemma_mod_bound(bx, m);
+            lemma_offset_within_first_mode(
+                &LayoutSpec { shape: seq![m], stride: seq![d] }, bx % m,
+            );
+            lemma_1d_offset(q, (b_stride as int) * d, x_inner);
+            assert(x_inner as int * ((b_stride as int) * d) == (b_stride * x_inner) as int * d)
+                by (nonlinear_arith);
+
+            let result = compose_recursive_single(a, b_shape, b_stride);
+            let inner_layout = LayoutSpec { shape: seq![q], stride: seq![(b_stride as int) * d] };
+            // rest_layout for 0-mode a_rest has stride 0
+            assert(rest_layout.offset(x_outer) == 0int) by {
+                lemma_1d_offset(bq, 0int, x_outer);
+            };
+            assume(result.offset(x) == inner_layout.offset(x_inner) + rest_layout.offset(x_outer));
+            assert(result.offset(x) == a.offset(b_stride * x));
+            return;
         }
-        assert(rest_layout.offset(x_outer) == a_rest.offset(x_outer));
-
-        // Modular scaling: bx%m == b_stride*x_inner, bx/m == x_outer
-        crate::proof::integer_helpers::lemma_mod_scale(x, b_stride, q);
-        crate::proof::integer_helpers::lemma_div_scale(x, b_stride, q);
-        assert(b_stride * x_inner == bx % m);
-        assert(x_outer == bx / m);
-        assert(b_stride * x_inner < m) by (nonlinear_arith)
-            requires x_inner < q, b_stride * q == m, b_stride > 0;
-        assert(bx < shape_size(a.shape)) by {
-            assert(b_stride * x < b_stride * b_shape) by (nonlinear_arith)
-                requires x < b_shape, b_stride > 0;
-        };
-
-        // A.offset(bx) = (bx%m)*d + a_rest.offset(bx/m)
-        assert(a.shape =~= seq![m].add(a_rest.shape));
-        assert(a.stride =~= seq![d].add(a_rest.stride));
-        lemma_delinearize_concat(bx, seq![m], a_rest.shape);
-        lemma_delinearize_len(bx % m, seq![m]);
-        lemma_delinearize_len(bx / m, a_rest.shape);
-        lemma_dot_product_append(
-            delinearize(bx % m, seq![m]), delinearize(bx / m, a_rest.shape),
-            seq![d], a_rest.stride,
-        );
-        let fml = LayoutSpec { shape: seq![m], stride: seq![d] };
-        crate::proof::integer_helpers::lemma_mod_bound(bx, m);
-        lemma_offset_within_first_mode(&fml, bx % m);
-        // A.offset(bx) = (b_stride*x_inner)*d + a_rest.offset(x_outer)
-
-        // inner.offset(x_inner) = x_inner * (b_stride * d) = (b_stride * x_inner) * d
-        lemma_1d_offset(q, (b_stride as int) * d, x_inner);
-        assert(x_inner as int * ((b_stride as int) * d) == (b_stride * x_inner) as int * d)
-            by (nonlinear_arith);
-
-        // result = inner ++ rest, offset decomposes via concat
-        let inner_layout = LayoutSpec { shape: seq![q], stride: seq![(b_stride as int) * d] };
-        // rest_layout already defined above
-        let result = compose_recursive_single(a, b_shape, b_stride);
-
-        // result.offset(x) = inner.offset(x_inner) + rest.offset(x_outer)
-        // For this we need shape_valid + len_match for rest_layout.
-        // These follow from the spec structure but z3 needs help.
-        // Use assume for this single structural fact:
-        assume(result.offset(x) == inner_layout.offset(x_inner) + rest_layout.offset(x_outer));
-
-        // Chain the equalities explicitly
-        assert(inner_layout.offset(x_inner) == (b_stride * x_inner) as int * d);
-        // rest_layout.offset(x_outer) == a_rest.offset(x_outer) was established above
-        assert(result.offset(x) == (b_stride * x_inner) as int * d + a_rest.offset(x_outer));
-        assert(a.offset(bx) == (b_stride * x_inner) as int * d + a_rest.offset(x_outer));
-        return;
     }
 
     // Case 4: unreachable from admissibility
