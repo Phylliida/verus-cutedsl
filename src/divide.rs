@@ -6,7 +6,7 @@ use crate::composition::*;
 
 verus! {
 
-/// Admissibility condition for logical_divide: B must be complement-admissible w.r.t. size(A),
+/// Admissibility condition for logical_divide_linear: B must be complement-admissible w.r.t. size(A),
 /// and the composition A ∘ (B, complement(B, size(A))) must be well-formed.
 pub open spec fn divide_admissible(a: &LayoutSpec, b: &LayoutSpec) -> bool {
     &&& a.valid()
@@ -19,12 +19,12 @@ pub open spec fn divide_admissible(a: &LayoutSpec, b: &LayoutSpec) -> bool {
 
 /// Logical divide: partition A's index space into tiles of shape B.
 ///
-/// DEPRECATED: Only correct for rank-1 A or column-major A. Uses `compose` which
-/// can't handle mode boundary crossings. For general A, use `logical_divide_recursive`
+/// DEPRECATED: Only correct for rank-1 A or column-major A. Uses `compose_linear` which
+/// can't handle mode boundary crossings. For general A, use `logical_divide`
 /// (CuTe-style recursive composition) or `logical_divide_mode` (first-mode division).
 ///
-/// Formally: logical_divide(A, B) = compose(A, (B, complement(B, size(A))))
-pub open spec fn logical_divide(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
+/// Formally: logical_divide_linear(A, B) = compose_linear(A, (B, complement(B, size(A))))
+pub open spec fn logical_divide_linear(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
     recommends divide_admissible(a, b),
 {
     let m = shape_size(a.shape);
@@ -35,26 +35,26 @@ pub open spec fn logical_divide(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
         shape: b.shape.add(c.shape),
         stride: b.stride.add(c.stride),
     };
-    compose(a_val, zipped)
+    compose_linear(a_val, zipped)
 }
 
-/// The tile part of logical_divide: just A ∘ B.
+/// The tile part of logical_divide_linear: just A ∘ B.
 pub open spec fn divide_tile(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
     recommends a.valid(), b.valid(),
 {
     let a_val = LayoutSpec { shape: a.shape, stride: a.stride };
     let b_val = LayoutSpec { shape: b.shape, stride: b.stride };
-    compose(a_val, b_val)
+    compose_linear(a_val, b_val)
 }
 
-/// The rest part of logical_divide: A ∘ complement(B, size(A)).
+/// The rest part of logical_divide_linear: A ∘ complement(B, size(A)).
 pub open spec fn divide_rest(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
     recommends divide_admissible(a, b),
 {
     let m = shape_size(a.shape);
     let c = complement(b, m);
     let a_val = LayoutSpec { shape: a.shape, stride: a.stride };
-    compose(a_val, c)
+    compose_linear(a_val, c)
 }
 
 /// The number of tiles: size(A) / size(B).
@@ -64,11 +64,11 @@ pub open spec fn num_tiles(a: &LayoutSpec, b: &LayoutSpec) -> nat
     shape_size(a.shape) / shape_size(b.shape)
 }
 
-/// DEPRECATED: Use `logical_divide_recursive` instead.
+/// DEPRECATED: Use `logical_divide` instead.
 ///
 /// This was an intermediate attempt that uses `compose_extended`, which only
 /// handles prefix-product-aligned strides and falls back incorrectly for others.
-/// `logical_divide_recursive` uses the fully correct `compose_recursive`.
+/// `logical_divide` uses the fully correct `compose`.
 pub open spec fn logical_divide_extended(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
     recommends divide_admissible(a, b),
 {
@@ -82,24 +82,18 @@ pub open spec fn logical_divide_extended(a: &LayoutSpec, b: &LayoutSpec) -> Layo
     compose_extended(a_val, zipped)
 }
 
-/// Mode-aware logical divide: correctly partitions A's first mode by B.
+/// Convenience: divide A's first mode by N directly (no complement/compose).
 ///
-/// For rank-1 B = (N):(1) with N dividing A.shape[0], this divides A's first
-/// mode into tiles of size N, keeping higher modes unchanged:
+/// This is a fast-path for the common case of rank-1 B = (N):(1) with N | M_0.
+/// It directly constructs the correct result without going through `compose_single`:
 ///   shape:  (N, M_0/N, M_1, M_2, ...)
 ///   stride: (d_0, N*d_0, d_1, d_2, ...)
 ///
-/// Unlike `logical_divide` and `logical_divide_extended`, this correctly handles
-/// non-column-major multi-rank A because it respects A's mode boundaries.
+/// Use `logical_divide` for the general case (arbitrary B, arbitrary mode crossing).
+/// This function is equivalent to `logical_divide` for rank-1 B within the first mode
+/// but has a simpler proof (no admissibility predicate needed).
 ///
-/// Example showing the difference:
-///   A = (4, 3):(1, 10), B = (2):(1)
-///   logical_divide:          uses complement(B, 12) = (1, 6):(1, 2), gets wrong strides
-///   logical_divide_mode:     (2, 2, 3):(1, 2, 10) — correct! offset(x) == A.offset(x)
-///
-/// The first two modes (N, M_0/N):(d_0, N*d_0) reconstruct A's first mode via
-/// mixed-radix decomposition: x%N indexes within a tile, (x/N)%(M_0/N) indexes
-/// across tiles, and x%N + N*((x/N)%(M_0/N)) == x%M_0 by the mod-mod identity.
+/// Offset correctness proved: lemma_divide_mode_offset.
 pub open spec fn logical_divide_mode(a: &LayoutSpec, n: nat) -> LayoutSpec
     recommends
         a.valid(),
@@ -125,16 +119,16 @@ pub open spec fn divide_mode_admissible(a: &LayoutSpec, n: nat) -> bool {
 
 /// CuTe-style logical divide using recursive composition.
 ///
-/// Unlike `logical_divide` (which uses `compose` — only correct for rank-1/column-major A)
+/// Unlike `logical_divide_linear` (which uses `compose_linear` — only correct for rank-1/column-major A)
 /// and `logical_divide_extended` (which uses `compose_extended` — same limitation),
-/// this uses `compose_recursive` which correctly handles mode boundary crossings.
+/// this uses `compose` which correctly handles mode boundary crossings.
 ///
-/// `compose_recursive_single` has been formally proved correct:
-///   compose_recursive_single(A, N, r).offset(x) == A.offset(r * x)
-/// for all admissible inputs (see `compose_recursive_admissible`).
+/// `compose_single` has been formally proved correct:
+///   compose_single(A, N, r).offset(x) == A.offset(r * x)
+/// for all admissible inputs (see `compose_single_admissible`).
 ///
-/// The divide is: compose_recursive(A, (B, complement(B, size(A)))).
-pub open spec fn logical_divide_recursive(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
+/// The divide is: compose(A, (B, complement(B, size(A)))).
+pub open spec fn logical_divide(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
     recommends divide_admissible(a, b),
 {
     let m = shape_size(a.shape);
@@ -144,7 +138,7 @@ pub open spec fn logical_divide_recursive(a: &LayoutSpec, b: &LayoutSpec) -> Lay
         shape: b.shape.add(c.shape),
         stride: b.stride.add(c.stride),
     };
-    compose_recursive(a_val, zipped)
+    compose(a_val, zipped)
 }
 
 } // verus!

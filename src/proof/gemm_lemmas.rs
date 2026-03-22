@@ -616,7 +616,7 @@ pub proof fn lemma_s2r_covers_mma(
 {
 }
 
-/// Master pipeline correctness: all stages compose correctly.
+/// Master pipeline correctness: all stages compose_linear correctly.
 pub proof fn lemma_gemm_pipeline_correct(
     m: nat, n: nat, k: nat,
     bm: nat, bn: nat, bk: nat,
@@ -1656,7 +1656,7 @@ pub proof fn lemma_smem_divide_identity(
         thread_tile.stride =~= column_major_strides(thread_tile.shape),
         x < shape_size(smem_base.shape),
     ensures
-        logical_divide(smem_base, thread_tile).offset(x) == x as int,
+        logical_divide_linear(smem_base, thread_tile).offset(x) == x as int,
 {
     crate::proof::divide_lemmas::lemma_divide_offset_column_major(smem_base, thread_tile, x);
 }
@@ -1677,13 +1677,13 @@ pub proof fn lemma_smem_swizzle_divide_injective(
     ensures
         forall|i: nat, j: nat|
             i < shape_size(smem_base.shape) && j < shape_size(smem_base.shape) && i != j
-            ==> swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(i) as nat, b_bits, m_bits, s_bits)
-                != swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(j) as nat, b_bits, m_bits, s_bits),
+            ==> swizzle(#[trigger] logical_divide_linear(smem_base, thread_tile).offset(i) as nat, b_bits, m_bits, s_bits)
+                != swizzle(#[trigger] logical_divide_linear(smem_base, thread_tile).offset(j) as nat, b_bits, m_bits, s_bits),
 {
     let sz = shape_size(smem_base.shape);
     // First establish identity offset for all elements
     assert forall|x: nat| x < sz implies
-        #[trigger] logical_divide(smem_base, thread_tile).offset(x) == x as int
+        #[trigger] logical_divide_linear(smem_base, thread_tile).offset(x) == x as int
     by {
         lemma_smem_divide_identity(smem_base, thread_tile, x);
     };
@@ -1695,11 +1695,11 @@ pub proof fn lemma_smem_swizzle_divide_injective(
     assert forall|i: nat, j: nat|
         i < sz && j < sz && i != j
     implies
-        swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(i) as nat, b_bits, m_bits, s_bits)
-        != swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(j) as nat, b_bits, m_bits, s_bits)
+        swizzle(#[trigger] logical_divide_linear(smem_base, thread_tile).offset(i) as nat, b_bits, m_bits, s_bits)
+        != swizzle(#[trigger] logical_divide_linear(smem_base, thread_tile).offset(j) as nat, b_bits, m_bits, s_bits)
     by {
-        assert(logical_divide(smem_base, thread_tile).offset(i) == i as int);
-        assert(logical_divide(smem_base, thread_tile).offset(j) == j as int);
+        assert(logical_divide_linear(smem_base, thread_tile).offset(i) == i as int);
+        assert(logical_divide_linear(smem_base, thread_tile).offset(j) == j as int);
         // i, j < sz <= pow2(m+s+b), and i != j, so swizzle(i) != swizzle(j)
         assert(i < pow2(m_bits + s_bits + b_bits));
         assert(j < pow2(m_bits + s_bits + b_bits));
@@ -1718,8 +1718,8 @@ pub proof fn lemma_sm80_smem_tile_swizzle_divide(
     ensures
         forall|i: nat, j: nat|
             i < shape_size(smem_base.shape) && j < shape_size(smem_base.shape) && i != j
-            ==> swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(i) as nat, 3, 0, 3)
-                != swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(j) as nat, 3, 0, 3),
+            ==> swizzle(#[trigger] logical_divide_linear(smem_base, thread_tile).offset(i) as nat, 3, 0, 3)
+                != swizzle(#[trigger] logical_divide_linear(smem_base, thread_tile).offset(j) as nat, 3, 0, 3),
 {
     lemma_smem_swizzle_divide_injective(smem_base, thread_tile, 3, 0, 3);
 }

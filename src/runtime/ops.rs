@@ -74,10 +74,10 @@ pub fn compose_exec(a: &RuntimeLayout, b: &RuntimeLayout) -> (result: RuntimeLay
         forall|i: int| 0 <= i < b@.shape.len() ==>
             (#[trigger] b@.stride[i]) * a@.stride.first() >= i64::MIN as int &&
             b@.stride[i] * a@.stride.first() <= i64::MAX as int,
-        shape_size(compose(a@, b@).shape) <= u64::MAX as nat,
+        shape_size(compose_linear(a@, b@).shape) <= u64::MAX as nat,
     ensures
         result.wf_spec(),
-        result@ == compose(a@, b@),
+        result@ == compose_linear(a@, b@),
 {
     let mut result_shape: Vec<u64> = Vec::new();
     let mut result_stride: Vec<i64> = Vec::new();
@@ -95,17 +95,17 @@ pub fn compose_exec(a: &RuntimeLayout, b: &RuntimeLayout) -> (result: RuntimeLay
             a@.shape.len() > 0,
             result_shape@.len() == i,
             result_stride@.len() == i,
-            compose(a@, b@).shape.len() == b@.shape.len(),
-            compose(a@, b@).stride.len() == b@.shape.len(),
+            compose_linear(a@, b@).shape.len() == b@.shape.len(),
+            compose_linear(a@, b@).stride.len() == b@.shape.len(),
             forall|j: int| 0 <= j < b@.stride.len() ==> #[trigger] b@.stride[j] >= 0,
             forall|j: int| 0 <= j < b@.shape.len() ==>
                 (#[trigger] b@.stride[j]) * a@.stride.first() >= i64::MIN as int &&
                 b@.stride[j] * a@.stride.first() <= i64::MAX as int,
-            shape_size(compose(a@, b@).shape) <= u64::MAX as nat,
+            shape_size(compose_linear(a@, b@).shape) <= u64::MAX as nat,
             forall|j: int| 0 <= j < i as int ==>
-                #[trigger] result_shape@[j] as nat == compose(a@, b@).shape[j],
+                #[trigger] result_shape@[j] as nat == compose_linear(a@, b@).shape[j],
             forall|j: int| 0 <= j < i as int ==>
-                #[trigger] result_stride@[j] as int == compose(a@, b@).stride[j],
+                #[trigger] result_stride@[j] as int == compose_linear(a@, b@).stride[j],
         decreases b.shape.len() - i,
     {
         proof {
@@ -130,8 +130,8 @@ pub fn compose_exec(a: &RuntimeLayout, b: &RuntimeLayout) -> (result: RuntimeLay
             assert(b@.stride == strides_to_int_seq(b.stride@));
             // b_stride_i as nat == b@.stride[i] as nat == b@.stride[i] (since >= 0)
             assert(new_stride as int == csm.stride.first());
-            assert(compose(a@, b@).stride[i as int] == csm.stride.first());
-            assert(compose(a@, b@).shape[i as int] == b@.shape[i as int]);
+            assert(compose_linear(a@, b@).stride[i as int] == csm.stride.first());
+            assert(compose_linear(a@, b@).shape[i as int] == b@.shape[i as int]);
             assert(b.shape@[i as int] as nat == b@.shape[i as int]);
         }
 
@@ -142,7 +142,7 @@ pub fn compose_exec(a: &RuntimeLayout, b: &RuntimeLayout) -> (result: RuntimeLay
     }
 
     proof {
-        let spec_result = compose(a@, b@);
+        let spec_result = compose_linear(a@, b@);
         assert(shape_to_nat_seq(result_shape@) =~= spec_result.shape);
         assert(strides_to_int_seq(result_stride@) =~= spec_result.stride);
         // Valid
@@ -158,7 +158,7 @@ pub fn compose_exec(a: &RuntimeLayout, b: &RuntimeLayout) -> (result: RuntimeLay
     RuntimeLayout {
         shape: result_shape,
         stride: result_stride,
-        model: Ghost(compose(*a.model.borrow(), *b.model.borrow())),
+        model: Ghost(compose_linear(*a.model.borrow(), *b.model.borrow())),
     }
 }
 
@@ -1358,7 +1358,7 @@ pub fn permute_modes_exec(layout: &RuntimeLayout, perm: &Vec<u64>) -> (result: R
     }
 }
 
-/// Divide tile at runtime: just compose(A, B).
+/// Divide tile at runtime: just compose_linear(A, B).
 pub fn divide_tile_exec(a: &RuntimeLayout, b: &RuntimeLayout) -> (result: RuntimeLayout)
     requires
         a.wf_spec(),
@@ -1376,7 +1376,7 @@ pub fn divide_tile_exec(a: &RuntimeLayout, b: &RuntimeLayout) -> (result: Runtim
     compose_exec(a, b)
 }
 
-/// Divide rest at runtime: compose(A, complement(B, size(A))).
+/// Divide rest at runtime: compose_linear(A, complement(B, size(A))).
 pub fn divide_rest_exec(
     a: &RuntimeLayout,
     b: &RuntimeLayout,
@@ -1399,11 +1399,11 @@ pub fn divide_rest_exec(
         result@ == divide_rest(&a@, &b@),
 {
     proof {
-        // Bridge: compose(a@, complement_result@) == divide_rest(&a@, &b@)
+        // Bridge: compose_linear(a@, complement_result@) == divide_rest(&a@, &b@)
         assert(complement_result@ == crate::complement::complement(&b@, shape_size(a@.shape)));
         // compose_exec precondition: a@.shape.len() > 0 (from divide_admissible)
         assert(a@.shape.len() > 0);
-        // compose result shape
+        // compose_linear result shape
         crate::proof::composition_lemmas::lemma_compose_shape(a@, complement_result@);
         crate::proof::complement_lemmas::lemma_complement_valid(&b@, shape_size(a@.shape));
     }
@@ -1621,7 +1621,7 @@ pub fn size_compatible_exec(l1: &RuntimeLayout, l2: &RuntimeLayout) -> (result: 
 /// Mode-aware divide at runtime: split A's first mode into tiles of size N.
 ///
 /// Produces shape (N, M_0/N, M_1, ...) with strides (d_0, N*d_0, d_1, ...).
-/// Correctly handles non-column-major multi-rank A (unlike logical_divide).
+/// Correctly handles non-column-major multi-rank A (unlike logical_divide_linear).
 pub fn divide_mode_exec(a: &RuntimeLayout, n: u64) -> (result: RuntimeLayout)
     requires
         a.wf_spec(),

@@ -29,7 +29,7 @@ impl RuntimeDividedLayout {
     }
 }
 
-/// Zipped divide at runtime: computes logical_divide(A, B) and tracks tile_rank.
+/// Zipped divide at runtime: computes logical_divide_linear(A, B) and tracks tile_rank.
 pub fn zipped_divide_exec(
     a: &RuntimeLayout,
     b: &RuntimeLayout,
@@ -49,7 +49,7 @@ pub fn zipped_divide_exec(
                 zipped_stride[i] * a@.stride.first() >= i64::MIN as int &&
                 zipped_stride[i] * a@.stride.first() <= i64::MAX as int
         }),
-        shape_size(logical_divide(&a@, &b@).shape) <= u64::MAX as nat,
+        shape_size(logical_divide_linear(&a@, &b@).shape) <= u64::MAX as nat,
     ensures
         result.wf_spec(),
         result.view_divided() == zipped_divide(&a@, &b@),
@@ -120,10 +120,10 @@ pub fn zipped_divide_exec(
             }
         };
 
-        // Zipped size fits u64: logical_divide.shape =~= zipped_spec.shape
+        // Zipped size fits u64: logical_divide_linear.shape =~= zipped_spec.shape
         crate::proof::tiling_lemmas::lemma_zipped_valid(&a@, &b@);
         crate::proof::composition_lemmas::lemma_compose_shape(a@, zipped_spec);
-        assert(logical_divide(&a@, &b@).shape =~= zipped_spec.shape);
+        assert(logical_divide_linear(&a@, &b@).shape =~= zipped_spec.shape);
     }
 
     let zipped = RuntimeLayout::new(zipped_shape, zipped_stride);
@@ -153,7 +153,7 @@ pub fn zipped_divide_exec(
             assert(zipped_spec.stride[k] * a@.stride.first() <= i64::MAX as int);
         };
 
-        // compose_exec: compose size fits u64
+        // compose_exec: compose_linear size fits u64
         crate::proof::composition_lemmas::lemma_compose_shape(a@, zipped@);
     }
 

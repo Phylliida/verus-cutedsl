@@ -29,7 +29,7 @@ pub open spec fn zipped_divide(a: &LayoutSpec, b: &LayoutSpec) -> DividedLayout
     recommends divide_admissible(a, b),
 {
     DividedLayout {
-        layout: logical_divide(a, b),
+        layout: logical_divide_linear(a, b),
         tile_rank: b.shape.len(),
     }
 }

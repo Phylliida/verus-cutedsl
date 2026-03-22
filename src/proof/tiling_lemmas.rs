@@ -94,12 +94,12 @@ pub proof fn lemma_zipped_setup(a: &LayoutSpec, b: &LayoutSpec)
     );
 }
 
-/// logical_divide produces a valid layout.
+/// logical_divide_linear produces a valid layout.
 pub proof fn lemma_divide_valid(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
     ensures
-        logical_divide(a, b).valid(),
+        logical_divide_linear(a, b).valid(),
 {
     let m = shape_size(a.shape);
     let c = complement(b, m);
@@ -109,14 +109,14 @@ pub proof fn lemma_divide_valid(a: &LayoutSpec, b: &LayoutSpec)
         stride: b.stride.add(c.stride),
     };
     lemma_zipped_valid(a, b);
-    // compose(a_val, zipped).shape =~= zipped.shape (valid)
+    // compose_linear(a_val, zipped).shape =~= zipped.shape (valid)
     crate::proof::composition_lemmas::lemma_compose_shape(a_val, zipped);
     lemma_compose_rank(a_val, zipped);
-    // compose.shape =~= zipped.shape, which is valid
-    // compose.shape.len() == compose.stride.len()
-    assert forall|i: int| 0 <= i < logical_divide(a, b).shape.len()
-    implies #[trigger] logical_divide(a, b).shape[i] > 0 by {
-        assert(logical_divide(a, b).shape[i] == zipped.shape[i]);
+    // compose_linear.shape =~= zipped.shape, which is valid
+    // compose_linear.shape.len() == compose_linear.stride.len()
+    assert forall|i: int| 0 <= i < logical_divide_linear(a, b).shape.len()
+    implies #[trigger] logical_divide_linear(a, b).shape[i] > 0 by {
+        assert(logical_divide_linear(a, b).shape[i] == zipped.shape[i]);
     };
 }
 
@@ -131,14 +131,14 @@ pub proof fn lemma_zipped_divide_valid(a: &LayoutSpec, b: &LayoutSpec)
     lemma_divide_rank(a, b);
 }
 
-/// Helper: compose.shape =~= zipped.shape for the divide case.
+/// Helper: compose_linear.shape =~= zipped.shape for the divide case.
 proof fn lemma_divide_shape_eq_zipped(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
     ensures ({
         let m = shape_size(a.shape);
         let c = complement(b, m);
-        logical_divide(a, b).shape =~= b.shape.add(c.shape)
+        logical_divide_linear(a, b).shape =~= b.shape.add(c.shape)
     }),
 {
     let m = shape_size(a.shape);
@@ -435,7 +435,7 @@ pub proof fn lemma_predicated_divide_offset_identity(
     assert(shape_size(a.shape) == padded);
     assert(x < shape_size(a.shape));
 
-    // logical_divide(a, b).offset(x) == a.offset(x) for rank-1 A, col-major B
+    // logical_divide_linear(a, b).offset(x) == a.offset(x) for rank-1 A, col-major B
     lemma_divide_offset_1d_a(&a, &b, x);
 
     // a.offset(x) == x since a = (padded):(1) is column-major
@@ -3030,8 +3030,8 @@ pub proof fn lemma_predicated_divide_layout_injective(original_size: nat, tile_s
 
 /// Warp partition from predicated_divide is injective when warp_layout is column-major.
 ///
-/// Strategy: pd.layout has stride[0] == 1, so compose(pd.layout, zipped2) has
-/// the same shape and stride as zipped2 (compose scales by stride[0] = 1).
+/// Strategy: pd.layout has stride[0] == 1, so compose_linear(pd.layout, zipped2) has
+/// the same shape and stride as zipped2 (compose_linear scales by stride[0] = 1).
 /// Since zipped2 = (wl ++ complement) is bijective, wp.layout is injective.
 pub proof fn lemma_warp_partition_injective_from_predicated(
     original_size: nat, tile_sz: nat, warp_layout: &LayoutSpec,
@@ -3094,7 +3094,7 @@ pub proof fn lemma_warp_partition_injective_from_predicated(
         };
     };
 
-    // compose(identity(padded), z1).stride =~= scale(z1.stride, 1) =~= z1.stride
+    // compose_linear(identity(padded), z1).stride =~= scale(z1.stride, 1) =~= z1.stride
     assert(id_padded.valid());
     assert(id_padded.shape.len() > 0);
     crate::proof::composition_lemmas::lemma_compose_stride_general(id_padded, z1);
@@ -3147,12 +3147,12 @@ pub proof fn lemma_warp_partition_injective_from_predicated(
         };
     };
 
-    // wp.layout = logical_divide(pd.layout, wl) = compose(pd.layout, z2)
-    // compose(pd.layout, z2).shape =~= z2.shape
+    // wp.layout = logical_divide_linear(pd.layout, wl) = compose_linear(pd.layout, z2)
+    // compose_linear(pd.layout, z2).shape =~= z2.shape
     crate::proof::composition_lemmas::lemma_compose_shape(pd.layout, z2);
-    // compose(pd.layout, z2).stride =~= scale(z2.stride, pd.layout.stride[0]) = scale(z2.stride, 1) =~= z2.stride
+    // compose_linear(pd.layout, z2).stride =~= scale(z2.stride, pd.layout.stride[0]) = scale(z2.stride, 1) =~= z2.stride
     crate::proof::composition_lemmas::lemma_compose_stride_general(pd.layout, z2);
-    assert(compose(pd.layout, z2).stride =~= scale_strides_spec(z2.stride, 1int));
+    assert(compose_linear(pd.layout, z2).stride =~= scale_strides_spec(z2.stride, 1int));
     assert(scale_strides_spec(z2.stride, 1int) =~= z2.stride) by {
         assert forall|i: int| 0 <= i < z2.stride.len()
         implies scale_strides_spec(z2.stride, 1int)[i] == z2.stride[i]

@@ -167,7 +167,7 @@ pub proof fn lemma_equivalent_transfers_bijectivity(l1: &LayoutSpec, l2: &Layout
 // ══════════════════════════════════════════════════════════════
 
 /// Compose congruence: varying B while A is fixed.
-/// compose(A, B1) ≡ compose(A, B2) when B1 ≡ B2.
+/// compose_linear(A, B1) ≡ compose_linear(A, B2) when B1 ≡ B2.
 pub proof fn lemma_compose_congruence_b(a: &LayoutSpec, b1: &LayoutSpec, b2: &LayoutSpec)
     requires
         a.valid(), b1.valid(), b2.valid(),
@@ -177,12 +177,12 @@ pub proof fn lemma_compose_congruence_b(a: &LayoutSpec, b1: &LayoutSpec, b2: &La
         forall|x: nat| x < b1.size() ==> b1.offset(x) >= 0 && b1.offset(x) < a.shape.first() as int,
         forall|x: nat| x < b2.size() ==> b2.offset(x) >= 0 && b2.offset(x) < a.shape.first() as int,
     ensures
-        offset_equivalent(&compose(*a, *b1), &compose(*a, *b2)),
+        offset_equivalent(&compose_linear(*a, *b1), &compose_linear(*a, *b2)),
 {
-    let c1 = compose(*a, *b1);
-    let c2 = compose(*a, *b2);
+    let c1 = compose_linear(*a, *b1);
+    let c2 = compose_linear(*a, *b2);
 
-    // compose preserves B's shape, so c1.size() == b1.size() == b2.size() == c2.size()
+    // compose_linear preserves B's shape, so c1.size() == b1.size() == b2.size() == c2.size()
     crate::proof::composition_lemmas::lemma_compose_shape(*a, *b1);
     crate::proof::composition_lemmas::lemma_compose_shape(*a, *b2);
 
@@ -197,7 +197,7 @@ pub proof fn lemma_compose_congruence_b(a: &LayoutSpec, b1: &LayoutSpec, b2: &La
 }
 
 /// Compose congruence: varying A while B is fixed.
-/// compose(A1, B) ≡ compose(A2, B) when A1 ≡ A2.
+/// compose_linear(A1, B) ≡ compose_linear(A2, B) when A1 ≡ A2.
 pub proof fn lemma_compose_congruence_a(a1: &LayoutSpec, a2: &LayoutSpec, b: &LayoutSpec)
     requires
         a1.valid(), a2.valid(), b.valid(),
@@ -207,10 +207,10 @@ pub proof fn lemma_compose_congruence_a(a1: &LayoutSpec, a2: &LayoutSpec, b: &La
         forall|x: nat| x < b.size() ==> b.offset(x) >= 0 && b.offset(x) < a1.shape.first() as int,
         forall|x: nat| x < b.size() ==> b.offset(x) >= 0 && b.offset(x) < a2.shape.first() as int,
     ensures
-        offset_equivalent(&compose(*a1, *b), &compose(*a2, *b)),
+        offset_equivalent(&compose_linear(*a1, *b), &compose_linear(*a2, *b)),
 {
-    let c1 = compose(*a1, *b);
-    let c2 = compose(*a2, *b);
+    let c1 = compose_linear(*a1, *b);
+    let c2 = compose_linear(*a2, *b);
 
     crate::proof::composition_lemmas::lemma_compose_shape(*a1, *b);
     crate::proof::composition_lemmas::lemma_compose_shape(*a2, *b);

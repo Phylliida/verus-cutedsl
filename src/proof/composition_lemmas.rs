@@ -44,7 +44,7 @@ pub proof fn lemma_1d_offset(m: nat, d: int, x: nat)
 }
 
 // ══════════════════════════════════════════════════════════════
-// 1D compose 1D: base case
+// 1D compose_linear 1D: base case
 // ══════════════════════════════════════════════════════════════
 
 /// Composing A=(M):(d) with B=(N):(r): result is (N):(r*d), and
@@ -101,7 +101,7 @@ pub proof fn lemma_compose_1d_correct(
 }
 
 // ══════════════════════════════════════════════════════════════
-// Stride-1 composition: multi-mode A compose (N):(1)
+// Stride-1 composition: multi-mode A compose_linear (N):(1)
 // ══════════════════════════════════════════════════════════════
 
 /// Composing multi-mode A with (N):(1) where N <= A.shape[0] gives (N):(A.stride[0]).
@@ -183,17 +183,17 @@ proof fn lemma_delinearize_zero_dot(shape: Seq<nat>, stride: Seq<int>)
 }
 
 // ══════════════════════════════════════════════════════════════
-// Element-wise compose access
+// Element-wise compose_linear access
 // ══════════════════════════════════════════════════════════════
 
-/// compose(a, b).shape[i] == b.shape[i] and stride matches compose_single_mode.
+/// compose_linear(a, b).shape[i] == b.shape[i] and stride matches compose_single_mode.
 pub proof fn lemma_compose_element(a: LayoutSpec, b: LayoutSpec, i: int)
     requires a.valid(), b.valid(), 0 <= i < b.shape.len(), a.shape.len() > 0,
     ensures
-        compose(a, b).shape.len() == b.shape.len(),
-        compose(a, b).stride.len() == b.shape.len(),
-        compose(a, b).shape[i] == b.shape[i],
-        compose(a, b).stride[i] == compose_single_mode(a, b.shape[i], b.stride[i] as nat).stride.first(),
+        compose_linear(a, b).shape.len() == b.shape.len(),
+        compose_linear(a, b).stride.len() == b.shape.len(),
+        compose_linear(a, b).shape[i] == b.shape[i],
+        compose_linear(a, b).stride[i] == compose_single_mode(a, b.shape[i], b.stride[i] as nat).stride.first(),
     decreases b.shape.len(),
 {
     crate::proof::divide_lemmas::lemma_compose_rank(a, b);
@@ -203,7 +203,7 @@ pub proof fn lemma_compose_element(a: LayoutSpec, b: LayoutSpec, i: int)
     } else {
         let first = compose_single_mode(a, b.shape.first(), b.stride.first() as nat);
         let rest_b = LayoutSpec { shape: b.shape.skip(1), stride: b.stride.skip(1) };
-        let rest = compose(a, rest_b);
+        let rest = compose_linear(a, rest_b);
         assert(first.shape.len() == 1);
         assert(first.stride.len() == 1);
         if i == 0 {
@@ -229,14 +229,14 @@ pub proof fn lemma_compose_element(a: LayoutSpec, b: LayoutSpec, i: int)
 // Compose shape and stride as sequences
 // ══════════════════════════════════════════════════════════════
 
-/// compose(a, b).shape is extensionally equal to b.shape.
+/// compose_linear(a, b).shape is extensionally equal to b.shape.
 pub proof fn lemma_compose_shape(a: LayoutSpec, b: LayoutSpec)
     requires a.valid(), b.valid(), a.shape.len() > 0,
-    ensures compose(a, b).shape =~= b.shape,
+    ensures compose_linear(a, b).shape =~= b.shape,
 {
     crate::proof::divide_lemmas::lemma_compose_rank(a, b);
     assert forall|i: int| 0 <= i < b.shape.len()
-    implies #[trigger] compose(a, b).shape[i] == b.shape[i] by {
+    implies #[trigger] compose_linear(a, b).shape[i] == b.shape[i] by {
         lemma_compose_element(a, b, i);
     }
 }
@@ -261,23 +261,23 @@ proof fn lemma_compose_single_mode_stride_1d(
     }
 }
 
-/// For rank-1 A, compose(A, B).stride =~= scale_strides_spec(B.stride, A.stride[0]).
+/// For rank-1 A, compose_linear(A, B).stride =~= scale_strides_spec(B.stride, A.stride[0]).
 proof fn lemma_compose_stride_1d(a: LayoutSpec, b: LayoutSpec)
     requires
         a.valid(), b.valid(),
         a.shape.len() == 1,
         b.non_negative_strides(),
     ensures
-        compose(a, b).stride =~= crate::layout::scale_strides_spec(b.stride, a.stride.first()),
+        compose_linear(a, b).stride =~= crate::layout::scale_strides_spec(b.stride, a.stride.first()),
 {
     crate::proof::divide_lemmas::lemma_compose_rank(a, b);
     let scaled = crate::layout::scale_strides_spec(b.stride, a.stride.first());
     assert forall|i: int| 0 <= i < b.shape.len()
-    implies #[trigger] compose(a, b).stride[i] == scaled[i] by {
+    implies #[trigger] compose_linear(a, b).stride[i] == scaled[i] by {
         lemma_compose_element(a, b, i);
         assert(b.stride[i] >= 0);
         lemma_compose_single_mode_stride_1d(a, b.shape[i], b.stride[i] as nat);
-        // compose gives ((b.stride[i] as nat) as int) * d
+        // compose_linear gives ((b.stride[i] as nat) as int) * d
         // Since b.stride[i] >= 0: (b.stride[i] as nat) as int == b.stride[i]
         assert(scaled[i] == b.stride[i] * a.stride.first());
         vstd::arithmetic::mul::lemma_mul_is_commutative(b.stride[i], a.stride.first());
@@ -306,7 +306,7 @@ pub proof fn lemma_offset_eq_layout(s1: Seq<nat>, t1: Seq<int>, s2: Seq<nat>, t2
     // and offset uses only those fields, so offsets are equal.
 }
 
-/// For rank-1 A = (M):(d) and arbitrary B, compose(A, B).offset(x) == A.offset(B.offset(x)),
+/// For rank-1 A = (M):(d) and arbitrary B, compose_linear(A, B).offset(x) == A.offset(B.offset(x)),
 /// provided B's image fits within A's domain.
 pub proof fn lemma_compose_correct_1d_a(a: LayoutSpec, b: LayoutSpec, x: nat)
     requires
@@ -318,23 +318,23 @@ pub proof fn lemma_compose_correct_1d_a(a: LayoutSpec, b: LayoutSpec, x: nat)
         b.offset(x) >= 0,
         b.offset(x) < a.shape.first() as int,
     ensures
-        compose(a, b).offset(x) == a.offset(b.offset(x) as nat),
+        compose_linear(a, b).offset(x) == a.offset(b.offset(x) as nat),
 {
     let d = a.stride.first();
     let bx = b.offset(x);
-    let c = compose(a, b);
+    let c = compose_linear(a, b);
 
-    // compose(a,b).shape =~= b.shape
+    // compose_linear(a,b).shape =~= b.shape
     lemma_compose_shape(a, b);
 
-    // compose(a,b).stride =~= scale(b.stride, d)
+    // compose_linear(a,b).stride =~= scale(b.stride, d)
     lemma_compose_stride_1d(a, b);
     let scaled = crate::layout::scale_strides_spec(b.stride, d);
 
     // Build an equivalent layout with b.shape and scaled strides
     let equiv = LayoutSpec { shape: b.shape, stride: scaled };
 
-    // compose(a,b).offset(x) == equiv.offset(x)
+    // compose_linear(a,b).offset(x) == equiv.offset(x)
     lemma_offset_eq_layout(c.shape, c.stride, b.shape, scaled, x);
 
     // equiv.offset(x) = dot(delinearize(x, b.shape), scaled)
@@ -389,14 +389,14 @@ proof fn lemma_compose_single_mode_stride_value(a: LayoutSpec, s: nat, r: nat)
     }
 }
 
-/// For arbitrary-rank A, compose(A, B).stride =~= scale(B.stride, A.stride[0]).
+/// For arbitrary-rank A, compose_linear(A, B).stride =~= scale(B.stride, A.stride[0]).
 pub proof fn lemma_compose_stride_general(a: LayoutSpec, b: LayoutSpec)
     requires a.valid(), b.valid(), a.shape.len() > 0, b.non_negative_strides(),
-    ensures compose(a, b).stride =~= scale_strides_spec(b.stride, a.stride.first()),
+    ensures compose_linear(a, b).stride =~= scale_strides_spec(b.stride, a.stride.first()),
 {
     crate::proof::divide_lemmas::lemma_compose_rank(a, b);
     let d = a.stride.first();
-    let c = compose(a, b);
+    let c = compose_linear(a, b);
     let scaled = scale_strides_spec(b.stride, d);
 
     assert forall|i: int| 0 <= i < c.stride.len()
@@ -408,10 +408,10 @@ pub proof fn lemma_compose_stride_general(a: LayoutSpec, b: LayoutSpec)
 }
 
 // ══════════════════════════════════════════════════════════════
-// General compose correctness (arbitrary-rank A)
+// General compose_linear correctness (arbitrary-rank A)
 // ══════════════════════════════════════════════════════════════
 
-/// compose(A, B).offset(x) == A.offset(B.offset(x)) for arbitrary-rank A,
+/// compose_linear(A, B).offset(x) == A.offset(B.offset(x)) for arbitrary-rank A,
 /// provided B's image fits within A's first mode.
 ///
 /// This generalizes lemma_compose_correct_1d_a to multi-mode A.
@@ -427,23 +427,23 @@ pub proof fn lemma_compose_correct(a: LayoutSpec, b: LayoutSpec, x: nat)
         b.offset(x) >= 0,
         b.offset(x) < a.shape.first() as int,
     ensures
-        compose(a, b).offset(x) == a.offset(b.offset(x) as nat),
+        compose_linear(a, b).offset(x) == a.offset(b.offset(x) as nat),
 {
     let d = a.stride.first();
     let bx = b.offset(x);
-    let c = compose(a, b);
+    let c = compose_linear(a, b);
 
-    // compose(a,b).shape =~= b.shape
+    // compose_linear(a,b).shape =~= b.shape
     lemma_compose_shape(a, b);
 
-    // compose(a,b).stride =~= scale(b.stride, d)
+    // compose_linear(a,b).stride =~= scale(b.stride, d)
     lemma_compose_stride_general(a, b);
     let scaled = scale_strides_spec(b.stride, d);
 
     // Build an equivalent layout with b.shape and scaled strides
     let equiv = LayoutSpec { shape: b.shape, stride: scaled };
 
-    // compose(a,b).offset(x) == equiv.offset(x)
+    // compose_linear(a,b).offset(x) == equiv.offset(x)
     lemma_offset_eq_layout(c.shape, c.stride, b.shape, scaled, x);
 
     // equiv.offset(x) = dot(delinearize(x, b.shape), scaled)
@@ -473,11 +473,11 @@ pub proof fn lemma_compose_correct(a: LayoutSpec, b: LayoutSpec, x: nat)
 // Composition associativity
 // ══════════════════════════════════════════════════════════════
 
-/// compose(compose(a,b), c) produces the same layout as compose(a, compose(b,c)).
+/// compose_linear(compose_linear(a,b), c) produces the same layout as compose_linear(a, compose_linear(b,c)).
 ///
 /// Both have shape = c.shape. The strides agree because:
-/// - compose(compose(a,b), c).stride[j] = c.stride[j] * (b.stride[0] * a.stride[0])
-/// - compose(a, compose(b,c)).stride[j] = (c.stride[j] * b.stride[0]) * a.stride[0]
+/// - compose_linear(compose_linear(a,b), c).stride[j] = c.stride[j] * (b.stride[0] * a.stride[0])
+/// - compose_linear(a, compose_linear(b,c)).stride[j] = (c.stride[j] * b.stride[0]) * a.stride[0]
 /// These are equal by associativity of multiplication.
 pub proof fn lemma_compose_associative(a: LayoutSpec, b: LayoutSpec, c: LayoutSpec)
     requires
@@ -487,13 +487,13 @@ pub proof fn lemma_compose_associative(a: LayoutSpec, b: LayoutSpec, c: LayoutSp
         b.non_negative_strides(),
         c.non_negative_strides(),
     ensures
-        compose(compose(a, b), c).shape =~= compose(a, compose(b, c)).shape,
-        compose(compose(a, b), c).stride =~= compose(a, compose(b, c)).stride,
+        compose_linear(compose_linear(a, b), c).shape =~= compose_linear(a, compose_linear(b, c)).shape,
+        compose_linear(compose_linear(a, b), c).stride =~= compose_linear(a, compose_linear(b, c)).stride,
 {
-    let ab = compose(a, b);
-    let bc = compose(b, c);
-    let ab_c = compose(ab, c);
-    let a_bc = compose(a, bc);
+    let ab = compose_linear(a, b);
+    let bc = compose_linear(b, c);
+    let ab_c = compose_linear(ab, c);
+    let a_bc = compose_linear(a, bc);
 
     let da = a.stride.first();
     let db = b.stride.first();
@@ -529,7 +529,7 @@ pub proof fn lemma_compose_associative(a: LayoutSpec, b: LayoutSpec, c: LayoutSp
     assert(ab_c.shape =~= c.shape);
     assert(a_bc.shape =~= c.shape);
 
-    // Stride: compose(a,b).stride[0] = b.stride[0] * a.stride[0]
+    // Stride: compose_linear(a,b).stride[0] = b.stride[0] * a.stride[0]
     lemma_compose_element(a, b, 0int);
     lemma_compose_single_mode_stride_value(a, b.shape.first(), b.stride.first() as nat);
     let d_ab = db * da;
@@ -570,20 +570,20 @@ pub proof fn lemma_compose_associative(a: LayoutSpec, b: LayoutSpec, c: LayoutSp
 // ══════════════════════════════════════════════════════════════
 
 /// Composing A with the identity layout on A's first mode yields a rank-1 projection.
-/// compose(A, make_identity(A.shape[0])).shape =~= seq![A.shape[0]]
-/// compose(A, make_identity(A.shape[0])).stride =~= seq![A.stride[0]]
+/// compose_linear(A, make_identity(A.shape[0])).shape =~= seq![A.shape[0]]
+/// compose_linear(A, make_identity(A.shape[0])).stride =~= seq![A.stride[0]]
 pub proof fn lemma_compose_identity_right(a: LayoutSpec)
     requires
         a.valid(),
         a.shape.len() > 0,
     ensures
-        compose(a, make_identity(a.shape.first())).shape =~= seq![a.shape.first()],
-        compose(a, make_identity(a.shape.first())).stride =~= seq![a.stride.first()],
+        compose_linear(a, make_identity(a.shape.first())).shape =~= seq![a.shape.first()],
+        compose_linear(a, make_identity(a.shape.first())).stride =~= seq![a.stride.first()],
 {
     let m = a.shape.first();
     let id = make_identity(m);
     // id = { shape: seq![m], stride: seq![1] }
-    // compose(a, id) with id.shape.len() == 1 → compose_single_mode(a, m, 1)
+    // compose_linear(a, id) with id.shape.len() == 1 → compose_single_mode(a, m, 1)
     // Since b_stride == 1 && b_shape (m) <= a.shape.first() (m): result = (m):(a.stride[0])
     assert(id.shape.len() == 1);
     assert(id.shape.first() == m);
@@ -591,7 +591,7 @@ pub proof fn lemma_compose_identity_right(a: LayoutSpec)
 }
 
 /// Composing the identity layout with A preserves offsets.
-/// For all x < a.size(), compose(make_identity(M), a).offset(x) == a.offset(x),
+/// For all x < a.size(), compose_linear(make_identity(M), a).offset(x) == a.offset(x),
 /// provided a's image fits within [0, M).
 pub proof fn lemma_compose_identity_left(a: LayoutSpec, m: nat)
     requires
@@ -603,7 +603,7 @@ pub proof fn lemma_compose_identity_left(a: LayoutSpec, m: nat)
         forall|x: nat| x < a.size() ==> a.offset(x) >= 0 && a.offset(x) < m as int,
     ensures
         forall|x: nat| x < a.size() ==>
-            compose(make_identity(m), a).offset(x) == a.offset(x),
+            compose_linear(make_identity(m), a).offset(x) == a.offset(x),
 {
     let id = make_identity(m);
     assert(id.valid());
@@ -612,8 +612,8 @@ pub proof fn lemma_compose_identity_left(a: LayoutSpec, m: nat)
     // shape_size(seq![m]) == m
     crate::proof::shape_lemmas::lemma_shape_size_single(m);
 
-    // compose(id, a) has shape =~= a.shape, so compose(id, a).size() == a.size()
-    let c = compose(id, a);
+    // compose_linear(id, a) has shape =~= a.shape, so compose_linear(id, a).size() == a.size()
+    let c = compose_linear(id, a);
     lemma_compose_shape(id, a);
     crate::proof::divide_lemmas::lemma_compose_rank(id, a);
     // c is valid
@@ -630,7 +630,7 @@ pub proof fn lemma_compose_identity_left(a: LayoutSpec, m: nat)
     assert forall|x: nat| x < a.size()
     implies c.offset(x) == a.offset(x)
     by {
-        // compose(id, a).offset(x) == id.offset(a.offset(x))
+        // compose_linear(id, a).offset(x) == id.offset(a.offset(x))
         lemma_compose_correct(id, a, x);
         let ax = a.offset(x);
         assert(c.offset(x) == id.offset(ax as nat));
@@ -896,7 +896,7 @@ proof fn lemma_dot_product_unit(coords: Seq<nat>, strides: Seq<int>, i: nat, x: 
 /// product of A and B's shape fits in the corresponding mode of A, the composed
 /// offset equals A.offset(b_stride * x).
 ///
-/// This is the key theorem that generalizes compose beyond the "first mode" restriction.
+/// This is the key theorem that generalizes compose_linear beyond the "first mode" restriction.
 pub proof fn lemma_compose_single_mode_extended_correct(
     a: LayoutSpec, b_shape: nat, b_stride: nat, x: nat,
 )
@@ -970,7 +970,7 @@ proof fn lemma_find_pp_index_correct(pp: Seq<nat>, target: nat, pos: nat)
 }
 
 // ══════════════════════════════════════════════════════════════
-// compose_extended == compose for rank-1 A
+// compose_extended == compose_linear for rank-1 A
 // ══════════════════════════════════════════════════════════════
 
 /// For rank-1 A, compose_single_mode_extended == compose_single_mode.
@@ -1039,14 +1039,14 @@ pub proof fn lemma_single_mode_extended_eq_rank1(
     }
 }
 
-/// For rank-1 A, compose_extended == compose (structural equality).
+/// For rank-1 A, compose_extended == compose_linear (structural equality).
 pub proof fn lemma_compose_extended_eq_rank1(a: LayoutSpec, b: LayoutSpec)
     requires
         a.valid(),
         a.shape.len() == 1,
         b.valid(),
     ensures
-        compose_extended(a, b) == compose(a, b),
+        compose_extended(a, b) == compose_linear(a, b),
     decreases b.shape.len(),
 {
     if b.shape.len() == 0 {
@@ -1306,9 +1306,9 @@ pub proof fn lemma_compose_extended_correct(a: LayoutSpec, b: LayoutSpec, x: nat
 // CuTe-style recursive composition correctness
 // ══════════════════════════════════════════════════════════════
 
-/// Recursive admissibility: the compose_recursive_single spec is well-formed
+/// Recursive admissibility: the compose_single spec is well-formed
 /// and the straddle-case divisibility condition holds at every level.
-pub open spec fn compose_recursive_admissible(
+pub open spec fn compose_single_admissible(
     a: LayoutSpec, b_shape: nat, b_stride: nat,
 ) -> bool
     decreases a.shape.len(),
@@ -1326,10 +1326,10 @@ pub open spec fn compose_recursive_admissible(
             let q = m / b_stride;
             &&& b_shape % q == 0
             &&& (a_rest.shape.len() > 0 ==>
-                compose_recursive_admissible(a_rest, b_shape / q, 1))
+                compose_single_admissible(a_rest, b_shape / q, 1))
         } else if b_stride >= m && b_stride % m == 0 {
             a_rest.shape.len() > 0 ==>
-                compose_recursive_admissible(a_rest, b_shape, b_stride / m)
+                compose_single_admissible(a_rest, b_shape, b_stride / m)
         } else {
             false
         }
@@ -1337,13 +1337,13 @@ pub open spec fn compose_recursive_admissible(
 }
 
 
-/// compose_recursive_single always produces shape.len() == stride.len().
+/// compose_single always produces shape.len() == stride.len().
 /// Uses minimal requires (no recursive admissibility predicate needed).
 proof fn lemma_crs_len_match(a: LayoutSpec, b_shape: nat, b_stride: nat)
     requires a.valid(), b_shape > 0,
     ensures
-        compose_recursive_single(a, b_shape, b_stride).shape.len()
-            == compose_recursive_single(a, b_shape, b_stride).stride.len(),
+        compose_single(a, b_shape, b_stride).shape.len()
+            == compose_single(a, b_shape, b_stride).stride.len(),
     decreases a.shape.len(),
 {
     if a.shape.len() == 0 {
@@ -1381,11 +1381,11 @@ proof fn lemma_crs_len_match(a: LayoutSpec, b_shape: nat, b_stride: nat)
     }
 }
 
-/// compose_recursive_single always produces valid shape (all entries > 0).
+/// compose_single always produces valid shape (all entries > 0).
 /// Uses minimal requires (no recursive admissibility predicate needed).
 proof fn lemma_crs_shape_valid(a: LayoutSpec, b_shape: nat, b_stride: nat)
     requires a.valid(), b_shape > 0,
-    ensures shape_valid(compose_recursive_single(a, b_shape, b_stride).shape),
+    ensures shape_valid(compose_single(a, b_shape, b_stride).shape),
     decreases a.shape.len(),
 {
     if a.shape.len() == 0 {
@@ -1428,15 +1428,15 @@ proof fn lemma_crs_shape_valid(a: LayoutSpec, b_shape: nat, b_stride: nat)
     }
 }
 
-/// compose_recursive_single preserves total size: shape_size(result.shape) == b_shape.
+/// compose_single preserves total size: shape_size(result.shape) == b_shape.
 /// (Requires admissibility to ensure straddle case has exact divisibility.)
 proof fn lemma_crs_size(a: LayoutSpec, b_shape: nat, b_stride: nat)
-    requires compose_recursive_admissible(a, b_shape, b_stride),
-    ensures shape_size(compose_recursive_single(a, b_shape, b_stride).shape) == b_shape,
+    requires compose_single_admissible(a, b_shape, b_stride),
+    ensures shape_size(compose_single(a, b_shape, b_stride).shape) == b_shape,
     decreases a.shape.len(),
 {
     if a.shape.len() == 0 {
-        assert(compose_recursive_single(a, b_shape, b_stride).shape =~= seq![b_shape]);
+        assert(compose_single(a, b_shape, b_stride).shape =~= seq![b_shape]);
         lemma_shape_size_single(b_shape);
         return;
     }
@@ -1448,7 +1448,7 @@ proof fn lemma_crs_size(a: LayoutSpec, b_shape: nat, b_stride: nat)
             implies #[trigger] a_rest.shape[i] > 0 by { assert(a_rest.shape[i] == a.shape[i + 1]); };
         };
         if b_stride * b_shape <= m {
-            assert(compose_recursive_single(a, b_shape, b_stride).shape =~= seq![b_shape]);
+            assert(compose_single(a, b_shape, b_stride).shape =~= seq![b_shape]);
             lemma_shape_size_single(b_shape);
             return;
         } else if b_stride < m && m % b_stride == 0 && b_shape > 0 {
@@ -1471,9 +1471,9 @@ proof fn lemma_crs_size(a: LayoutSpec, b_shape: nat, b_stride: nat)
             } else {
                 lemma_shape_size_single(bq);
             }
-            let rest = compose_recursive_single(a_rest, bq, 1);
+            let rest = compose_single(a_rest, bq, 1);
             // result.shape =~= [q] ++ rest.shape
-            assert(compose_recursive_single(a, b_shape, b_stride).shape
+            assert(compose_single(a, b_shape, b_stride).shape
                 =~= seq![q].add(rest.shape));
             // shape_size([q] ++ rest.shape) = q * shape_size(rest.shape) = q * bq
             crate::proof::product_lemmas::lemma_shape_size_append(seq![q], rest.shape);
@@ -1488,20 +1488,20 @@ proof fn lemma_crs_size(a: LayoutSpec, b_shape: nat, b_stride: nat)
             assert(!(b_stride > 0 && b_stride < m && m % b_stride == 0));
             assert(b_stride >= m && b_stride % m == 0);
             if a_rest.shape.len() > 0 {
-                assert(compose_recursive_admissible(a_rest, b_shape, b_stride / m));
+                assert(compose_single_admissible(a_rest, b_shape, b_stride / m));
                 lemma_crs_size(a_rest, b_shape, b_stride / m);
             } else {
                 // 0-mode: result = (b_shape):(0), size = b_shape
-                assert(compose_recursive_single(a_rest, b_shape, b_stride / m).shape =~= seq![b_shape]);
+                assert(compose_single(a_rest, b_shape, b_stride / m).shape =~= seq![b_shape]);
                 lemma_shape_size_single(b_shape);
             }
-            // Spec unfolds: compose_recursive_single(a,...) == compose_recursive_single(a_rest,...)
-            let result = compose_recursive_single(a, b_shape, b_stride);
-            let result_rest = compose_recursive_single(a_rest, b_shape, b_stride / m);
+            // Spec unfolds: compose_single(a,...) == compose_single(a_rest,...)
+            let result = compose_single(a, b_shape, b_stride);
+            let result_rest = compose_single(a_rest, b_shape, b_stride / m);
             assert(result.shape =~= result_rest.shape);
             return;
         } else {
-            assert(compose_recursive_single(a, b_shape, b_stride).shape =~= seq![b_shape]);
+            assert(compose_single(a, b_shape, b_stride).shape =~= seq![b_shape]);
             lemma_shape_size_single(b_shape);
             return;
         }
@@ -1509,15 +1509,15 @@ proof fn lemma_crs_size(a: LayoutSpec, b_shape: nat, b_stride: nat)
 }
 
 /// Correctness of recursive single-mode composition:
-///   compose_recursive_single(A, N, r).offset(x) == A.offset(r * x)
+///   compose_single(A, N, r).offset(x) == A.offset(r * x)
 ///
-/// This is the key theorem that makes compose_recursive work for arbitrary A.
+/// This is the key theorem that makes compose work for arbitrary A.
 /// The proof strategy is induction on A's rank with 3 cases:
 /// - Case 1 (within first mode): offset_within_first_mode + 1d_offset
 /// - Case 3 (skip first mode): delinearize shows first coord = 0, IH handles rest
 /// - Case 2 (straddle): modular scaling splits coordinates, concat-offset decomposes result
 ///
-/// The proof requires `compose_recursive_admissible` which ensures:
+/// The proof requires `compose_single_admissible` which ensures:
 /// - Straddle case has exact divisibility (b_shape % q == 0)
 /// - Recursive admissibility holds at each level
 ///
@@ -1532,10 +1532,10 @@ pub proof fn lemma_compose_recursive_single_correct(
     a: LayoutSpec, b_shape: nat, b_stride: nat, x: nat,
 )
     requires
-        compose_recursive_admissible(a, b_shape, b_stride),
+        compose_single_admissible(a, b_shape, b_stride),
         x < b_shape,
     ensures
-        compose_recursive_single(a, b_shape, b_stride).offset(x)
+        compose_single(a, b_shape, b_stride).offset(x)
             == a.offset(b_stride * x),
     decreases a.shape.len(),
 {
@@ -1575,7 +1575,7 @@ pub proof fn lemma_compose_recursive_single_correct(
         };
 
         // Recursive admissibility for a_rest
-        // (unfold compose_recursive_admissible: we're in the skip branch)
+        // (unfold compose_single_admissible: we're in the skip branch)
         assert(!(b_stride * b_shape <= m));
         assert(!(b_stride > 0 && b_stride < m && m % b_stride == 0));
 
@@ -1614,8 +1614,8 @@ pub proof fn lemma_compose_recursive_single_correct(
         assert(a.offset(bx) == a_rest.offset(r2x));
 
         // Spec unfolding
-        let result = compose_recursive_single(a, b_shape, b_stride);
-        let result_rest = compose_recursive_single(a_rest, b_shape, r2);
+        let result = compose_single(a, b_shape, b_stride);
+        let result_rest = compose_single(a_rest, b_shape, r2);
         assert(result.shape =~= result_rest.shape);
         assert(result.stride =~= result_rest.stride);
         lemma_offset_eq_layout(result.shape, result.stride, result_rest.shape, result_rest.stride, x);
@@ -1686,7 +1686,7 @@ pub proof fn lemma_compose_recursive_single_correct(
         };
 
         // IH + complete proof per branch
-        let rest_layout = compose_recursive_single(a_rest, bq, 1);
+        let rest_layout = compose_single(a_rest, bq, 1);
 
         // Shared proof: modular scaling + A.offset decomposition + inner offset
         // (moved into a macro-like block that both branches use)
@@ -1694,7 +1694,7 @@ pub proof fn lemma_compose_recursive_single_correct(
 
         if a_rest.shape.len() > 0 {
             // ── Branch A: a_rest has modes ──
-            assert(compose_recursive_admissible(a_rest, bq, 1));
+            assert(compose_single_admissible(a_rest, bq, 1));
             lemma_compose_recursive_single_correct(a_rest, bq, 1, x_outer);
             // IH: rest_layout.offset(x_outer) == a_rest.offset(1 * x_outer) == a_rest.offset(x_outer)
             assert(1 * x_outer == x_outer) by (nonlinear_arith);
@@ -1727,7 +1727,7 @@ pub proof fn lemma_compose_recursive_single_correct(
             assert(x_inner as int * ((b_stride as int) * d) == (b_stride * x_inner) as int * d)
                 by (nonlinear_arith);
 
-            let result = compose_recursive_single(a, b_shape, b_stride);
+            let result = compose_single(a, b_shape, b_stride);
             let inner_layout = LayoutSpec { shape: seq![q], stride: seq![(b_stride as int) * d] };
 
             // Prove concat-offset decomposition: result.offset(x) == inner.offset(x_inner) + rest.offset(x_outer)
@@ -1736,11 +1736,11 @@ pub proof fn lemma_compose_recursive_single_correct(
             assert(shape_valid(inner_layout.shape));
             // rest_layout shape valid + len match from recursive structure
             assert(shape_valid(rest_layout.shape)) by {
-                assert(compose_recursive_admissible(a_rest, bq, 1));
+                assert(compose_single_admissible(a_rest, bq, 1));
                 lemma_crs_shape_valid(a_rest, bq, 1);
             };
             assert(rest_layout.shape.len() == rest_layout.stride.len()) by {
-                assert(compose_recursive_admissible(a_rest, bq, 1));
+                assert(compose_single_admissible(a_rest, bq, 1));
                 lemma_crs_len_match(a_rest, bq, 1);
             };
             assert(shape_size(inner_layout.shape) == q) by { lemma_shape_size_single(q); };
@@ -1790,7 +1790,7 @@ pub proof fn lemma_compose_recursive_single_correct(
             assert(x_inner as int * ((b_stride as int) * d) == (b_stride * x_inner) as int * d)
                 by (nonlinear_arith);
 
-            let result = compose_recursive_single(a, b_shape, b_stride);
+            let result = compose_single(a, b_shape, b_stride);
             let inner_layout = LayoutSpec { shape: seq![q], stride: seq![(b_stride as int) * d] };
             // rest_layout for 0-mode a_rest has stride 0
             assert(rest_layout.offset(x_outer) == 0int) by {

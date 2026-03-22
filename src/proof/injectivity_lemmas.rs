@@ -213,7 +213,7 @@ pub proof fn lemma_identity_bijective(m: nat)
 // ══════════════════════════════════════════════════════════════
 
 /// If A (rank-1) and B are both injective, and B's image fits within A's domain,
-/// then compose(A, B) is injective.
+/// then compose_linear(A, B) is injective.
 pub proof fn lemma_compose_preserves_injectivity_1d_a(a: LayoutSpec, b: LayoutSpec)
     requires
         a.valid(), b.valid(),
@@ -224,9 +224,9 @@ pub proof fn lemma_compose_preserves_injectivity_1d_a(a: LayoutSpec, b: LayoutSp
         // B's image fits within A's domain for all valid indices
         forall|x: nat| x < b.size() ==> b.offset(x) >= 0 && b.offset(x) < a.shape.first() as int,
     ensures
-        compose(a, b).is_injective(),
+        compose_linear(a, b).is_injective(),
 {
-    let c = compose(a, b);
+    let c = compose_linear(a, b);
 
     // c.shape =~= b.shape, so c.size() == b.size()
     crate::proof::composition_lemmas::lemma_compose_shape(a, b);
@@ -270,7 +270,7 @@ pub proof fn lemma_compose_preserves_injectivity_1d_a(a: LayoutSpec, b: LayoutSp
 // ══════════════════════════════════════════════════════════════
 
 /// If A and B are both injective, and B's image fits within A's first mode,
-/// then compose(A, B) is injective. Generalizes the rank-1 case above.
+/// then compose_linear(A, B) is injective. Generalizes the rank-1 case above.
 pub proof fn lemma_compose_preserves_injectivity(a: LayoutSpec, b: LayoutSpec)
     requires
         a.valid(), b.valid(),
@@ -280,9 +280,9 @@ pub proof fn lemma_compose_preserves_injectivity(a: LayoutSpec, b: LayoutSpec)
         b.is_injective(),
         forall|x: nat| x < b.size() ==> b.offset(x) >= 0 && b.offset(x) < a.shape.first() as int,
     ensures
-        compose(a, b).is_injective(),
+        compose_linear(a, b).is_injective(),
 {
-    let c = compose(a, b);
+    let c = compose_linear(a, b);
     crate::proof::composition_lemmas::lemma_compose_shape(a, b);
 
     // a.size() >= a.shape[0] (first mode fits in domain)

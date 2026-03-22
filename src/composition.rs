@@ -111,7 +111,7 @@ pub open spec fn compose_single_mode_extended(a: LayoutSpec, b_shape: nat, b_str
     }
 }
 
-/// DEPRECATED: Use `compose_recursive` instead, which correctly handles all cases.
+/// DEPRECATED: Use `compose` instead, which correctly handles all cases.
 ///
 /// This uses `compose_single_mode_extended` which only handles prefix-product-aligned
 /// strides and falls back incorrectly for non-aligned strides.
@@ -135,10 +135,10 @@ pub open spec fn compose_extended(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
 }
 
 /// Multi-mode composition: distributes over B's modes.
-/// A compose (B_0, B_1, ..., B_k) = (A compose B_0, A compose B_1, ..., A compose B_k)
+/// A compose_linear (B_0, B_1, ..., B_k) = (A compose_linear B_0, A compose_linear B_1, ..., A compose_linear B_k)
 ///
 /// Each B_i is a single-mode layout. The results are concatenated.
-pub open spec fn compose(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
+pub open spec fn compose_linear(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
     recommends a.valid(), b.valid(),
     decreases b.shape.len(),
 {
@@ -150,7 +150,7 @@ pub open spec fn compose(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
         // Compose A with first mode of B, then recurse
         let first = compose_single_mode(a, b.shape.first(), b.stride.first() as nat);
         let rest_b = LayoutSpec { shape: b.shape.skip(1), stride: b.stride.skip(1) };
-        let rest = compose(a, rest_b);
+        let rest = compose_linear(a, rest_b);
         LayoutSpec {
             shape: first.shape.add(rest.shape),
             stride: first.stride.add(rest.stride),
@@ -162,7 +162,7 @@ pub open spec fn compose(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
 // CuTe-style recursive composition
 // ══════════════════════════════════════════════════════════════
 
-/// Recursive single-mode composition: compose A with B = (N):(r).
+/// Recursive single-mode composition: compose_linear A with B = (N):(r).
 ///
 /// Unlike `compose_single_mode` (which always produces rank-1 output),
 /// this can produce MULTI-mode output when B's range straddles A's mode
@@ -174,14 +174,14 @@ pub open spec fn compose(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
 ///
 /// 2. `r < shape[0]` and `shape[0] % r == 0`: B straddles first mode
 ///    → split into (shape[0]/r):(r*d_0) within first mode
-///      + recursive compose on remaining modes
+///      + recursive compose_linear on remaining modes
 ///
 /// 3. `r >= shape[0]` and `r % shape[0] == 0`: B skips first mode entirely
 ///    → recurse on A.skip(1) with stride r/shape[0]
 ///
 /// 4. Fallback (non-divisible): treat as within first mode
 ///    → (N):(r * d_0)
-pub open spec fn compose_recursive_single(
+pub open spec fn compose_single(
     a: LayoutSpec, b_shape: nat, b_stride: nat,
 ) -> LayoutSpec
     recommends a.valid(), b_shape > 0,
@@ -205,14 +205,14 @@ pub open spec fn compose_recursive_single(
                 shape: seq![q],
                 stride: seq![(b_stride as int) * d],
             };
-            let rest = compose_recursive_single(a_rest, b_shape / q, 1);
+            let rest = compose_single(a_rest, b_shape / q, 1);
             LayoutSpec {
                 shape: inner.shape.add(rest.shape),
                 stride: inner.stride.add(rest.stride),
             }
         } else if b_stride >= m && b_stride % m == 0 {
             // Case 3: skip first mode entirely
-            compose_recursive_single(a_rest, b_shape, b_stride / m)
+            compose_single(a_rest, b_shape, b_stride / m)
         } else {
             // Case 4: fallback (non-divisible stride)
             LayoutSpec { shape: seq![b_shape], stride: seq![(b_stride as int) * d] }
@@ -220,23 +220,23 @@ pub open spec fn compose_recursive_single(
     }
 }
 
-/// Recursive multi-mode composition: compose A with multi-mode B.
+/// Recursive multi-mode composition: compose_linear A with multi-mode B.
 ///
-/// Distributes over B's modes, calling `compose_recursive_single` for each.
-/// Unlike `compose`, each single-mode result can be multi-mode (from straddling),
+/// Distributes over B's modes, calling `compose_single` for each.
+/// Unlike `compose_linear`, each single-mode result can be multi-mode (from straddling),
 /// so the output rank may be larger than B's rank.
-pub open spec fn compose_recursive(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
+pub open spec fn compose(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
     recommends a.valid(), b.valid(),
     decreases b.shape.len(),
 {
     if b.shape.len() == 0 {
         LayoutSpec { shape: seq![], stride: seq![] }
     } else if b.shape.len() == 1 {
-        compose_recursive_single(a, b.shape.first(), b.stride.first() as nat)
+        compose_single(a, b.shape.first(), b.stride.first() as nat)
     } else {
-        let first = compose_recursive_single(a, b.shape.first(), b.stride.first() as nat);
+        let first = compose_single(a, b.shape.first(), b.stride.first() as nat);
         let rest_b = LayoutSpec { shape: b.shape.skip(1), stride: b.stride.skip(1) };
-        let rest = compose_recursive(a, rest_b);
+        let rest = compose(a, rest_b);
         LayoutSpec {
             shape: first.shape.add(rest.shape),
             stride: first.stride.add(rest.stride),

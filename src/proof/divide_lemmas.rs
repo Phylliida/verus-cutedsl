@@ -11,15 +11,15 @@ use crate::proof::injectivity_lemmas::{lemma_column_major_strides_len, lemma_col
 verus! {
 
 // ══════════════════════════════════════════════════════════════
-// Helper: compose preserves rank (number of modes)
+// Helper: compose_linear preserves rank (number of modes)
 // ══════════════════════════════════════════════════════════════
 
-/// compose(A, B) has exactly rank(B) modes.
+/// compose_linear(A, B) has exactly rank(B) modes.
 pub proof fn lemma_compose_rank(a: LayoutSpec, b: LayoutSpec)
     requires a.valid(), b.valid(),
     ensures
-        compose(a, b).shape.len() == b.shape.len(),
-        compose(a, b).stride.len() == b.shape.len(),
+        compose_linear(a, b).shape.len() == b.shape.len(),
+        compose_linear(a, b).stride.len() == b.shape.len(),
     decreases b.shape.len(),
 {
     if b.shape.len() == 0 {
@@ -45,8 +45,8 @@ pub proof fn lemma_divide_rank(a: &LayoutSpec, b: &LayoutSpec)
         let m = shape_size(a.shape);
         let c = complement(b, m);
         let expected_rank = b.shape.len() + c.shape.len();
-        &&& logical_divide(a, b).shape.len() == expected_rank
-        &&& logical_divide(a, b).stride.len() == expected_rank
+        &&& logical_divide_linear(a, b).shape.len() == expected_rank
+        &&& logical_divide_linear(a, b).stride.len() == expected_rank
     })),
 {
     let m = shape_size(a.shape);
@@ -76,7 +76,7 @@ pub proof fn lemma_divide_rank(a: &LayoutSpec, b: &LayoutSpec)
     lemma_compose_rank(a_val, zipped);
 }
 
-/// For a 1D tile B, logical_divide produces rank(B) + rank(B) + 1 = rank(B) + 2 modes.
+/// For a 1D tile B, logical_divide_linear produces rank(B) + rank(B) + 1 = rank(B) + 2 modes.
 /// (complement of 1D B has rank 2)
 pub proof fn lemma_divide_1d_tile_rank(a: &LayoutSpec, b: &LayoutSpec)
     requires
@@ -85,8 +85,8 @@ pub proof fn lemma_divide_1d_tile_rank(a: &LayoutSpec, b: &LayoutSpec)
     ensures (({
         let m = shape_size(a.shape);
         let c = complement(b, m);
-        &&& logical_divide(a, b).shape.len() == 3
-        &&& logical_divide(a, b).stride.len() == 3
+        &&& logical_divide_linear(a, b).shape.len() == 3
+        &&& logical_divide_linear(a, b).stride.len() == 3
     })),
 {
     let m = shape_size(a.shape);
@@ -117,11 +117,11 @@ pub proof fn lemma_divide_tile_count_1d(a: &LayoutSpec, b: &LayoutSpec)
 // Divide size preservation
 // ══════════════════════════════════════════════════════════════
 
-/// logical_divide(A, B) has the same size as A.
+/// logical_divide_linear(A, B) has the same size as A.
 pub proof fn lemma_divide_size(a: &LayoutSpec, b: &LayoutSpec)
     requires divide_admissible(a, b),
     ensures
-        shape_size(logical_divide(a, b).shape) == shape_size(a.shape),
+        shape_size(logical_divide_linear(a, b).shape) == shape_size(a.shape),
 {
     let m = shape_size(a.shape);
     let c = complement(b, m);
@@ -146,7 +146,7 @@ pub proof fn lemma_divide_size(a: &LayoutSpec, b: &LayoutSpec)
     };
     assert(zipped.valid());
 
-    // compose(a, zipped).shape =~= zipped.shape
+    // compose_linear(a, zipped).shape =~= zipped.shape
     crate::proof::composition_lemmas::lemma_compose_shape(a_val, zipped);
 
     // size(zipped.shape) = size(b.shape ++ c.shape) = size(b.shape) * size(c.shape)
@@ -361,7 +361,7 @@ pub proof fn lemma_zipped_identity_1d(b: &LayoutSpec, m: nat, x: nat)
 // ══════════════════════════════════════════════════════════════
 
 /// For rank-1 A and column-major B = (N):(1),
-/// logical_divide(A, B).offset(x) == A.offset(x).
+/// logical_divide_linear(A, B).offset(x) == A.offset(x).
 ///
 /// This is the key tiling theorem: dividing A into tiles of size N
 /// preserves the offset function — each element maps to the same
@@ -374,7 +374,7 @@ pub proof fn lemma_divide_offset_1d_a(a: &LayoutSpec, b: &LayoutSpec, x: nat)
         b.stride[0] == 1,
         x < shape_size(a.shape),
     ensures
-        logical_divide(a, b).offset(x) == a.offset(x),
+        logical_divide_linear(a, b).offset(x) == a.offset(x),
 {
     let m = shape_size(a.shape);
     let c = complement(b, m);
@@ -438,15 +438,15 @@ pub proof fn lemma_divide_offset_1d_a(a: &LayoutSpec, b: &LayoutSpec, x: nat)
     assert(zipped.offset(x) >= 0);
     assert(zipped.offset(x) < a.shape.first() as int);
 
-    // By compose correctness: compose(A, zipped).offset(x) == A.offset(zipped.offset(x))
+    // By compose_linear correctness: compose_linear(A, zipped).offset(x) == A.offset(zipped.offset(x))
     crate::proof::composition_lemmas::lemma_compose_correct(a_val, zipped, x);
-    assert(compose(a_val, zipped).offset(x) == a_val.offset(zipped.offset(x) as nat));
+    assert(compose_linear(a_val, zipped).offset(x) == a_val.offset(zipped.offset(x) as nat));
 
     // zipped.offset(x) == x, so A.offset(zipped.offset(x)) == A.offset(x)
     assert(zipped.offset(x) as nat == x);
 }
 
-/// For rank-1 A and column-major B, logical_divide preserves injectivity.
+/// For rank-1 A and column-major B, logical_divide_linear preserves injectivity.
 pub proof fn lemma_divide_injective_1d_a(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
@@ -455,9 +455,9 @@ pub proof fn lemma_divide_injective_1d_a(a: &LayoutSpec, b: &LayoutSpec)
         b.stride[0] == 1,
         a.is_injective(),
     ensures
-        logical_divide(a, b).is_injective(),
+        logical_divide_linear(a, b).is_injective(),
 {
-    let d = logical_divide(a, b);
+    let d = logical_divide_linear(a, b);
     let m = shape_size(a.shape);
 
     // divide has same size as A
@@ -1067,7 +1067,7 @@ pub proof fn lemma_zipped_identity_offset(b: &LayoutSpec, m: nat, x: nat)
     vstd::arithmetic::mul::lemma_mul_is_commutative(n as int, (x / n) as int);
 }
 
-/// For rank-1 A and column-major B, logical_divide(A, B).offset(x) == A.offset(x).
+/// For rank-1 A and column-major B, logical_divide_linear(A, B).offset(x) == A.offset(x).
 /// Generalizes lemma_divide_offset_1d_a to multi-rank column-major B.
 pub proof fn lemma_divide_offset(a: &LayoutSpec, b: &LayoutSpec, x: nat)
     requires
@@ -1076,7 +1076,7 @@ pub proof fn lemma_divide_offset(a: &LayoutSpec, b: &LayoutSpec, x: nat)
         b.stride =~= column_major_strides(b.shape),
         x < shape_size(a.shape),
     ensures
-        logical_divide(a, b).offset(x) == a.offset(x),
+        logical_divide_linear(a, b).offset(x) == a.offset(x),
 {
     let m = shape_size(a.shape);
     let c = complement(b, m);
@@ -1106,14 +1106,14 @@ pub proof fn lemma_divide_offset(a: &LayoutSpec, b: &LayoutSpec, x: nat)
     assert(zipped.offset(x) >= 0);
     assert(zipped.offset(x) < a.shape.first() as int);
 
-    // By compose correctness: compose(A, zipped).offset(x) == A.offset(zipped.offset(x))
+    // By compose_linear correctness: compose_linear(A, zipped).offset(x) == A.offset(zipped.offset(x))
     let a_val = LayoutSpec { shape: a.shape, stride: a.stride };
     crate::proof::composition_lemmas::lemma_compose_correct(a_val, zipped, x);
-    assert(compose(a_val, zipped).offset(x) == a_val.offset(zipped.offset(x) as nat));
+    assert(compose_linear(a_val, zipped).offset(x) == a_val.offset(zipped.offset(x) as nat));
     assert(zipped.offset(x) as nat == x);
 }
 
-/// For rank-1 A and column-major B, logical_divide preserves injectivity.
+/// For rank-1 A and column-major B, logical_divide_linear preserves injectivity.
 /// Generalizes lemma_divide_injective_1d_a to multi-rank column-major B.
 pub proof fn lemma_divide_injective(a: &LayoutSpec, b: &LayoutSpec)
     requires
@@ -1122,27 +1122,27 @@ pub proof fn lemma_divide_injective(a: &LayoutSpec, b: &LayoutSpec)
         b.stride =~= column_major_strides(b.shape),
         a.is_injective(),
     ensures
-        logical_divide(a, b).is_injective(),
+        logical_divide_linear(a, b).is_injective(),
 {
     lemma_divide_size(a, b);
-    assert(shape_size(logical_divide(a, b).shape) == shape_size(a.shape));
+    assert(shape_size(logical_divide_linear(a, b).shape) == shape_size(a.shape));
 
     assert forall|x1: nat, x2: nat|
-        x1 < shape_size(logical_divide(a, b).shape)
-        && x2 < shape_size(logical_divide(a, b).shape)
+        x1 < shape_size(logical_divide_linear(a, b).shape)
+        && x2 < shape_size(logical_divide_linear(a, b).shape)
         && x1 != x2
     implies
-        logical_divide(a, b).offset(x1) != logical_divide(a, b).offset(x2)
+        logical_divide_linear(a, b).offset(x1) != logical_divide_linear(a, b).offset(x2)
     by {
         lemma_divide_offset(a, b, x1);
         lemma_divide_offset(a, b, x2);
         // divide.offset(xi) == a.offset(xi), and a is injective
-        assert(logical_divide(a, b).offset(x1) == a.offset(x1));
-        assert(logical_divide(a, b).offset(x2) == a.offset(x2));
+        assert(logical_divide_linear(a, b).offset(x1) == a.offset(x1));
+        assert(logical_divide_linear(a, b).offset(x2) == a.offset(x2));
     };
 }
 
-/// For rank-1 A and column-major B, logical_divide preserves bijectivity.
+/// For rank-1 A and column-major B, logical_divide_linear preserves bijectivity.
 /// Since divide has the same offset function as A, bijectivity transfers directly.
 pub proof fn lemma_divide_bijective(a: &LayoutSpec, b: &LayoutSpec, target: nat)
     requires
@@ -1151,7 +1151,7 @@ pub proof fn lemma_divide_bijective(a: &LayoutSpec, b: &LayoutSpec, target: nat)
         b.stride =~= column_major_strides(b.shape),
         a.is_bijective_upto(target),
     ensures
-        logical_divide(a, b).is_bijective_upto(target),
+        logical_divide_linear(a, b).is_bijective_upto(target),
 {
     // Injectivity: same offset function + A injective
     lemma_divide_injective(a, b);
@@ -1159,13 +1159,13 @@ pub proof fn lemma_divide_bijective(a: &LayoutSpec, b: &LayoutSpec, target: nat)
     // Surjectivity: for any k in [0, target), A hits k, so divide hits k too
     lemma_divide_size(a, b);
     assert forall|k: int| 0 <= k < target as int
-    implies #[trigger] logical_divide(a, b).offset_hit(k) by {
+    implies #[trigger] logical_divide_linear(a, b).offset_hit(k) by {
         // A is surjective onto [0, target), so some i < a.size() has a.offset(i) == k
         assert(a.offset_hit(k));
         let i: nat = choose|i: nat| i < a.size() && #[trigger] a.offset(i) == k;
         // divide.offset(i) == a.offset(i) == k, and i < divide.size()
         lemma_divide_offset(a, b, i);
-        assert(logical_divide(a, b).offset(i) == k);
+        assert(logical_divide_linear(a, b).offset(i) == k);
     };
 }
 
@@ -1193,7 +1193,7 @@ pub proof fn lemma_divide_offset_column_major(a: &LayoutSpec, b: &LayoutSpec, x:
         b.stride =~= column_major_strides(b.shape),
         x < shape_size(a.shape),
     ensures
-        logical_divide(a, b).offset(x) == x as int,
+        logical_divide_linear(a, b).offset(x) == x as int,
 {
     let m = shape_size(a.shape);
     let c = complement(b, m);
@@ -1209,17 +1209,17 @@ pub proof fn lemma_divide_offset_column_major(a: &LayoutSpec, b: &LayoutSpec, x:
     crate::proof::inverse_lemmas::lemma_column_major_strides_first(a.shape);
     assert(a.stride[0] == 1int);
 
-    // compose(A, zipped).stride =~= scale(zipped.stride, 1) =~= zipped.stride
+    // compose_linear(A, zipped).stride =~= scale(zipped.stride, 1) =~= zipped.stride
     crate::proof::composition_lemmas::lemma_compose_stride_general(*a, zipped);
     assert(a.stride.first() == 1int);
     lemma_scale_strides_one(zipped.stride);
 
-    // compose(A, zipped).shape =~= zipped.shape
+    // compose_linear(A, zipped).shape =~= zipped.shape
     crate::proof::composition_lemmas::lemma_compose_shape(*a, zipped);
 
-    // So logical_divide(a,b) has same shape/stride as zipped → same offset
+    // So logical_divide_linear(a,b) has same shape/stride as zipped → same offset
     crate::proof::composition_lemmas::lemma_offset_eq_layout(
-        logical_divide(a, b).shape, logical_divide(a, b).stride,
+        logical_divide_linear(a, b).shape, logical_divide_linear(a, b).stride,
         zipped.shape, zipped.stride, x,
     );
 
@@ -1234,15 +1234,15 @@ pub proof fn lemma_divide_injective_column_major(a: &LayoutSpec, b: &LayoutSpec)
         a.stride =~= column_major_strides(a.shape),
         b.stride =~= column_major_strides(b.shape),
     ensures
-        logical_divide(a, b).is_injective(),
+        logical_divide_linear(a, b).is_injective(),
 {
     lemma_divide_size(a, b);
     assert forall|x1: nat, x2: nat|
-        x1 < shape_size(logical_divide(a, b).shape)
-        && x2 < shape_size(logical_divide(a, b).shape)
+        x1 < shape_size(logical_divide_linear(a, b).shape)
+        && x2 < shape_size(logical_divide_linear(a, b).shape)
         && x1 != x2
     implies
-        logical_divide(a, b).offset(x1) != logical_divide(a, b).offset(x2)
+        logical_divide_linear(a, b).offset(x1) != logical_divide_linear(a, b).offset(x2)
     by {
         lemma_divide_offset_column_major(a, b, x1);
         lemma_divide_offset_column_major(a, b, x2);
@@ -1257,12 +1257,12 @@ pub proof fn lemma_divide_bijective_column_major(a: &LayoutSpec, b: &LayoutSpec)
         a.stride =~= column_major_strides(a.shape),
         b.stride =~= column_major_strides(b.shape),
     ensures
-        logical_divide(a, b).is_bijective_upto(shape_size(a.shape)),
+        logical_divide_linear(a, b).is_bijective_upto(shape_size(a.shape)),
 {
     // Identity offset → bijective via lemma_identity_offset_implies_bijective
     lemma_divide_size(a, b);
     crate::proof::tiling_lemmas::lemma_divide_valid(a, b);
-    let div = logical_divide(a, b);
+    let div = logical_divide_linear(a, b);
     assert forall|i: nat| i < div.size()
     implies div.offset(i) == i as int
     by {
@@ -1275,16 +1275,16 @@ pub proof fn lemma_divide_bijective_column_major(a: &LayoutSpec, b: &LayoutSpec)
 // logical_divide_extended: shape and size properties
 // ══════════════════════════════════════════════════════════════
 
-/// logical_divide_extended has the same shape as logical_divide.
+/// logical_divide_extended has the same shape as logical_divide_linear.
 ///
 /// Both use the same zipped layout (B, complement(B, M)) — only the composition
-/// method differs. Since compose and compose_extended produce the same shape
+/// method differs. Since compose_linear and compose_extended produce the same shape
 /// (always b.shape), the shapes agree.
 pub proof fn lemma_divide_extended_shape(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
     ensures
-        logical_divide_extended(a, b).shape =~= logical_divide(a, b).shape,
+        logical_divide_extended(a, b).shape =~= logical_divide_linear(a, b).shape,
 {
     let m = shape_size(a.shape);
     let c = complement(b, m);
@@ -1301,8 +1301,8 @@ pub proof fn lemma_divide_extended_shape(a: &LayoutSpec, b: &LayoutSpec)
     lemma_compose_extended_multimode_shape(a_val, zipped);
 }
 
-/// Helper: compose_extended preserves shape (same as compose).
-/// Multi-mode compose_extended preserves shape (deprecated: prefer compose_recursive).
+/// Helper: compose_extended preserves shape (same as compose_linear).
+/// Multi-mode compose_extended preserves shape (deprecated: prefer compose).
 pub proof fn lemma_compose_extended_multimode_shape(a: LayoutSpec, b: LayoutSpec)
     requires
         a.valid(),
@@ -1333,7 +1333,7 @@ pub proof fn lemma_compose_extended_multimode_shape(a: LayoutSpec, b: LayoutSpec
     }
 }
 
-/// logical_divide_extended has the same size as logical_divide (== size(A)).
+/// logical_divide_extended has the same size as logical_divide_linear (== size(A)).
 pub proof fn lemma_divide_extended_size(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
@@ -1347,11 +1347,11 @@ pub proof fn lemma_divide_extended_size(a: &LayoutSpec, b: &LayoutSpec)
 
 /// logical_divide_extended offset correctness for rank-1 A with column-major B.
 ///
-/// When B = (N):(1) and A has rank 1, compose_extended == compose for rank-1 A,
-/// so logical_divide_extended == logical_divide, and existing proofs apply.
+/// When B = (N):(1) and A has rank 1, compose_extended == compose_linear for rank-1 A,
+/// so logical_divide_extended == logical_divide_linear, and existing proofs apply.
 ///
 /// For multi-rank A, use lemma_divide_offset_column_major (column-major A)
-/// or lemma_divide_offset (rank-1 A) with the original logical_divide.
+/// or lemma_divide_offset (rank-1 A) with the original logical_divide_linear.
 /// Note: logical_divide_extended with rank-1 B and non-column-major multi-rank A
 /// is NOT correct in general — the complement mode may cross A's first mode boundary,
 /// and compose_extended's fallback stride (N*d_0) doesn't correctly represent
@@ -1374,7 +1374,7 @@ pub proof fn lemma_divide_extended_offset(a: &LayoutSpec, b: &LayoutSpec, x: nat
     // Use existing divide_offset for rank-1 A
     lemma_divide_offset(a, b, x);
 
-    // Show logical_divide_extended == logical_divide for rank-1 A
+    // Show logical_divide_extended == logical_divide_linear for rank-1 A
     let m = shape_size(a.shape);
     let c = complement(b, m);
     let a_val = LayoutSpec { shape: a.shape, stride: a.stride };
@@ -1384,7 +1384,7 @@ pub proof fn lemma_divide_extended_offset(a: &LayoutSpec, b: &LayoutSpec, x: nat
     };
     crate::proof::tiling_lemmas::lemma_zipped_setup(a, b);
     crate::proof::composition_lemmas::lemma_compose_extended_eq_rank1(a_val, zipped);
-    assert(logical_divide_extended(a, b) == logical_divide(a, b));
+    assert(logical_divide_extended(a, b) == logical_divide_linear(a, b));
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -1541,7 +1541,7 @@ pub proof fn lemma_divide_mode_offset(a: &LayoutSpec, n: nat, x: nat)
     crate::proof::integer_helpers::lemma_mod_bound(x, m0);
 
     // Strategy: show both tile offsets equal d0 * (x%m0) by using
-    // compose_correct_1d_a: compose((m0):(d0), cm_tile).offset(y) == (m0):(d0).offset(cm_tile.offset(y))
+    // compose_correct_1d_a: compose_linear((m0):(d0), cm_tile).offset(y) == (m0):(d0).offset(cm_tile.offset(y))
     // where cm_tile = column_major([n, q]) has identity offset.
 
     let y_val = x % m0;
@@ -1568,22 +1568,22 @@ pub proof fn lemma_divide_mode_offset(a: &LayoutSpec, n: nat, x: nat)
         crate::proof::shape_lemmas::lemma_shape_size_single(m0);
     };
 
-    // compose(a_1d, cm_tile) has same shape as our tile layouts
+    // compose_linear(a_1d, cm_tile) has same shape as our tile layouts
     crate::proof::composition_lemmas::lemma_compose_shape(a_1d, cm_tile);
 
-    // compose(a_1d, cm_tile).offset(y) == a_1d.offset(cm_tile.offset(y)) == a_1d.offset(y) == y*d0
+    // compose_linear(a_1d, cm_tile).offset(y) == a_1d.offset(cm_tile.offset(y)) == a_1d.offset(y) == y*d0
     crate::proof::composition_lemmas::lemma_compose_correct_1d_a(a_1d, cm_tile, y_val);
     crate::proof::shape_lemmas::lemma_offset_within_first_mode(&a_1d, y_val);
-    // So compose(a_1d, cm_tile).offset(y) == y * d0
+    // So compose_linear(a_1d, cm_tile).offset(y) == y * d0
 
-    // Now show that compose(a_1d, cm_tile) has the same strides as both our tile layouts
-    // compose distributes: stride[j] = cm_tile.stride[j] * d0
+    // Now show that compose_linear(a_1d, cm_tile) has the same strides as both our tile layouts
+    // compose_linear distributes: stride[j] = cm_tile.stride[j] * d0
     // cm_tile.stride = column_major_strides([n, q]) = [1, n]
-    // So compose strides = [1*d0, n*d0] = [d0, n*d0] = r_tile_s
+    // So compose_linear strides = [1*d0, n*d0] = [d0, n*d0] = r_tile_s
     crate::proof::composition_lemmas::lemma_compose_stride_general(a_1d, cm_tile);
 
-    // The compose result layout == our r_tile_layout
-    let composed = compose(a_1d, cm_tile);
+    // The compose_linear result layout == our r_tile_layout
+    let composed = compose_linear(a_1d, cm_tile);
     assert(composed.shape =~= tile_shape);
     // composed.stride = scale_strides(cm_tile.stride, d0)
     // cm_tile.stride = column_major_strides([n, q]) = [1, n]
@@ -1629,21 +1629,21 @@ pub proof fn lemma_divide_mode_offset(a: &LayoutSpec, n: nat, x: nat)
 }
 
 // ══════════════════════════════════════════════════════════════
-// logical_divide_recursive: the correct general divide
+// logical_divide: the correct general divide
 // ══════════════════════════════════════════════════════════════
 
-/// For rank-1 B = (N):(1), logical_divide_recursive agrees with logical_divide_mode.
+/// For rank-1 B = (N):(1), logical_divide agrees with logical_divide_mode.
 ///
 /// Both produce the correct tiling of A's first mode by N:
 ///   shape:  (N, M_0/N, M_1, M_2, ...)
 ///   stride: (d_0, N*d_0, d_1, d_2, ...)
 ///
-/// This is because compose_recursive_single(A, N, 1) with N <= M_0 fits within
-/// the first mode (Case 1), and compose_recursive_single(A, M_0/N, N) with
+/// This is because compose_single(A, N, 1) with N <= M_0 fits within
+/// the first mode (Case 1), and compose_single(A, M_0/N, N) with
 /// N*M_0/N = M_0 also fits within the first mode. The complement's higher modes
 /// (stride M_0, M_0*M_1, etc.) hit the skip case and recurse correctly.
 ///
-/// Note: logical_divide_recursive may produce MORE modes than logical_divide
+/// Note: logical_divide may produce MORE modes than logical_divide
 /// when B's strides straddle A's mode boundaries — this is correct CuTe behavior
 /// (the straddle case splits a single mode into multiple result modes to correctly
 /// track the mode boundary crossing).
@@ -1653,11 +1653,11 @@ pub proof fn lemma_divide_recursive_agrees_mode(a: &LayoutSpec, n: nat)
         n <= a.shape.first(),
     ensures ({
         let expected = LayoutSpec { shape: seq![n], stride: seq![a.stride.first()] };
-        compose_recursive_single(*a, n, 1) == expected
+        compose_single(*a, n, 1) == expected
     }),
 {
     // b_stride=1, b_shape=n, n <= shape[0]: Case 1 (within first mode)
-    // compose_recursive_single returns (n):(1 * d_0) = (n):(d_0)
+    // compose_single returns (n):(1 * d_0) = (n):(d_0)
 }
 
 } // verus!

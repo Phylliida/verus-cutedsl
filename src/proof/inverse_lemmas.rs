@@ -3180,14 +3180,14 @@ pub proof fn lemma_left_inverse_correct(layout: &LayoutSpec, i: nat)
 }
 
 // ══════════════════════════════════════════════════════════════
-// Inverse compose cancellation
+// Inverse compose_linear cancellation
 // ══════════════════════════════════════════════════════════════
 
-/// Right inverse compose cancellation:
-/// compose(L, right_inverse(L)).offset(j) == j
+/// Right inverse compose_linear cancellation:
+/// compose_linear(L, right_inverse(L)).offset(j) == j
 ///
 /// This bridges the pointwise result (L.offset(R.offset(j)) == j) to the
-/// compose formulation. Requires that R's image fits within L's first mode.
+/// compose_linear formulation. Requires that R's image fits within L's first mode.
 pub proof fn lemma_right_inverse_compose_cancel(layout: &LayoutSpec, j: nat)
     requires
         layout.valid(),
@@ -3199,22 +3199,22 @@ pub proof fn lemma_right_inverse_compose_cancel(layout: &LayoutSpec, j: nat)
         right_inverse(layout).offset(j) >= 0,
         right_inverse(layout).offset(j) < layout.shape.first() as int,
     ensures
-        crate::composition::compose(*layout, right_inverse(layout)).offset(j) == j as int,
+        crate::composition::compose_linear(*layout, right_inverse(layout)).offset(j) == j as int,
 {
     let r = right_inverse(layout);
     lemma_right_inverse_valid(layout);
 
-    // compose(L, R).offset(j) == L.offset(R.offset(j))
+    // compose_linear(L, R).offset(j) == L.offset(R.offset(j))
     crate::proof::composition_lemmas::lemma_compose_correct(*layout, r, j);
 
     // L.offset(R.offset(j)) == j
     lemma_right_inverse_correct(layout, j);
 }
 
-/// Left inverse compose cancellation:
-/// compose(left_inverse(L), L).offset(i) == i
+/// Left inverse compose_linear cancellation:
+/// compose_linear(left_inverse(L), L).offset(i) == i
 ///
-/// Bridges the pointwise result (LI.offset(L.offset(i)) == i) to compose.
+/// Bridges the pointwise result (LI.offset(L.offset(i)) == i) to compose_linear.
 /// Requires that L's image fits within LI's first mode.
 pub proof fn lemma_left_inverse_compose_cancel(layout: &LayoutSpec, i: nat)
     requires
@@ -3233,12 +3233,12 @@ pub proof fn lemma_left_inverse_compose_cancel(layout: &LayoutSpec, i: nat)
         layout.offset(i) >= 0,
         layout.offset(i) < left_inverse(layout).shape.first() as int,
     ensures
-        crate::composition::compose(left_inverse(layout), *layout).offset(i) == i as int,
+        crate::composition::compose_linear(left_inverse(layout), *layout).offset(i) == i as int,
 {
     let li = left_inverse(layout);
     lemma_left_inverse_valid(layout);
 
-    // compose(LI, L).offset(i) == LI.offset(L.offset(i))
+    // compose_linear(LI, L).offset(i) == LI.offset(L.offset(i))
     crate::proof::composition_lemmas::lemma_compose_correct(li, *layout, i);
 
     // LI.offset(L.offset(i)) == i
