@@ -1473,4 +1473,458 @@ pub proof fn lemma_rank1_offset_equivalent_implies_equal(
     assert(l1.stride =~= l2.stride);
 }
 
+// ══════════════════════════════════════════════════════════════
+// full_flatten canonicality for sorted+tractable layouts
+// ══════════════════════════════════════════════════════════════
+
+/// For a fully-coalesced layout with shape[0] >= 2 and rank >= 2,
+/// offset(shape[0]) != shape[0] * stride[0].
+///
+/// This follows because delinearize(shape[0]) = (0, 1, 0, ...),
+/// so offset(shape[0]) = stride[1], and stride[1] != shape[0] * stride[0]
+/// by the fully-coalesced property.
+proof fn lemma_offset_at_shape0_breaks(layout: &LayoutSpec)
+    requires
+        layout.valid(),
+        layout.shape.len() >= 2,
+        is_fully_coalesced(layout),
+        has_no_unit_modes(layout),
+        layout.non_negative_strides(),
+        layout.is_sorted(),
+    ensures
+        layout.offset(layout.shape.first())
+            != (layout.shape.first() as int) * layout.stride.first(),
+{
+    let m0 = layout.shape.first();
+    let d0 = layout.stride.first();
+    let d1 = layout.stride[1];
+
+    // Not coalesceable at 0: d1 != m0 * d0
+    assert(!modes_coalesceable(layout, 0));
+    assert(d1 != (m0 as int) * d0);
+
+    // offset(m0): delinearize(m0, shape) = (0, 1, 0, ...)
+    // since m0 % m0 == 0, m0 / m0 == 1, and 1 < shape[1] (no unit modes)
+    assert(m0 > 1); // no unit modes
+    assert(layout.shape[1] > 1); // no unit modes
+
+    // offset(m0) = 0 * d0 + 1 * d1 + 0 * ... = d1
+    lemma_offset_within_first_mode(layout, 0nat);
+    // Actually we need offset(m0) = d1, not offset(0) = 0
+    // offset(m0) = dot(delinearize(m0, shape), stride)
+    // delinearize(m0, shape)[0] = m0 % m0 = 0
+    // delinearize(m0, shape)[1] = (m0 / m0) % shape[1] = 1 % shape[1] = 1
+
+    // Use the prefix-product approach: m0 = prefix_product[1] * 1
+    // So by lemma_offset_at_split_mode: offset(m0) = 1 * stride[1] = d1
+    crate::runtime::shape_helpers::lemma_shape_size_split(layout.shape, 1);
+    assert(layout.shape.take(1) =~= seq![m0]);
+    lemma_shape_size_single(m0);
+    assert(shape_size(layout.shape.take(1)) == m0);
+    // m0 * 1 = m0 < shape_size(layout.shape) (since rank >= 2 and shape[1] >= 2)
+    assert(shape_size(layout.shape.take(1)) * 1 < shape_size(layout.shape)) by {
+        // shape_size = m0 * shape_size(skip(1)) >= m0 * shape[1] >= m0 * 2 > m0
+        lemma_shape_size_positive(layout.shape.skip(1));
+        crate::proof::inverse_lemmas::lemma_shape_size_geq_entry(layout.shape.skip(1), 0);
+        assert(layout.shape.skip(1).first() == layout.shape[1]);
+        assert(shape_size(layout.shape.skip(1)) >= layout.shape[1]);
+        assert(shape_size(layout.shape.skip(1)) >= 2nat);
+        assert(m0 * shape_size(layout.shape.skip(1)) >= m0 * 2) by (nonlinear_arith)
+            requires m0 > 0, shape_size(layout.shape.skip(1)) >= 2;
+        assert(m0 * 2 > m0) by (nonlinear_arith) requires m0 > 0;
+    };
+    crate::proof::composition_lemmas::lemma_offset_at_split_mode(layout, 1, 1);
+    assert(layout.offset(m0) == d1);
+
+    // m0 * d0 != d1 (from not coalesceable)
+    // So offset(m0) != m0 * d0
+}
+
+/// Canonicality for sorted, tractable, fully-coalesced, unit-free layouts:
+/// offset-equivalent implies structurally equal.
+///
+/// Proof by induction on rank:
+/// - stride[0] is determined by offset(1) = stride[0]
+/// - shape[0] is determined as smallest k where offset(k) != k*stride[0]
+/// - Remaining modes recurse via offset(shape[0] * y) = rest.offset(y)
+pub proof fn lemma_canonical_sorted_tractable(l1: &LayoutSpec, l2: &LayoutSpec)
+    requires
+        l1.valid(), l2.valid(),
+        l1.size() == l2.size(),
+        l1.size() > 1,
+        has_no_unit_modes(l1), has_no_unit_modes(l2),
+        is_fully_coalesced(l1), is_fully_coalesced(l2),
+        l1.non_negative_strides(), l2.non_negative_strides(),
+        l1.is_sorted(), l2.is_sorted(),
+        l1.is_tractable(), l2.is_tractable(),
+        // Offset equivalent
+        forall|x: nat| x < l1.size() ==> l1.offset(x) == l2.offset(x),
+    ensures
+        *l1 == *l2,
+    decreases l1.shape.len(),
+{
+    if l1.shape.len() <= 1 && l2.shape.len() <= 1 {
+        // Both rank-1 (rank-0 impossible since size > 1 requires at least 1 mode)
+        assert(l1.shape.len() == 1 && l2.shape.len() == 1) by {
+            if l1.shape.len() == 0 {
+                lemma_shape_size_empty();
+                assert(l1.size() == 1nat);
+                assert(false); // size > 1
+            }
+            if l2.shape.len() == 0 {
+                lemma_shape_size_empty();
+                assert(l2.size() == 1nat);
+                assert(false);
+            }
+        };
+        lemma_rank1_offset_equivalent_implies_equal(l1, l2);
+    } else {
+        // At least one has rank >= 2. Show both must have rank >= 2.
+        // If one is rank 1 and the other rank >= 2, derive contradiction.
+        assert(l1.shape.len() >= 1 && l2.shape.len() >= 1) by {
+            if l1.shape.len() == 0 { lemma_shape_size_empty(); assert(false); }
+            if l2.shape.len() == 0 { lemma_shape_size_empty(); assert(false); }
+        };
+
+        // Step 1: stride[0] agrees (from offset(1) = stride[0])
+        assert(l1.shape.first() > 1); // no unit modes
+        assert(l2.shape.first() > 1);
+        lemma_offset_within_first_mode(l1, 1);
+        lemma_offset_within_first_mode(l2, 1);
+        assert(l1.stride.first() == l2.stride.first());
+        let d0 = l1.stride.first();
+
+        // Step 2: shape[0] agrees.
+        // For k < shape[0]: offset(k) = k * d0 (within first mode)
+        // At k = shape[0]: offset(shape[0]) != shape[0] * d0 (for rank >= 2)
+        // The smallest such k must be the same for both.
+
+        // Handle the case where one is rank 1 and the other rank >= 2
+        if l1.shape.len() == 1 {
+            // L1 is rank-1: offset(k) = k * d0 for ALL k < size
+            // L2 has rank >= 2: at k = l2.shape[0], offset(k) != k * d0
+            // But L1.offset(l2.shape[0]) = l2.shape[0] * d0 (since l2.shape[0] < l2.size = l1.size)
+            // and L2.offset(l2.shape[0]) != l2.shape[0] * d0 → contradiction
+            assert(l2.shape.len() >= 2);
+            lemma_offset_at_shape0_breaks(l2);
+            let m = l2.shape.first();
+            // m < l2.size() (since rank >= 2 and shape entries >= 2)
+            lemma_size_at_least_first(l2.shape);
+            crate::runtime::shape_helpers::lemma_shape_size_split(l2.shape, 1);
+            assert(l2.shape.take(1) =~= seq![m]);
+            lemma_shape_size_single(m);
+            lemma_shape_size_positive(l2.shape.skip(1));
+            assert(m < l2.size()) by {
+                assert(l2.size() == m * shape_size(l2.shape.skip(1)));
+                assert(shape_size(l2.shape.skip(1)) >= 2nat) by {
+                    crate::proof::inverse_lemmas::lemma_shape_size_geq_entry(l2.shape.skip(1), 0);
+                };
+                assert(m * shape_size(l2.shape.skip(1)) >= m * 2) by (nonlinear_arith)
+                    requires m > 0, shape_size(l2.shape.skip(1)) >= 2;
+            };
+            // For rank-1 L1: l1.shape.first() == l1.size() > m
+            assert(l1.shape =~= seq![l1.shape.first()]);
+            lemma_shape_size_single(l1.shape.first());
+            assert(shape_size(l1.shape) == l1.shape.first());
+            assert(m < l1.shape.first());
+            lemma_offset_within_first_mode(l1, m);
+            // L1.offset(m) = m * d0, L2.offset(m) != m * d0, but they must be equal
+            assert(l1.offset(m) == l2.offset(m));
+            assert(false);
+        }
+        if l2.shape.len() == 1 {
+            // Symmetric case
+            assert(l1.shape.len() >= 2);
+            lemma_offset_at_shape0_breaks(l1);
+            let m = l1.shape.first();
+            crate::runtime::shape_helpers::lemma_shape_size_split(l1.shape, 1);
+            assert(l1.shape.take(1) =~= seq![m]);
+            lemma_shape_size_single(m);
+            lemma_shape_size_positive(l1.shape.skip(1));
+            assert(m < l1.size()) by {
+                assert(l1.size() == m * shape_size(l1.shape.skip(1)));
+                crate::proof::inverse_lemmas::lemma_shape_size_geq_entry(l1.shape.skip(1), 0);
+                assert(m * shape_size(l1.shape.skip(1)) >= m * 2) by (nonlinear_arith)
+                    requires m > 0, shape_size(l1.shape.skip(1)) >= 2;
+            };
+            assert(l2.shape =~= seq![l2.shape.first()]);
+            lemma_shape_size_single(l2.shape.first());
+            assert(shape_size(l2.shape) == l2.shape.first());
+            assert(m < l2.shape.first());
+            lemma_offset_within_first_mode(l2, m);
+            assert(l1.offset(m) == l2.offset(m));
+            assert(false);
+        }
+
+        // Both have rank >= 2
+        assert(l1.shape.len() >= 2 && l2.shape.len() >= 2);
+
+        // Now show shape[0] agrees. WLOG assume l1.shape[0] <= l2.shape[0].
+        // At k = l1.shape[0]: L1.offset(k) != k * d0, but if l1.shape[0] < l2.shape[0],
+        // then L2.offset(k) = k * d0. Contradiction.
+        let m1 = l1.shape.first();
+        let m2 = l2.shape.first();
+
+        if m1 < m2 {
+            // L2.offset(m1) = m1 * d0 (since m1 < m2 = l2.shape[0])
+            lemma_offset_within_first_mode(l2, m1);
+            assert(l2.offset(m1) == (m1 as int) * d0);
+            // L1.offset(m1) != m1 * d0 (from offset_at_shape0_breaks)
+            lemma_offset_at_shape0_breaks(l1);
+            assert(l1.offset(m1) != (m1 as int) * d0);
+            // But they must be equal (m1 < m2 < l2.size() = l1.size())
+            assert(m1 < l1.size()) by {
+                crate::runtime::shape_helpers::lemma_shape_size_split(l1.shape, 1);
+                assert(l1.shape.take(1) =~= seq![m1]);
+                lemma_shape_size_single(m1);
+                lemma_shape_size_positive(l1.shape.skip(1));
+                crate::proof::inverse_lemmas::lemma_shape_size_geq_entry(l1.shape.skip(1), 0);
+                assert(m1 * shape_size(l1.shape.skip(1)) >= m1 * 2) by (nonlinear_arith)
+                    requires m1 > 0, shape_size(l1.shape.skip(1)) >= 2;
+            };
+            assert(l1.offset(m1) == l2.offset(m1));
+            assert(false);
+        }
+        if m2 < m1 {
+            lemma_offset_within_first_mode(l1, m2);
+            assert(l1.offset(m2) == (m2 as int) * d0);
+            lemma_offset_at_shape0_breaks(l2);
+            assert(l2.offset(m2) != (m2 as int) * d0);
+            assert(m2 < l2.size()) by {
+                crate::runtime::shape_helpers::lemma_shape_size_split(l2.shape, 1);
+                assert(l2.shape.take(1) =~= seq![m2]);
+                lemma_shape_size_single(m2);
+                lemma_shape_size_positive(l2.shape.skip(1));
+                crate::proof::inverse_lemmas::lemma_shape_size_geq_entry(l2.shape.skip(1), 0);
+                assert(m2 * shape_size(l2.shape.skip(1)) >= m2 * 2) by (nonlinear_arith)
+                    requires m2 > 0, shape_size(l2.shape.skip(1)) >= 2;
+            };
+            assert(l1.offset(m2) == l2.offset(m2));
+            assert(false);
+        }
+        assert(m1 == m2);
+        let m0 = m1;
+
+        // Step 3: stride[1] agrees (from offset(m0) = stride[1])
+        assert(l1.shape.take(1) =~= seq![m0]);
+        assert(l2.shape.take(1) =~= seq![m0]);
+        lemma_shape_size_single(m0);
+        // Establish m0 < size for both (rank >= 2, shape entries >= 2)
+        assert(m0 < l1.size()) by {
+            crate::runtime::shape_helpers::lemma_shape_size_split(l1.shape, 1);
+            lemma_shape_size_positive(l1.shape.skip(1));
+            crate::proof::inverse_lemmas::lemma_shape_size_geq_entry(l1.shape.skip(1), 0);
+            assert(shape_size(l1.shape.skip(1)) >= 2nat);
+            assert(m0 * shape_size(l1.shape.skip(1)) > m0) by (nonlinear_arith)
+                requires m0 > 0, shape_size(l1.shape.skip(1)) >= 2;
+        };
+        assert(m0 < l2.size()) by {
+            crate::runtime::shape_helpers::lemma_shape_size_split(l2.shape, 1);
+            lemma_shape_size_positive(l2.shape.skip(1));
+            crate::proof::inverse_lemmas::lemma_shape_size_geq_entry(l2.shape.skip(1), 0);
+            assert(shape_size(l2.shape.skip(1)) >= 2nat);
+            assert(m0 * shape_size(l2.shape.skip(1)) > m0) by (nonlinear_arith)
+                requires m0 > 0, shape_size(l2.shape.skip(1)) >= 2;
+        };
+        crate::proof::composition_lemmas::lemma_offset_at_split_mode(l1, 1, 1);
+        crate::proof::composition_lemmas::lemma_offset_at_split_mode(l2, 1, 1);
+
+        // Establish m0 * 1 < l1.size() and m0 * 1 < l2.size()
+        assert(m0 < l1.size()) by {
+            crate::runtime::shape_helpers::lemma_shape_size_split(l1.shape, 1);
+            lemma_shape_size_positive(l1.shape.skip(1));
+            crate::proof::inverse_lemmas::lemma_shape_size_geq_entry(l1.shape.skip(1), 0);
+            assert(m0 * shape_size(l1.shape.skip(1)) > m0) by (nonlinear_arith)
+                requires m0 > 0, shape_size(l1.shape.skip(1)) >= 2;
+        };
+        assert(m0 < l2.size()) by {
+            crate::runtime::shape_helpers::lemma_shape_size_split(l2.shape, 1);
+            lemma_shape_size_positive(l2.shape.skip(1));
+            crate::proof::inverse_lemmas::lemma_shape_size_geq_entry(l2.shape.skip(1), 0);
+            assert(m0 * shape_size(l2.shape.skip(1)) > m0) by (nonlinear_arith)
+                requires m0 > 0, shape_size(l2.shape.skip(1)) >= 2;
+        };
+
+        assert(l1.stride[1] == l2.stride[1]);
+
+        // Step 4: Recurse on remaining modes.
+        let l1r = LayoutSpec { shape: l1.shape.skip(1), stride: l1.stride.skip(1) };
+        let l2r = LayoutSpec { shape: l2.shape.skip(1), stride: l2.stride.skip(1) };
+
+        // Remaining layouts are valid
+        assert(l1r.valid()) by {
+            assert forall|i: int| 0 <= i < l1r.shape.len()
+            implies #[trigger] l1r.shape[i] > 0 by { assert(l1r.shape[i] == l1.shape[i + 1]); };
+        };
+        assert(l2r.valid()) by {
+            assert forall|i: int| 0 <= i < l2r.shape.len()
+            implies #[trigger] l2r.shape[i] > 0 by { assert(l2r.shape[i] == l2.shape[i + 1]); };
+        };
+
+        // Same size: size(l1)/m0 == size(l2)/m0
+        crate::runtime::shape_helpers::lemma_shape_size_split(l1.shape, 1);
+        crate::runtime::shape_helpers::lemma_shape_size_split(l2.shape, 1);
+        assert(l1.size() == m0 * l1r.size());
+        assert(l2.size() == m0 * l2r.size());
+        assert(l1r.size() == l2r.size()) by {
+            vstd::arithmetic::mul::lemma_mul_is_commutative(m0 as int, l1r.size() as int);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(m0 as int, l2r.size() as int);
+            vstd::arithmetic::div_mod::lemma_div_multiples_vanish(l1r.size() as int, m0 as int);
+            vstd::arithmetic::div_mod::lemma_div_multiples_vanish(l2r.size() as int, m0 as int);
+        };
+
+        // Remaining size > 1 (since rank >= 2 and shape entries >= 2)
+        assert(l1r.size() > 1) by {
+            if l1r.shape.len() == 0 {
+                lemma_shape_size_empty();
+                assert(l1.size() == m0); // m0 * 1
+                assert(false); // l1 has rank >= 2
+            } else {
+                crate::proof::inverse_lemmas::lemma_shape_size_geq_entry(l1r.shape, 0);
+                assert(l1r.shape[0] == l1.shape[1]);
+                assert(l1r.shape[0] > 1);
+            }
+        };
+
+        // No unit modes
+        assert(has_no_unit_modes(&l1r)) by {
+            assert forall|i: int| 0 <= i < l1r.shape.len()
+            implies #[trigger] l1r.shape[i] > 1 by { assert(l1r.shape[i] == l1.shape[i + 1]); };
+        };
+        assert(has_no_unit_modes(&l2r)) by {
+            assert forall|i: int| 0 <= i < l2r.shape.len()
+            implies #[trigger] l2r.shape[i] > 1 by { assert(l2r.shape[i] == l2.shape[i + 1]); };
+        };
+
+        // Sorted, tractable, coalesced, non-negative strides — all shift by -1
+        assert(l1r.non_negative_strides()) by {
+            assert forall|i: int| 0 <= i < l1r.stride.len()
+            implies #[trigger] l1r.stride[i] >= 0 by { assert(l1r.stride[i] == l1.stride[i + 1]); };
+        };
+        assert(l2r.non_negative_strides()) by {
+            assert forall|i: int| 0 <= i < l2r.stride.len()
+            implies #[trigger] l2r.stride[i] >= 0 by { assert(l2r.stride[i] == l2.stride[i + 1]); };
+        };
+        assert(l1r.is_sorted()) by {
+            assert forall|i: int| 0 <= i < l1r.stride.len() as int - 1
+            implies #[trigger] l1r.stride[i] <= l1r.stride[i + 1] by {
+                assert(l1r.stride[i] == l1.stride[i + 1]);
+                assert(l1r.stride[i + 1] == l1.stride[i + 2]);
+            };
+        };
+        assert(l2r.is_sorted()) by {
+            assert forall|i: int| 0 <= i < l2r.stride.len() as int - 1
+            implies #[trigger] l2r.stride[i] <= l2r.stride[i + 1] by {
+                assert(l2r.stride[i] == l2.stride[i + 1]);
+                assert(l2r.stride[i + 1] == l2.stride[i + 2]);
+            };
+        };
+        assert(l1r.is_tractable()) by {
+            assert forall|i: int| 0 <= i < l1r.stride.len() as int - 1
+            implies #[trigger] l1r.tractable_at(i) by {
+                assert(l1r.shape[i] == l1.shape[i + 1]);
+                assert(l1r.stride[i] == l1.stride[i + 1]);
+                assert(l1r.stride[i + 1] == l1.stride[i + 2]);
+                assert(l1.tractable_at(i + 1));
+            };
+        };
+        assert(l2r.is_tractable()) by {
+            assert forall|i: int| 0 <= i < l2r.stride.len() as int - 1
+            implies #[trigger] l2r.tractable_at(i) by {
+                assert(l2r.shape[i] == l2.shape[i + 1]);
+                assert(l2r.stride[i] == l2.stride[i + 1]);
+                assert(l2r.stride[i + 1] == l2.stride[i + 2]);
+                assert(l2.tractable_at(i + 1));
+            };
+        };
+        assert(is_fully_coalesced(&l1r)) by {
+            assert forall|i: int| 0 <= i < l1r.shape.len() as int - 1
+            implies !modes_coalesceable(&l1r, i) by {
+                assert(l1r.stride[i + 1] == l1.stride[i + 2]);
+                assert(l1r.shape[i] == l1.shape[i + 1]);
+                assert(l1r.stride[i] == l1.stride[i + 1]);
+                assert(!modes_coalesceable(l1, i + 1));
+            };
+        };
+        assert(is_fully_coalesced(&l2r)) by {
+            assert forall|i: int| 0 <= i < l2r.shape.len() as int - 1
+            implies !modes_coalesceable(&l2r, i) by {
+                assert(l2r.stride[i + 1] == l2.stride[i + 2]);
+                assert(l2r.shape[i] == l2.shape[i + 1]);
+                assert(l2r.stride[i] == l2.stride[i + 1]);
+                assert(!modes_coalesceable(l2, i + 1));
+            };
+        };
+
+        // Offset equivalence: l1r.offset(y) == l2r.offset(y) for y < l1r.size()
+        // Because l1r.offset(y) == l1.offset(m0 * y) == l2.offset(m0 * y) == l2r.offset(y)
+        // (by lemma_offset_at_split_mode: offset(pp[1]*y) at mode 1 = y * stride[1])
+        // Actually: L.offset(m0 * y) = l_rest.offset(y) + 0*stride[0]
+        // because delinearize(m0*y, shape) = (0, delinearize(y, shape.skip(1)))
+        assert forall|y: nat| y < l1r.size() implies l1r.offset(y) == l2r.offset(y) by {
+            // l1.offset(m0 * y) == l2.offset(m0 * y) (from offset equivalence)
+            // m0 * y < l1.size() (since y < l1r.size() and l1.size() = m0 * l1r.size())
+            assert(m0 * y < l1.size()) by (nonlinear_arith)
+                requires m0 > 0, y < l1r.size(), l1.size() == m0 * l1r.size();
+            assert(l1.offset(m0 * y) == l2.offset(m0 * y));
+
+            // l1.offset(m0 * y) == l1r.offset(y): by offset_at_split_mode at mode index 1
+            // Actually, we need a helper: for L with shape (M0, rest) and index M0*y:
+            // delinearize(M0*y, (M0, rest)) = (0, delinearize(y, rest))
+            // offset = 0*stride[0] + rest_offset(y) = l1r.offset(y)
+            // This follows from delinearize_concat
+            lemma_delinearize_concat(m0 * y, seq![m0], l1r.shape);
+            lemma_delinearize_len(0nat, seq![m0]);
+            assert(l1.shape =~= seq![m0].add(l1r.shape));
+            assert(l1.stride =~= seq![d0].add(l1r.stride));
+            // (m0*y) % m0 == 0, (m0*y) / m0 == y
+            crate::proof::integer_helpers::lemma_div_mul_cancel(m0, y);
+            vstd::arithmetic::mul::lemma_mul_is_commutative(m0 as int, y as int);
+            vstd::arithmetic::div_mod::lemma_mod_multiples_basic(y as int, m0 as int);
+            // dot(delinearize(0, [m0]), [d0]) + dot(delinearize(y, l1r.shape), l1r.stride)
+            lemma_delinearize_len(y, l1r.shape);
+            lemma_dot_product_append(
+                delinearize(0nat, seq![m0]), delinearize(y, l1r.shape),
+                seq![d0], l1r.stride,
+            );
+            crate::proof::offset_lemmas::lemma_offset_zero(
+                LayoutSpec { shape: seq![m0], stride: seq![d0] },
+            );
+
+            // Same for l2
+            lemma_delinearize_concat(m0 * y, seq![m0], l2r.shape);
+            lemma_delinearize_len(0nat, seq![m0]);
+            assert(l2.shape =~= seq![m0].add(l2r.shape));
+            assert(l2.stride =~= seq![d0].add(l2r.stride));
+            lemma_delinearize_len(y, l2r.shape);
+            lemma_dot_product_append(
+                delinearize(0nat, seq![m0]), delinearize(y, l2r.shape),
+                seq![d0], l2r.stride,
+            );
+        };
+
+        // Recurse!
+        lemma_canonical_sorted_tractable(&l1r, &l2r);
+        assert(l1r == l2r);
+
+        // Conclude: l1 == l2 (same shape[0], stride[0], and same skip(1))
+        assert(l1.shape =~= l2.shape) by {
+            assert(l1.shape.first() == l2.shape.first());
+            assert(l1.shape.skip(1) =~= l2.shape.skip(1));
+            assert forall|i: int| 0 <= i < l1.shape.len()
+            implies l1.shape[i] == l2.shape[i] by {
+                if i == 0 {} else { assert(l1.shape[i] == l1r.shape[i - 1]); }
+            };
+        };
+        assert(l1.stride =~= l2.stride) by {
+            assert(l1.stride.first() == l2.stride.first());
+            assert(l1.stride.skip(1) =~= l2.stride.skip(1));
+            assert forall|i: int| 0 <= i < l1.stride.len()
+            implies l1.stride[i] == l2.stride[i] by {
+                if i == 0 {} else { assert(l1.stride[i] == l1r.stride[i - 1]); }
+            };
+        };
+    }
+}
+
 } // verus!

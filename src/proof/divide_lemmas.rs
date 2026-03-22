@@ -1361,7 +1361,7 @@ pub proof fn lemma_divide_extended_shape(a: &LayoutSpec, b: &LayoutSpec)
 }
 
 /// Helper: compose_extended preserves shape (same as compose).
-proof fn lemma_compose_extended_shape(a: LayoutSpec, b: LayoutSpec)
+pub proof fn lemma_compose_extended_shape(a: LayoutSpec, b: LayoutSpec)
     requires
         a.valid(),
         b.valid(),

@@ -1075,4 +1075,227 @@ pub proof fn lemma_compose_extended_eq_rank1(a: LayoutSpec, b: LayoutSpec)
     }
 }
 
+// ══════════════════════════════════════════════════════════════
+// Multi-mode compose_extended correctness
+// ══════════════════════════════════════════════════════════════
+
+/// compose_extended produces shape.len() == stride.len().
+proof fn lemma_compose_extended_stride_len(a: LayoutSpec, b: LayoutSpec)
+    requires a.valid(), a.shape.len() > 0, b.valid(),
+    ensures compose_extended(a, b).shape.len() == compose_extended(a, b).stride.len(),
+    decreases b.shape.len(),
+{
+    if b.shape.len() == 0 {
+    } else if b.shape.len() == 1 {
+    } else {
+        let rest_b = LayoutSpec { shape: b.shape.skip(1), stride: b.stride.skip(1) };
+        assert(rest_b.valid()) by {
+            assert forall|i: int| 0 <= i < rest_b.shape.len()
+            implies #[trigger] rest_b.shape[i] > 0 by { assert(rest_b.shape[i] == b.shape[i + 1]); };
+        };
+        lemma_compose_extended_stride_len(a, rest_b);
+    }
+}
+
+/// Predicate: compose_extended is correct for A and B at all indices.
+/// This is defined recursively to enable inductive proofs.
+pub open spec fn compose_extended_correct_at(a: LayoutSpec, b: LayoutSpec) -> bool
+    decreases b.shape.len(),
+{
+    &&& a.valid()
+    &&& a.shape.len() > 0
+    &&& b.valid()
+    &&& b.non_negative_strides()
+    &&& (b.shape.len() > 0 ==> {
+        let b_rest = LayoutSpec { shape: b.shape.skip(1), stride: b.stride.skip(1) };
+        // 1. Each single-mode extended composition is correct for this mode
+        &&& forall|c: nat| c < b.shape.first() ==> (#[trigger] a.offset((b.stride.first() * (c as int)) as nat))
+            == compose_single_mode_extended(a, b.shape.first(), b.stride.first() as nat).offset(c)
+        // 2. Recursion: compose_extended is correct for remaining modes
+        &&& compose_extended_correct_at(a, b_rest)
+        // 3. A.offset is additive over first mode and rest
+        //    A.offset(stride[0]*c + rest_offset) == A.offset(stride[0]*c) + A.offset(rest_offset)
+        &&& forall|c: nat, rest_off: nat|
+            c < b.shape.first()
+            && rest_off < a.size()
+            && (b.stride.first() * (c as int)) as nat + rest_off < a.size()
+            ==>
+            #[trigger] a.offset((b.stride.first() * (c as int)) as nat + rest_off)
+                == a.offset((b.stride.first() * (c as int)) as nat) + a.offset(rest_off)
+    })
+}
+
+/// Multi-mode compose_extended correctness.
+///
+/// When `compose_extended_correct_at(A, B)` holds, the composed layout
+/// produces the same offset as `A.offset(B.offset(x))` for all x < B.size().
+///
+/// The predicate `compose_extended_correct_at` requires:
+/// 1. Each single-mode composition is correct (offset matches A.offset(stride * coord))
+/// 2. A.offset is additive over B's mode decomposition (first mode independent of rest)
+///
+/// These conditions hold when B's strides address non-overlapping modes of A
+/// (e.g., B's strides are prefix products of A's shape).
+pub proof fn lemma_compose_extended_correct(a: LayoutSpec, b: LayoutSpec, x: nat)
+    requires
+        compose_extended_correct_at(a, b),
+        x < b.size(),
+        b.offset(x) >= 0,
+        (b.offset(x) as nat) < a.size(),
+    ensures
+        compose_extended(a, b).offset(x) == a.offset(b.offset(x) as nat),
+    decreases b.shape.len(),
+{
+    if b.shape.len() == 0 {
+        // compose_extended returns empty, offset = 0
+        // B.offset(x) = dot(delinearize(x, []), []) = 0
+        // A.offset(0) = 0
+        crate::proof::offset_lemmas::lemma_offset_zero(a);
+        assert(b.offset(x) == 0int);
+    } else {
+        let bs = b.shape.first();
+        let bd = b.stride.first();
+        let c0 = x % bs;
+        let x_rest = x / bs;
+        let b_rest = LayoutSpec { shape: b.shape.skip(1), stride: b.stride.skip(1) };
+
+        // b_rest validity
+        assert(b_rest.valid()) by {
+            assert forall|i: int| 0 <= i < b_rest.shape.len()
+            implies #[trigger] b_rest.shape[i] > 0 by { assert(b_rest.shape[i] == b.shape[i + 1]); };
+        };
+        assert(b_rest.non_negative_strides()) by {
+            assert forall|i: int| 0 <= i < b_rest.stride.len()
+            implies #[trigger] b_rest.stride[i] >= 0 by { assert(b_rest.stride[i] == b.stride[i + 1]); };
+        };
+
+        // Bounds: c0 < bs, x_rest < b_rest.size()
+        crate::proof::integer_helpers::lemma_mod_bound(x, bs);
+        crate::runtime::shape_helpers::lemma_shape_size_split(b.shape, 1);
+        assert(b.shape.take(1) =~= seq![bs]);
+        lemma_shape_size_single(bs);
+        lemma_shape_size_positive(b_rest.shape);
+        crate::proof::integer_helpers::lemma_div_upper_bound(x, bs, b_rest.size());
+
+        // ═══ Step 1: B.offset(x) == bd * c0 + b_rest.offset(x_rest) ═══
+        let b_first_s: Seq<nat> = seq![bs];
+        assert(b.shape =~= b_first_s.add(b_rest.shape));
+        lemma_delinearize_len(x, b.shape);
+        lemma_delinearize_concat(x, b_first_s, b_rest.shape);
+        lemma_delinearize_len(c0, b_first_s);
+        lemma_dot_product_append(
+            delinearize(c0, b_first_s), delinearize(x_rest, b_rest.shape),
+            seq![bd], b_rest.stride,
+        );
+        // dot([c0%bs], [bd]) = c0 * bd  (since c0 < bs, c0%bs == c0)
+        // The first-mode layout (bs):(bd) has offset(c0) == c0 * bd
+        let b_first_layout = LayoutSpec { shape: b_first_s, stride: seq![bd] };
+        assert(b_first_layout.valid());
+        lemma_offset_within_first_mode(&b_first_layout, c0);
+        assert(b_first_layout.offset(c0) == (c0 as int) * bd);
+
+        // B.offset(x) decomposes via concat: = b_first.offset(c0) + b_rest.offset(x_rest)
+        lemma_delinearize_len(c0, b_first_s);
+        lemma_dot_product_append(
+            delinearize(c0, b_first_s), delinearize(x_rest, b_rest.shape),
+            seq![bd], b_rest.stride,
+        );
+        // Connect dot_product_append result to b.offset(x)
+        assert(b.stride =~= seq![bd].add(b_rest.stride));
+        // b.offset(x) = dot(delinearize(x, b.shape), b.stride)
+        //             = dot(delinearize(c0, [bs]), [bd]) + dot(delinearize(x_rest, b_rest.shape), b_rest.stride)
+        //             = b_first_layout.offset(c0) + b_rest.offset(x_rest)
+        //             = c0*bd + b_rest.offset(x_rest)
+        assert(b.offset(x) == (c0 as int) * bd + b_rest.offset(x_rest));
+
+        // ═══ Step 2: compose_extended.offset(x) == single.offset(c0) + rest.offset(x_rest) ═══
+        let single = compose_single_mode_extended(a, bs, bd as nat);
+        let rest_c = compose_extended(a, b_rest);
+        let ce = compose_extended(a, b);
+        // ce has shape = single.shape ++ rest_c.shape, stride = single.stride ++ rest_c.stride
+        // (from compose_extended definition)
+        lemma_compose_extended_shape(a, bs, bd as nat);  // single.shape =~= [bs]
+        assert(ce.shape =~= single.shape.add(rest_c.shape));
+        assert(ce.stride =~= single.stride.add(rest_c.stride));
+        assert(shape_size(single.shape) == bs);
+        crate::proof::product_lemmas::lemma_shape_size_append(single.shape, rest_c.shape);
+
+        // ce.offset(x) = dot(delinearize(x, ce.shape), ce.stride)
+        // Using concat: = dot(delinearize(c0, single.shape), single.stride)
+        //              + dot(delinearize(x_rest, rest_c.shape), rest_c.stride)
+        //              = single.offset(c0) + rest_c.offset(x_rest)
+        lemma_delinearize_len(c0, single.shape);
+        // Need x < shape_size(single.shape ++ rest_c.shape) for delinearize_concat
+        // ce.shape =~= single.shape ++ rest_c.shape, and x < b.size() == ce.size()
+        assert(shape_valid(single.shape));
+        assert(shape_valid(rest_c.shape)) by {
+            // rest_c = compose_extended(a, b_rest), its shape =~= b_rest.shape (valid)
+            crate::proof::divide_lemmas::lemma_compose_extended_shape(a, b_rest);
+            assert(rest_c.shape =~= b_rest.shape);
+            assert forall|i: int| 0 <= i < rest_c.shape.len()
+            implies #[trigger] rest_c.shape[i] > 0 by {
+                assert(rest_c.shape[i] == b_rest.shape[i]);
+            };
+        };
+        // x < b.size() = bs * b_rest.size() = shape_size(single.shape) * shape_size(rest_c.shape)
+        crate::proof::divide_lemmas::lemma_compose_extended_shape(a, b_rest);
+        lemma_delinearize_concat(x, single.shape, rest_c.shape);
+        // Lengths for dot_product_append
+        lemma_delinearize_len(x_rest, rest_c.shape);
+        assert(single.shape.len() == single.stride.len());
+        assert(rest_c.shape.len() == rest_c.stride.len()) by {
+            // compose_extended preserves shape =~= b_rest.shape
+            // and stride has same length as shape (from definition)
+            lemma_compose_extended_stride_len(a, b_rest);
+        };
+        lemma_dot_product_append(
+            delinearize(c0, single.shape), delinearize(x_rest, rest_c.shape),
+            single.stride, rest_c.stride,
+        );
+        assert(ce.offset(x) == single.offset(c0) + rest_c.offset(x_rest));
+
+        // ═══ Step 3: single.offset(c0) == A.offset(bd * c0) (condition 1) ═══
+        let a_val_at_bd_c0 = a.offset((bd * (c0 as int)) as nat);
+        assert(single.offset(c0) == a_val_at_bd_c0);
+
+        // ═══ Step 4: rest_c.offset(x_rest) == A.offset(b_rest.offset(x_rest)) (IH) ═══
+        // Need b_rest.offset(x_rest) >= 0 and < a.size()
+        if b_rest.shape.len() > 0 {
+            crate::proof::offset_lemmas::lemma_offset_nonneg(b_rest, x_rest);
+            assert(b_rest.offset(x_rest) >= 0);
+            // b.offset(x) == bd*c0 + b_rest.offset(x_rest) < a.size()
+            // bd >= 0, c0 >= 0 => bd*c0 >= 0
+            crate::proof::integer_helpers::lemma_mul_nonneg(bd, c0 as int);
+            assert((b_rest.offset(x_rest) as nat) < a.size());
+            lemma_compose_extended_correct(a, b_rest, x_rest);
+        } else {
+            crate::proof::offset_lemmas::lemma_offset_zero(a);
+        }
+        let rest_off = if b_rest.shape.len() > 0 { b_rest.offset(x_rest) as nat } else { 0nat };
+
+        // ═══ Step 5: A.offset(bd*c0 + rest_off) == A.offset(bd*c0) + A.offset(rest_off) (condition 3) ═══
+        // rest_off < a.size() (from step 4)
+        // bd*c0 as nat + rest_off == B.offset(x) as nat < a.size() (from requires)
+        assert((bd * (c0 as int)) as nat + rest_off < a.size()) by {
+            crate::proof::integer_helpers::lemma_mul_nonneg(bd, c0 as int);
+            if b_rest.shape.len() > 0 {
+                assert(b.offset(x) as nat == (bd * (c0 as int)) as nat + rest_off);
+            } else {
+                assert(b.offset(x) as nat == (bd * (c0 as int)) as nat);
+            }
+        };
+        assert(a.offset((bd * (c0 as int)) as nat + rest_off)
+            == a.offset((bd * (c0 as int)) as nat) + a.offset(rest_off));
+
+        // ═══ Step 6: Chain everything ═══
+        // ce.offset(x) = single.offset(c0) + rest_c.offset(x_rest)     [step 2]
+        //              = A.offset(bd*c0) + A.offset(rest_off)           [steps 3,4]
+        //              = A.offset(bd*c0 + rest_off)                      [step 5]
+        //              = A.offset(B.offset(x))                           [step 1]
+        assert(b.offset(x) as nat == (bd * (c0 as int)) as nat + rest_off) by {
+            crate::proof::integer_helpers::lemma_mul_nonneg(bd, c0 as int);
+        };
+    }
+}
+
 } // verus!
