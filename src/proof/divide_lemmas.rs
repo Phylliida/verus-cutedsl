@@ -2123,116 +2123,13 @@ proof fn lemma_zipped_mode_bound(a: &LayoutSpec, b: &LayoutSpec, i: int)
         // complement_admissible(b, m) includes this.
         crate::proof::composition_lemmas::lemma_sorted_tractable_mode_bound(b, m, i);
     } else {
-        // Complement mode: unfold complement_shape/stride definitions
+        // Complement mode: complement is sorted+tractable, use general mode bound
         let j = i - b.shape.len() as int;
         assert(zipped.stride[i] == c.stride[j]);
         assert(zipped.shape[i] == c.shape[j]);
-        let k = b.shape.len();
-        if j == 0 {
-            crate::proof::inverse_lemmas::lemma_column_major_strides_first(b.shape);
-            assert(c.stride[0] == 1int);
-            assert(c.shape[0] == (b.stride[0] as nat));
-            assert(c.shape[0] == 1nat);
-            vstd::arithmetic::mul::lemma_mul_basics(1int);
-            assert((c.stride[0] as nat) * c.shape[0] <= m);
-        } else if j < k as int {
-            assert(c.stride[j] == stride_product(b, j - 1));
-            assert(c.shape[j] == ((b.stride[j] / stride_product(b, j - 1)) as nat));
-            assert(stride_product(b, j - 1) > 0) by {
-                assert(b.stride =~= column_major_strides(b.shape));
-                lemma_cm_prefix_product_identity(b.shape, (j - 1) as nat);
-                assert(shape_valid(b.shape.skip(j - 1))) by {
-                    assert forall|ii: int| 0 <= ii < b.shape.skip(j - 1).len()
-                    implies #[trigger] b.shape.skip(j - 1)[ii] > 0
-                    by { assert(b.shape.skip(j - 1)[ii] == b.shape[j - 1 + ii]); };
-                };
-                lemma_shape_size_positive(b.shape.skip(j - 1));
-                lemma_shape_size_positive(b.shape);
-                assert(b.stride[j - 1] >= 1int) by (nonlinear_arith)
-                    requires
-                        b.stride[j - 1] * (shape_size(b.shape.skip(j - 1)) as int) == shape_size(b.shape) as int,
-                        shape_size(b.shape.skip(j - 1)) >= 1nat,
-                        shape_size(b.shape) >= 1nat;
-                assert(b.shape[j - 1] > 0nat);
-                assert((b.shape[j - 1] as int) * b.stride[j - 1] > 0int) by (nonlinear_arith)
-                    requires b.shape[j - 1] > 0nat, b.stride[j - 1] >= 1int;
-            };
-            assert(b.stride[j] % stride_product(b, j - 1) == 0) by {
-                assert(b.tractable_at(j - 1));
-            };
-            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
-                b.stride[j], stride_product(b, j - 1));
-            assert(c.stride[j] * (c.shape[j] as int) == b.stride[j]);
-            // b.stride[j] <= size(B) <= m
-            lemma_cm_prefix_product_identity(b.shape, j as nat);
-            crate::proof::product_lemmas::lemma_shape_size_append(b.shape, c.shape);
-            assert(shape_valid(c.shape)) by {
-                assert forall|jj: int| 0 <= jj < c.shape.len()
-                implies #[trigger] c.shape[jj] > 0
-                by { assert(c.shape[jj] == zipped.shape[b.shape.len() as int + jj]); };
-            };
-            lemma_shape_size_positive(c.shape);
-            assert(shape_size(b.shape) <= m) by (nonlinear_arith)
-                requires m == shape_size(b.shape) * shape_size(c.shape),
-                         shape_size(c.shape) >= 1nat;
-            // Bridge int to nat: c.stride[j] >= 0, so (c.stride[j] as nat) * c.shape[j] = b.stride[j] as nat <= m
-            assert(c.stride[j] >= 0);
-            // b.stride[j] <= size(B): from cm[j] * size(skip(j)) = size(B) and size(skip(j)) >= 1
-            assert(shape_valid(b.shape.skip(j))) by {
-                assert forall|ii: int| 0 <= ii < b.shape.skip(j).len()
-                implies #[trigger] b.shape.skip(j)[ii] > 0
-                by { assert(b.shape.skip(j)[ii] == b.shape[j + ii]); };
-            };
-            lemma_shape_size_positive(b.shape.skip(j));
-            assert((b.stride[j] as nat) <= shape_size(b.shape)) by (nonlinear_arith)
-                requires
-                    b.stride[j] * (shape_size(b.shape.skip(j)) as int) == shape_size(b.shape) as int,
-                    shape_size(b.shape.skip(j)) >= 1nat,
-                    b.stride[j] >= 0;
-            assert((c.stride[j] as nat) * c.shape[j] <= m) by (nonlinear_arith)
-                requires c.stride[j] * (c.shape[j] as int) == b.stride[j],
-                         (b.stride[j] as nat) <= shape_size(b.shape),
-                         shape_size(b.shape) <= m,
-                         c.stride[j] >= 0;
-        } else {
-            // j == k: last complement mode. Product = m.
-            assert(j == k as int);
-            assert(c.stride[j] == stride_product(b, k as int - 1));
-            assert(c.shape[j] == (((m as int) / stride_product(b, k as int - 1)) as nat));
-            assert(stride_product(b, k as int - 1) > 0) by {
-                assert(b.stride =~= column_major_strides(b.shape));
-                lemma_cm_prefix_product_identity(b.shape, (k - 1) as nat);
-                assert(shape_valid(b.shape.skip(k as int - 1))) by {
-                    assert forall|ii: int| 0 <= ii < b.shape.skip(k as int - 1).len()
-                    implies #[trigger] b.shape.skip(k as int - 1)[ii] > 0
-                    by { assert(b.shape.skip(k as int - 1)[ii] == b.shape[k as int - 1 + ii]); };
-                };
-                lemma_shape_size_positive(b.shape.skip(k as int - 1));
-                lemma_shape_size_positive(b.shape);
-                assert(b.stride[k as int - 1] >= 1int) by (nonlinear_arith)
-                    requires
-                        b.stride[k as int - 1] * (shape_size(b.shape.skip(k as int - 1)) as int) == shape_size(b.shape) as int,
-                        shape_size(b.shape.skip(k as int - 1)) >= 1nat,
-                        shape_size(b.shape) >= 1nat;
-                assert(b.shape[k as int - 1] > 0nat);
-                assert((b.shape[k as int - 1] as int) * b.stride[k as int - 1] > 0int) by (nonlinear_arith)
-                    requires b.shape[k as int - 1] > 0nat, b.stride[k as int - 1] >= 1int;
-            };
-            assert((m as int) % stride_product(b, k as int - 1) == 0) by {
-                assert((m as int) % ((b.shape.last() as int) * b.stride.last()) == 0);
-            };
-            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
-                m as int, stride_product(b, k as int - 1));
-            // c.stride[j] * c.shape[j] == stride_product * (m / stride_product) == m
-            assert((c.stride[j] as nat) * c.shape[j] == m);
-        }
-        // Bridge to postcondition
-        let jj = i - b.shape.len() as int;
-        assert(zipped.stride[i] == c.stride[jj]);
-        assert(zipped.shape[i] == c.shape[jj]);
-        assert(zipped.stride[i] >= 0);
-        assert((zipped.stride[i] as nat) * zipped.shape[i] == (c.stride[jj] as nat) * c.shape[jj]);
-        assert((c.stride[jj] as nat) * c.shape[jj] <= m);
+        crate::proof::complement_lemmas::lemma_complement_sorted_tractable(b, m);
+        crate::proof::complement_lemmas::lemma_complement_valid(b, m);
+        crate::proof::composition_lemmas::lemma_sorted_tractable_mode_bound(&c, m, j);
     }
 }
 

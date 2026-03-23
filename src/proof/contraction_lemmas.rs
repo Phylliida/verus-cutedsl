@@ -1,6 +1,10 @@
 use vstd::prelude::*;
 use crate::contraction::*;
+use crate::shape::*;
+use crate::layout::*;
+use crate::composition::*;
 use crate::proof::shape_lemmas::*;
+use crate::runtime::contraction::{gemm_partial_sum, gemm_element_spec};
 use verus_algebra::traits::*;
 use verus_algebra::summation::sum;
 
@@ -412,6 +416,106 @@ pub proof fn lemma_gemm_element_spec_matches_contraction(
         // sum(0, kk) = sum(0, kk-1) + a[...] * b[...]
         // Both equal, QED.
     }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Concrete spec validation (proved properties instead of tests)
+// ══════════════════════════════════════════════════════════════
+
+/// GEMM partial sum base case: empty sum is 0.
+proof fn lemma_gemm_partial_sum_base(a: Seq<i64>, b: Seq<i64>, k: nat, n: nat, i: nat, j: nat)
+    ensures gemm_partial_sum(a, b, k, n, i, j, 0) == 0,
+{}
+
+/// GEMM contraction framework produces correct 2x2 output structure.
+proof fn lemma_gemm_2x2_structure()
+    ensures
+        contraction_output_shape(&gemm_as_contraction(), &seq![2nat, 3nat], &seq![3nat, 4nat])
+            =~= seq![2nat, 4nat],
+        contraction_reduction_size(&gemm_as_contraction(), &seq![2nat, 3nat]) == 3nat,
+{
+    lemma_gemm_contraction_matches_spec::<int>(
+        |_i: nat, _k: nat| 0int,
+        |_k: nat, _j: nat| 0int,
+        2, 3, 4);
+}
+
+/// Column-major offset is identity for concrete shape.
+proof fn lemma_column_major_offset_concrete()
+    ensures ({
+        let l = make_column_major(seq![3nat, 4nat]);
+        // offset(0) = 0, offset(1) = 1, offset(2) = 2 (first column)
+        // offset(3) = 3, offset(4) = 4 (second column starts)
+        &&& l.offset(0) == 0
+        &&& l.offset(1) == 1
+        &&& l.offset(5) == 5
+        &&& l.offset(11) == 11
+    }),
+{
+    let shape = seq![3nat, 4nat];
+    assert(crate::shape::shape_valid(shape)) by {
+        assert forall|i: int| 0 <= i < shape.len() implies #[trigger] shape[i] > 0 by {};
+    };
+    // shape_size(seq![3, 4]) = 3 * 4 = 12
+    crate::runtime::shape_helpers::lemma_shape_size_split(shape, 1);
+    assert(shape.take(1) =~= seq![3nat]);
+    assert(shape.skip(1) =~= seq![4nat]);
+    lemma_shape_size_single(3nat);
+    lemma_shape_size_single(4nat);
+    assert(crate::shape::shape_size(shape) == 12nat);
+    crate::proof::injectivity_lemmas::lemma_column_major_offset_is_identity(shape, 0);
+    crate::proof::injectivity_lemmas::lemma_column_major_offset_is_identity(shape, 1);
+    crate::proof::injectivity_lemmas::lemma_column_major_offset_is_identity(shape, 5);
+    crate::proof::injectivity_lemmas::lemma_column_major_offset_is_identity(shape, 11);
+}
+
+/// compose_single on concrete layout produces expected output.
+proof fn lemma_compose_single_concrete()
+    ensures ({
+        // A = (4, 3):(1, 4), column-major. compose_single(A, 2, 1):
+        // Case 1: 1*2 = 2 <= 4 = M0. Output: (2):(1).
+        let a = LayoutSpec { shape: seq![4nat, 3nat], stride: seq![1int, 4int] };
+        let result = compose_single(a, 2, 1);
+        &&& result.shape =~= seq![2nat]
+        &&& result.stride =~= seq![1int]
+    }),
+{
+    assert(compose_single(
+        LayoutSpec { shape: seq![4nat, 3nat], stride: seq![1int, 4int] }, 2, 1
+    ).shape =~= seq![2nat]);
+    assert(compose_single(
+        LayoutSpec { shape: seq![4nat, 3nat], stride: seq![1int, 4int] }, 2, 1
+    ).stride =~= seq![1int]);
+}
+
+/// compose_single straddle case produces multi-mode output.
+proof fn lemma_compose_single_straddle_concrete()
+    ensures ({
+        // A = (4, 3):(1, 4), compose_single(A, 6, 1):
+        // 1*6 > 4, 1 < 4, 4 % 1 == 0, 6 % (4/1) = 6 % 4 = 2 != 0
+        // Falls to case 4: (6):(1). NOT straddle (divisibility fails).
+        let a = LayoutSpec { shape: seq![4nat, 3nat], stride: seq![1int, 4int] };
+        compose_single(a, 6, 1).shape =~= seq![6nat]
+    }),
+{
+    assert(compose_single(
+        LayoutSpec { shape: seq![4nat, 3nat], stride: seq![1int, 4int] }, 6, 1
+    ).shape =~= seq![6nat]);
+}
+
+/// compose_single always preserves size (concrete example).
+proof fn lemma_compose_single_size_concrete()
+    ensures ({
+        let a = LayoutSpec { shape: seq![4nat, 3nat], stride: seq![1int, 4int] };
+        // compose_single(A, 8, 1): size = 8 regardless of which case
+        shape_size(compose_single(a, 8, 1).shape) == 8
+    }),
+{
+    let a = LayoutSpec { shape: seq![4nat, 3nat], stride: seq![1int, 4int] };
+    assert(a.valid()) by {
+        assert forall|i: int| 0 <= i < a.shape.len() implies #[trigger] a.shape[i] > 0 by {};
+    };
+    crate::proof::composition_lemmas::lemma_crs_size(a, 8, 1);
 }
 
 } // verus!
