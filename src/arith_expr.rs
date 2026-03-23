@@ -174,6 +174,33 @@ pub proof fn lemma_prefix_product_step(shape: Seq<nat>, i: nat)
     ensures shape_prefix_product(shape, i) == shape[(i - 1) as int] * shape_prefix_product(shape, (i - 1) as nat),
 {}
 
+/// Helper: arith_eval of Mod(Div(Var(v), Const(d)), Const(m)) = (env[v] / d) % m.
+/// This isolates the ArithExpr unfolding so z3 doesn't have to unfold 5 levels deep.
+proof fn lemma_arith_eval_mod_div(v: nat, d: int, m: int, env: Seq<int>)
+    requires
+        (v as int) < env.len(),
+        d > 0,
+        m > 0,
+    ensures
+        arith_eval(&ArithExpr::Mod(
+            Box::new(ArithExpr::Div(
+                Box::new(ArithExpr::Var(v)),
+                Box::new(ArithExpr::Const(d)),
+            )),
+            Box::new(ArithExpr::Const(m)),
+        ), env) == (env[v as int] / d) % m,
+{
+    // Unfold step by step:
+    let inner_div = ArithExpr::Div(
+        Box::new(ArithExpr::Var(v)),
+        Box::new(ArithExpr::Const(d)),
+    );
+    assert(arith_eval(&ArithExpr::Const(d), env) == d);
+    assert(arith_eval(&ArithExpr::Var(v), env) == env[v as int]);
+    assert(arith_eval(&inner_div, env) == env[v as int] / d);
+    assert(arith_eval(&ArithExpr::Const(m), env) == m);
+}
+
 /// Delinearize coordinate expr is correct:
 /// arith_eval(delinearize_coord_expr(0, shape, i), [x]) == delinearize(x, shape)[i]
 ///
@@ -197,13 +224,13 @@ pub proof fn lemma_delinearize_coord_expr_correct(
     assert(pp > 0nat);
 
     if i == 0 {
-        // delinearize(x, shape)[0] = x % shape[0]
-        // ArithExpr: (x / 1) % shape[0] = x % shape[0]. ✓
+        // Use helper: arith_eval of Mod(Div(Var(0), Const(1)), Const(shape[0])) = (x/1)%shape[0] = x%shape[0]
         assert(shape_prefix_product(shape, 0) == 1nat);
+        assert(shape[0] > 0nat);
+        lemma_arith_eval_mod_div(0, 1int, shape[0] as int, seq![x as int]);
+        // delinearize(x, shape)[0] = x % shape[0]
         crate::proof::shape_lemmas::lemma_delinearize_len(x, shape);
-        // Need: delinearize(x, shape)[0] == x % shape[0]
-        // From the delinearize spec: delinearize(x, s) = [x % s[0]] ++ delinearize(x/s[0], skip(1))
-        // So delinearize(x, shape)[0] = x % shape[0]
+        assert(delinearize(x, shape)[0] == x % shape.first());
     } else {
         // delinearize(x, shape)[i] = delinearize(x / shape[0], skip(1))[i-1]
         // By IH: = ((x/shape[0]) / pp_rest(i-1)) % shape_rest[i-1]
@@ -238,7 +265,50 @@ pub proof fn lemma_delinearize_coord_expr_correct(
         // div_div: x / (a * b) = (x / a) / b
         let pp_rest = shape_prefix_product(rest, (i - 1) as nat);
         lemma_prefix_product_positive(rest, (i - 1) as nat);
+
+        // Key bridge: pp(shape, i) == shape[0] * pp(rest, i-1)
+        lemma_prefix_product_split(shape, i);
+        assert(pp == shape.first() * pp_rest);
+
+        // div_div: x / (shape[0] * pp_rest) == (x / shape[0]) / pp_rest
         crate::proof::integer_helpers::lemma_div_div(x, shape.first(), pp_rest);
+        assert((x as int) / (pp as int) == ((x / shape.first()) as int) / (pp_rest as int)) by (nonlinear_arith)
+            requires pp == shape.first() * pp_rest,
+                     (x as int) / ((shape.first() as int) * (pp_rest as int)) == ((x as int) / (shape.first() as int)) / (pp_rest as int);
+
+        // IH gave: arith_eval(delinearize_coord_expr(0, rest, i-1), [x/shape[0]])
+        //        == delinearize(x/shape[0], rest)[i-1]
+        // delinearize(x, shape)[i] == delinearize(x/shape[0], rest)[i-1]  (from delinearize spec)
+        // rest[i-1] == shape[i]  (from skip(1))
+        assert(rest[(i - 1) as int] == shape[i as int]);
+
+        // Step A: arith_eval of our expr at [x] = (x / pp) % shape[i]
+        assert(shape[i as int] > 0nat);
+        lemma_arith_eval_mod_div(0, pp as int, shape[i as int] as int, seq![x as int]);
+
+        // Step B: (x / pp) == (x/shape[0]) / pp_rest  [div_div + prefix_split]
+        // Already proved above
+
+        // Step C: IH gave:
+        //   arith_eval(delinearize_coord_expr(0, rest, i-1), [x/shape[0]])
+        //   == delinearize(x/shape[0], rest)[i-1]
+        // And from the helper:
+        //   arith_eval(delinearize_coord_expr(0, rest, i-1), [x/shape[0]])
+        //   == ((x/shape[0]) / pp_rest) % rest[i-1]
+        lemma_arith_eval_mod_div(0, pp_rest as int, rest[(i - 1) as int] as int, seq![(x / shape.first()) as int]);
+
+        // Step D: delinearize(x, shape)[i] == delinearize(x/shape[0], rest)[i-1]
+        crate::proof::shape_lemmas::lemma_delinearize_concat(x, seq![shape.first()], rest);
+        crate::proof::shape_lemmas::lemma_shape_size_single(shape.first());
+        assert(shape =~= seq![shape.first()].add(rest));
+
+        // Step E: chain
+        // (x/pp) % shape[i] == ((x/shape[0])/pp_rest) % rest[i-1]  [div_div + rest index]
+        // == delinearize(x/shape[0], rest)[i-1]                      [IH via helper]
+        // == delinearize(x, shape)[i]                                 [concat]
+        assert(rest[(i - 1) as int] == shape[i as int]);
+        assert((x as int / (pp as int)) % (shape[i as int] as int)
+            == ((x / shape.first()) as int / (pp_rest as int)) % (rest[(i - 1) as int] as int));
     }
 }
 
@@ -255,9 +325,16 @@ proof fn lemma_prefix_product_split(shape: Seq<nat>, i: nat)
     decreases i,
 {
     if i == 1 {
-        // pp(shape, 1) = shape[0] * pp(shape, 0) = shape[0] * 1 = shape[0]
-        // shape[0] * pp(rest, 0) = shape[0] * 1 = shape[0]. ✓
-        vstd::arithmetic::mul::lemma_mul_basics(shape.first() as int);
+        // pp(shape, 1) = shape[0] * pp(shape, 0) = shape[0] * 1
+        // shape[0] * pp(rest, 0) = shape[0] * 1
+        // Both equal shape[0].
+        assert(shape_prefix_product(shape, 0) == 1nat);
+        assert(shape_prefix_product(shape.skip(1), 0) == 1nat);
+        assert(shape[(1 - 1) as int] == shape.first());
+        // pp(shape, 1) = shape.first() * 1 = shape.first()
+        // shape.first() * pp(rest, 0) = shape.first() * 1 = shape.first()
+        assert(shape.first() * 1nat == shape.first()) by (nonlinear_arith)
+            requires shape.first() >= 0;
     } else {
         // pp(shape, i) = shape[i-1] * pp(shape, i-1)
         // By IH: pp(shape, i-1) = shape[0] * pp(rest, i-2)
