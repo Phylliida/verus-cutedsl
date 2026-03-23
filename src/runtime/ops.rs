@@ -293,7 +293,8 @@ fn compose_single_exec_at(
     // Case 2: straddle first mode boundary
     // ═══════════════════════════════════════════════════
     if b_stride > 0 && b_stride < m && m % b_stride == 0 {
-        let q: u64 = m / b_stride;
+    let q: u64 = m / b_stride;
+    if b_shape % q == 0 {
 
         proof {
             // Stride overflow: first output stride is b_stride * d, which is spec_result.stride[0]
@@ -437,7 +438,8 @@ fn compose_single_exec_at(
         }
 
         return RuntimeLayout::new(sv, stv);
-    }
+    } // b_shape % q == 0
+    } // b_stride > 0 && b_stride < m && m % b_stride == 0
 
     // ═══════════════════════════════════════════════════
     // Case 3: skip first mode entirely

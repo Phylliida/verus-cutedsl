@@ -198,8 +198,8 @@ pub open spec fn compose_single(
         if b_stride * b_shape <= m {
             // Case 1: entirely within first mode
             LayoutSpec { shape: seq![b_shape], stride: seq![(b_stride as int) * d] }
-        } else if b_stride < m && m % b_stride == 0 && b_shape > 0 {
-            // Case 2: straddles first mode boundary
+        } else if b_stride < m && m % b_stride == 0 && b_shape > 0 && b_shape % (m / b_stride) == 0 {
+            // Case 2: straddles first mode boundary (only when b_shape divisible by q)
             let q = m / b_stride;  // elements fitting in first mode
             let inner = LayoutSpec {
                 shape: seq![q],

@@ -1322,11 +1322,11 @@ pub open spec fn compose_single_admissible(
         let a_rest = LayoutSpec { shape: a.shape.skip(1), stride: a.stride.skip(1) };
         if b_stride * b_shape <= m {
             true
-        } else if b_stride > 0 && b_stride < m && m % b_stride == 0 {
+        } else if b_stride > 0 && b_stride < m && m % b_stride == 0 && b_shape % (m / b_stride) == 0 {
+            // Straddle: divisibility now checked here (matching spec)
             let q = m / b_stride;
-            &&& b_shape % q == 0
-            &&& (a_rest.shape.len() > 0 ==>
-                compose_single_admissible(a_rest, b_shape / q, 1))
+            a_rest.shape.len() > 0 ==>
+                compose_single_admissible(a_rest, b_shape / q, 1)
         } else if b_stride >= m && b_stride % m == 0 {
             a_rest.shape.len() > 0 ==>
                 compose_single_admissible(a_rest, b_shape, b_stride / m)
@@ -1355,7 +1355,7 @@ pub proof fn lemma_crs_len_match(a: LayoutSpec, b_shape: nat, b_stride: nat)
             implies #[trigger] a_rest.shape[i] > 0 by { assert(a_rest.shape[i] == a.shape[i + 1]); };
         };
         if b_stride * b_shape <= m {
-        } else if b_stride < m && m % b_stride == 0 && b_shape > 0 {
+        } else if b_stride < m && m % b_stride == 0 && b_shape > 0 && b_shape % (m / b_stride) == 0 {
             let q = m / b_stride;
             assert(q > 0nat) by {
                 vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
@@ -1399,7 +1399,7 @@ pub proof fn lemma_crs_shape_valid(a: LayoutSpec, b_shape: nat, b_stride: nat)
         };
         if b_stride * b_shape <= m {
             assert(shape_valid(seq![b_shape]));
-        } else if b_stride < m && m % b_stride == 0 && b_shape > 0 {
+        } else if b_stride < m && m % b_stride == 0 && b_shape > 0 && b_shape % (m / b_stride) == 0 {
             let q = m / b_stride;
             assert(q > 0nat) by {
                 vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
@@ -1485,7 +1485,7 @@ pub proof fn lemma_crs_size(a: LayoutSpec, b_shape: nat, b_stride: nat)
         } else if b_stride >= m && b_stride % m == 0 {
             // Unfold admissibility for skip branch
             assert(!(b_stride * b_shape <= m));
-            assert(!(b_stride > 0 && b_stride < m && m % b_stride == 0));
+            assert(!(b_stride > 0 && b_stride < m && m % b_stride == 0 && b_shape % (m / b_stride) == 0));
             assert(b_stride >= m && b_stride % m == 0);
             if a_rest.shape.len() > 0 {
                 assert(compose_single_admissible(a_rest, b_shape, b_stride / m));
@@ -1640,7 +1640,7 @@ pub proof fn lemma_compose_recursive_single_correct(
     // ═══════════════════════════════════════════════════
     // Case 2: B straddles A's first mode boundary
     // ═══════════════════════════════════════════════════
-    if b_stride > 0 && b_stride < m && m % b_stride == 0 {
+    if b_stride > 0 && b_stride < m && m % b_stride == 0 && b_shape % (m / b_stride) == 0 {
         let q = m / b_stride;
         assert(q > 0nat) by {
             vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
