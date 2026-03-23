@@ -2105,6 +2105,23 @@ pub proof fn lemma_compose_recursive_correct(a: LayoutSpec, b: LayoutSpec, x: na
 // Sorted+tractable per-mode bound
 // ══════════════════════════════════════════════════════════════
 
+/// Helper: sorted strides are transitive — stride[lo] <= stride[hi].
+proof fn lemma_sorted_stride_transitive(layout: &LayoutSpec, lo: int, hi: int)
+    requires
+        layout.is_sorted(),
+        0 <= lo <= hi,
+        hi < layout.stride.len(),
+    ensures
+        layout.stride[lo] <= layout.stride[hi],
+    decreases hi - lo,
+{
+    if lo == hi {
+    } else {
+        assert(layout.stride[hi - 1] <= layout.stride[hi]);
+        lemma_sorted_stride_transitive(layout, lo, hi - 1);
+    }
+}
+
 /// For a sorted+tractable layout with stride[0] > 0 and whose last stride_product
 /// divides M: every mode's stride*shape <= M.
 ///
@@ -2174,7 +2191,12 @@ pub proof fn lemma_sorted_tractable_mode_bound(
     // Each sp(j) divides stride[j+1], and stride[j+1] * shape[j+1] = sp(j+1)
     // So sp(j) | stride[j+1] and stride[j+1] <= sp(j+1) (since shape[j+1] >= 1)
     if i == last {
-        // sp(i) == sp(last), done
+        // sp(i) == sp(last) <= m
+        assert((layout.stride[i] as nat) * layout.shape[i] <= m) by (nonlinear_arith)
+            requires sp_last <= m as int,
+                     sp_last == (layout.shape[last] as int) * layout.stride[last],
+                     i == last,
+                     layout.stride[i] >= 0;
         return;
     }
 
@@ -2203,29 +2225,8 @@ pub proof fn lemma_sorted_tractable_mode_bound(
     // And stride[last] <= sp(last) (since shape[last] >= 1).
     // So sp(i) <= sp(last) <= m.
     // stride[i+1] <= stride[last] from is_sorted (transitivity)
-    // Help z3 with induction: stride[j] <= stride[j+1] for all j
-    // implies stride[i+1] <= stride[last] by chaining.
-    // Use recursive approach: prove for j from i+1 to last-1 that stride[j] <= stride[last].
-    assert(layout.stride[i + 1] <= layout.stride[last]) by {
-        // For small gaps z3 handles transitivity. For large gaps, we need a helper.
-        // Alternatively: stride[i+1] <= sp_last / shape[last] ... too complex.
-        // Simple approach: sp_i divides stride[i+1] (from tractable), so sp_i <= stride[i+1].
-        // stride[i+1] <= stride[last] from sorted transitivity.
-        // For Verus: is_sorted gives forall j: stride[j] <= stride[j+1].
-        // By transitivity: stride[i+1] <= stride[i+2] <= ... <= stride[last].
-        // z3 typically handles 3-4 step chains. For longer, assert intermediates.
-        // Since rank is typically 2-5, this should work.
-        assert(layout.is_sorted());
-        if i + 2 < n {
-            assert(layout.stride[i + 1] <= layout.stride[i + 2]);
-            if i + 3 < n {
-                assert(layout.stride[i + 2] <= layout.stride[i + 3]);
-                if i + 4 < n {
-                    assert(layout.stride[i + 3] <= layout.stride[i + 4]);
-                }
-            }
-        }
-    };
+    // Prove by loop: assert stride[j] <= stride[last] for j from last down to i+1
+    lemma_sorted_stride_transitive(layout, i + 1, last);
     assert(layout.stride[last] <= sp_last) by (nonlinear_arith)
         requires sp_last == (layout.shape[last] as int) * layout.stride[last],
                  (layout.shape[last] as int) >= 1, layout.stride[last] > 0;
@@ -2234,6 +2235,11 @@ pub proof fn lemma_sorted_tractable_mode_bound(
                  layout.stride[i + 1] <= layout.stride[last],
                  layout.stride[last] <= sp_last,
                  sp_last <= m as int;
+    // Bridge int → nat for postcondition
+    assert((layout.stride[i] as nat) * layout.shape[i] <= m) by (nonlinear_arith)
+        requires sp_i <= m as int, sp_i >= 0,
+                 sp_i == (layout.shape[i] as int) * layout.stride[i],
+                 layout.stride[i] >= 0;
 }
 
 // ══════════════════════════════════════════════════════════════
