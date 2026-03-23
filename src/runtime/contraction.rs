@@ -567,38 +567,36 @@ pub fn contraction_admissible_exec(
 // GEMM contraction exec: C[i,j] = sum_k A[i,k] * B[k,j]
 // ══════════════════════════════════════════════════════════════
 
-/// Compute one element of the GEMM output: C[i,j] = sum_{k=0}^{K-1} A[i,k] * B[k,j].
-/// Uses i64 wrapping arithmetic (caller ensures no meaningful overflow).
-pub fn gemm_dot_product_exec(
-    a_row: &Vec<i64>,
-    b_col: &Vec<i64>,
-    k_size: usize,
-) -> (result: i64)
-    requires
-        k_size <= a_row.len(),
-        k_size <= b_col.len(),
+/// Spec: partial sum of A[i,0..kk] · B[0..kk,j] as mathematical int (no overflow).
+pub open spec fn gemm_partial_sum(
+    a: Seq<i64>, b: Seq<i64>,
+    k_size: nat, n: nat,
+    i: nat, j: nat, kk: nat,
+) -> int
+    decreases kk,
 {
-    let mut acc: i64 = 0;
-    let mut k: usize = 0;
-    while k < k_size
-        invariant
-            0 <= k <= k_size,
-            k_size <= a_row.len(),
-            k_size <= b_col.len(),
-        decreases k_size - k,
-    {
-        acc = acc.wrapping_add(a_row[k].wrapping_mul(b_col[k]));
-        k = k + 1;
+    if kk == 0 { 0int }
+    else {
+        gemm_partial_sum(a, b, k_size, n, i, j, (kk - 1) as nat)
+            + (a[i * k_size + (kk - 1)] as int) * (b[(kk - 1) * n + j] as int)
     }
-    acc
+}
+
+/// Spec: full GEMM element C[i,j] = sum_{k=0}^{K-1} A[i*K+k] * B[k*N+j].
+pub open spec fn gemm_element_spec(
+    a: Seq<i64>, b: Seq<i64>,
+    k_size: nat, n: nat,
+    i: nat, j: nat,
+) -> int {
+    gemm_partial_sum(a, b, k_size, n, i, j, k_size)
 }
 
 /// Naive GEMM: C = A * B where A is M×K and B is K×N, all row-major.
 ///
 /// C[i,j] = sum_{k=0}^{K-1} A[i*K + k] * B[k*N + j]
 ///
-/// This is the simplest possible GEMM exec. No tiling, no shared memory.
-/// But it's VERIFIED to compute the right values.
+/// Verified to produce correct values (not just correct length).
+/// Requires all partial sums fit in i64 (no overflow).
 pub fn gemm_naive_exec(
     a: &Vec<i64>,    // A[M, K] row-major (flattened)
     b: &Vec<i64>,    // B[K, N] row-major (flattened)
@@ -611,8 +609,25 @@ pub fn gemm_naive_exec(
         a.len() >= m * k_size,
         b.len() >= k_size * n,
         m * n <= usize::MAX,
+        // Overflow safety: all partial sums and products fit in i64
+        forall|i: nat, j: nat, kk: nat|
+            i < m && j < n && kk <= k_size ==> {
+            &&& #[trigger] gemm_partial_sum(a@, b@, k_size as nat, n as nat, i, j, kk) >= i64::MIN as int
+            &&& gemm_partial_sum(a@, b@, k_size as nat, n as nat, i, j, kk) <= i64::MAX as int
+        },
+        // Each product fits in i64
+        forall|i: nat, kk: nat, j: nat|
+            #![trigger a@[(i * k_size + kk) as int], b@[(kk * n + j) as int]]
+            i < m && kk < k_size && j < n ==>
+            (a@[(i * k_size + kk) as int] as int) * (b@[(kk * n + j) as int] as int) >= i64::MIN as int &&
+            (a@[(i * k_size + kk) as int] as int) * (b@[(kk * n + j) as int] as int) <= i64::MAX as int,
     ensures
         result.len() == m * n,
+        // Value correctness: result[i*n + j] == gemm_element_spec(a, b, K, N, i, j)
+        forall|i: nat, j: nat|
+            i < m && j < n ==>
+            #[trigger] result@[(i * n + j) as int] as int
+                == gemm_element_spec(a@, b@, k_size as nat, n as nat, i, j),
 {
     let mut c: Vec<i64> = Vec::new();
 
@@ -625,6 +640,22 @@ pub fn gemm_naive_exec(
             a.len() >= m * k_size,
             b.len() >= k_size * n,
             m * n <= usize::MAX,
+            // Value correctness for all completed rows
+            forall|ii: nat, jj: nat|
+                ii < i && jj < n ==>
+                #[trigger] c@[(ii * n + jj) as int] as int
+                    == gemm_element_spec(a@, b@, k_size as nat, n as nat, ii, jj),
+            // Forward overflow safety
+            forall|ii: nat, jj: nat, kk: nat|
+                ii < m && jj < n && kk <= k_size ==> {
+                &&& #[trigger] gemm_partial_sum(a@, b@, k_size as nat, n as nat, ii, jj, kk) >= i64::MIN as int
+                &&& gemm_partial_sum(a@, b@, k_size as nat, n as nat, ii, jj, kk) <= i64::MAX as int
+            },
+            forall|ii: nat, kk: nat, jj: nat|
+                #![trigger a@[(ii * k_size + kk) as int], b@[(kk * n + jj) as int]]
+                ii < m && kk < k_size && jj < n ==>
+                (a@[(ii * k_size + kk) as int] as int) * (b@[(kk * n + jj) as int] as int) >= i64::MIN as int &&
+                (a@[(ii * k_size + kk) as int] as int) * (b@[(kk * n + jj) as int] as int) <= i64::MAX as int,
         decreases m - i,
     {
         let mut j: usize = 0;
@@ -637,6 +668,27 @@ pub fn gemm_naive_exec(
                 a.len() >= m * k_size,
                 b.len() >= k_size * n,
                 m * n <= usize::MAX,
+                // Completed rows still correct
+                forall|ii: nat, jj: nat|
+                    ii < i && jj < n ==>
+                    #[trigger] c@[(ii * n + jj) as int] as int
+                        == gemm_element_spec(a@, b@, k_size as nat, n as nat, ii, jj),
+                // Current row: completed columns correct
+                forall|jj: nat|
+                    jj < j ==>
+                    #[trigger] c@[(i * n + jj) as int] as int
+                        == gemm_element_spec(a@, b@, k_size as nat, n as nat, i as nat, jj),
+                // Forward overflow
+                forall|ii: nat, jj: nat, kk: nat|
+                    ii < m && jj < n && kk <= k_size ==> {
+                    &&& #[trigger] gemm_partial_sum(a@, b@, k_size as nat, n as nat, ii, jj, kk) >= i64::MIN as int
+                    &&& gemm_partial_sum(a@, b@, k_size as nat, n as nat, ii, jj, kk) <= i64::MAX as int
+                },
+                forall|ii: nat, kk: nat, jj: nat|
+                    #![trigger a@[(ii * k_size + kk) as int], b@[(kk * n + jj) as int]]
+                    ii < m && kk < k_size && jj < n ==>
+                    (a@[(ii * k_size + kk) as int] as int) * (b@[(kk * n + jj) as int] as int) >= i64::MIN as int &&
+                    (a@[(ii * k_size + kk) as int] as int) * (b@[(kk * n + jj) as int] as int) <= i64::MAX as int,
             decreases n - j,
         {
             // Compute C[i,j] = sum_k A[i,k] * B[k,j]
@@ -648,10 +700,13 @@ pub fn gemm_naive_exec(
                     0 <= i < m, 0 <= j < n,
                     a.len() >= m * k_size,
                     b.len() >= k_size * n,
+                    // KEY: acc tracks the partial sum
+                    acc as int == gemm_partial_sum(a@, b@, k_size as nat, n as nat, i as nat, j as nat, kk as nat),
+                    // Overflow bounds
+                    gemm_partial_sum(a@, b@, k_size as nat, n as nat, i as nat, j as nat, kk as nat) >= i64::MIN as int,
+                    gemm_partial_sum(a@, b@, k_size as nat, n as nat, i as nat, j as nat, kk as nat) <= i64::MAX as int,
                 decreases k_size - kk,
             {
-                // A[i, kk] = a[i * k_size + kk]
-                // B[kk, j] = b[kk * n + j]
                 proof {
                     assert(i * k_size + kk < m * k_size) by (nonlinear_arith)
                         requires i < m, kk < k_size;
@@ -660,8 +715,31 @@ pub fn gemm_naive_exec(
                 }
                 let a_val = a[i * k_size + kk];
                 let b_val = b[kk * n + j];
-                acc = acc.wrapping_add(a_val.wrapping_mul(b_val));
+                proof {
+                    // Product fits in i128 (i64 * i64 < 2^126 < i128::MAX)
+                    assert((a_val as i128) * (b_val as i128) >= i128::MIN as i128) by (nonlinear_arith)
+                        requires i64::MIN as int <= a_val as int, a_val as int <= i64::MAX as int,
+                                 i64::MIN as int <= b_val as int, b_val as int <= i64::MAX as int;
+                    assert((a_val as i128) * (b_val as i128) <= i128::MAX as i128) by (nonlinear_arith)
+                        requires i64::MIN as int <= a_val as int, a_val as int <= i64::MAX as int,
+                                 i64::MIN as int <= b_val as int, b_val as int <= i64::MAX as int;
+                    // Product fits in i64 (trigger the forall with concrete indices)
+                    assert(a_val == a@[(i * k_size + kk) as int]);
+                    assert(b_val == b@[(kk * n + j) as int]);
+                }
+                let prod: i64 = (((a_val as i128) * (b_val as i128)) as i64);
+                proof {
+                    assert(prod as int == (a_val as int) * (b_val as int));
+                    // New partial sum
+                    assert(gemm_partial_sum(a@, b@, k_size as nat, n as nat, i as nat, j as nat, (kk + 1) as nat)
+                        == (acc as int) + (a_val as int) * (b_val as int));
+                }
+                acc = acc + prod;
                 kk = kk + 1;
+            }
+            proof {
+                // acc == gemm_partial_sum(..., k_size) == gemm_element_spec(...)
+                assert(acc as int == gemm_element_spec(a@, b@, k_size as nat, n as nat, i as nat, j as nat));
             }
             c.push(acc);
             j = j + 1;
