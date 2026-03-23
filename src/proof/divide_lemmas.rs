@@ -1862,80 +1862,44 @@ proof fn lemma_scaled_cm_skip(a: &LayoutSpec)
 {
     let scale = a.stride.first();
     let m = a.shape.first();
+    let cm = column_major_strides(a.shape);
+    let cm_rest = column_major_strides(a.shape.skip(1));
     let a_rest = LayoutSpec { shape: a.shape.skip(1), stride: a.stride.skip(1) };
+    let new_scale = scale * (m as int);
 
-    // a.stride =~= [scale] ++ scale_strides(cm(shape.skip(1)), m * scale)
-    // From column_major_strides definition:
-    // cm(shape) = [1] ++ scale_strides(cm(shape.skip(1)), m)
-    // scale * cm(shape) = [scale] ++ scale_strides(cm(shape.skip(1)), m * scale)
-    // a.stride.skip(1) = scale_strides(cm(shape.skip(1)), m * scale)
-
-    assert(a.stride =~= scale_strides_spec(column_major_strides(a.shape), scale));
-
-    // cm(a.shape) = [1] ++ scale_strides(cm(a.shape.skip(1)), m)
-    // scale * cm(a.shape) = [scale] ++ scale * scale_strides(cm(a.shape.skip(1)), m)
-    //                     = [scale] ++ scale_strides(cm(a.shape.skip(1)), scale * m)
-
-    // a_rest.stride = a.stride.skip(1)
-    // We need: a_rest.stride =~= scale_strides(cm(a_rest.shape), a_rest.stride.first())
-
-    // a_rest.shape = a.shape.skip(1)
-    // cm(a_rest.shape) = cm(a.shape.skip(1))
+    // Key fact: cm(shape) = [1] ++ scale_strides(cm(shape.skip(1)), m)
+    assert(cm =~= seq![1int].add(scale_strides_spec(cm_rest, m as int)));
 
     if a_rest.stride.len() > 0 {
-        // cm(a.shape) = [1] ++ scale_strides(cm(a.shape.skip(1)), m)
-        // So cm(a.shape)[i+1] = m * cm(a.shape.skip(1))[i]
-        // And a.stride[i+1] = scale * cm(a.shape)[i+1] = scale * m * cm(a_rest.shape)[i]
-
         crate::proof::inverse_lemmas::lemma_column_major_strides_first(a.shape.skip(1));
-        let new_scale = scale * (m as int);
+        // cm_rest[0] == 1
+        // cm[1] = scale_strides(cm_rest, m)[0] = cm_rest[0] * m = 1 * m = m
+        vstd::arithmetic::mul::lemma_mul_basics(m as int);
+        assert(cm[1] == m as int);
+        // a.stride[1] = scale * cm[1] = scale * m = new_scale
+        assert(a.stride[1] == scale * cm[1]);
+        assert(a_rest.stride.first() == new_scale);
 
-        // a_rest.stride[0] = a.stride[1] = scale * cm(a.shape)[1]
-        // cm(a.shape) = [1] ++ scale_strides(cm(skip1), m)
-        // cm(a.shape)[1] = scale_strides(cm(skip1), m)[0] = cm(skip1)[0] * m = 1 * m = m
-        assert(a.stride[1] == scale * column_major_strides(a.shape)[1]);
-        // From cm definition: cm(shape)[1] = scale_strides(cm(shape.skip(1)), shape[0])[0]
-        //                                  = cm(shape.skip(1))[0] * shape[0]
-        //                                  = 1 * m = m
-        assert(column_major_strides(a.shape).len() > 1);
-        assert(scale_strides_spec(column_major_strides(a.shape), scale)[1]
-            == scale * column_major_strides(a.shape)[1]);
-        // The second element of cm(shape) is m (from the definition)
-        assert(column_major_strides(a.shape) =~=
-            seq![1int].add(scale_strides_spec(column_major_strides(a.shape.skip(1)), m as int)));
-        assert(column_major_strides(a.shape)[1]
-            == scale_strides_spec(column_major_strides(a.shape.skip(1)), m as int)[0]);
-        assert(scale_strides_spec(column_major_strides(a.shape.skip(1)), m as int)[0]
-            == column_major_strides(a.shape.skip(1))[0] * (m as int));
-        assert(column_major_strides(a.shape.skip(1))[0] == 1int);
-        assert(a_rest.stride.first() == new_scale) by (nonlinear_arith)
-            requires a.stride[1] == scale * (m as int), a_rest.stride[0] == a.stride[1];
-
-        // Now prove the full scaled-cm property for a_rest
-        assert(a_rest.stride =~= scale_strides_spec(column_major_strides(a_rest.shape), new_scale)) by {
+        // For each i: a_rest.stride[i] = a.stride[i+1] = scale * cm[i+1]
+        //   = scale * (cm_rest[i] * m) = new_scale * cm_rest[i]
+        assert(a_rest.stride =~= scale_strides_spec(cm_rest, new_scale)) by {
             assert forall|i: int| 0 <= i < a_rest.stride.len()
-            implies a_rest.stride[i] == scale_strides_spec(column_major_strides(a_rest.shape), new_scale)[i]
+            implies a_rest.stride[i] == scale_strides_spec(cm_rest, new_scale)[i]
             by {
-                // a_rest.stride[i] = a.stride[i+1] = scale * cm(a.shape)[i+1]
+                // a_rest.stride[i] = a.stride[i+1]
                 assert(a_rest.stride[i] == a.stride[i + 1]);
-                assert(a.stride[i + 1] == scale_strides_spec(column_major_strides(a.shape), scale)[i + 1]);
-                assert(scale_strides_spec(column_major_strides(a.shape), scale)[i + 1]
-                    == scale * column_major_strides(a.shape)[i + 1]);
-                // cm(a.shape)[i+1] = scale_strides(cm(skip1), m)[i] = cm(skip1)[i] * m
-                assert(column_major_strides(a.shape)[i + 1]
-                    == scale_strides_spec(column_major_strides(a.shape.skip(1)), m as int)[i]);
-                assert(scale_strides_spec(column_major_strides(a.shape.skip(1)), m as int)[i]
-                    == column_major_strides(a.shape.skip(1))[i] * (m as int));
-                // So a_rest.stride[i] = scale * cm(skip1)[i] * m = new_scale * cm(a_rest.shape)[i]
-                assert(a_rest.stride[i] == scale * (column_major_strides(a_rest.shape)[i] * (m as int)))
+                // a.stride[i+1] = scale * cm[i+1]  (from is_scaled_column_major)
+                assert(a.stride[i + 1] == scale * cm[i + 1]);
+                // cm[i+1] = scale_strides(cm_rest, m)[i] = cm_rest[i] * m
+                assert(cm[i + 1] == cm_rest[i] * (m as int));
+                // So a_rest.stride[i] = scale * (cm_rest[i] * m)
+                //                     = (scale * m) * cm_rest[i] = new_scale * cm_rest[i]
+                assert(scale * (cm_rest[i] * (m as int)) == new_scale * cm_rest[i])
                     by (nonlinear_arith)
-                    requires
-                        a_rest.stride[i] == scale * (column_major_strides(a.shape.skip(1))[i] * (m as int)),
-                        a_rest.shape =~= a.shape.skip(1);
-                assert(scale * (column_major_strides(a_rest.shape)[i] * (m as int))
-                    == new_scale * column_major_strides(a_rest.shape)[i]) by (nonlinear_arith);
+                    requires new_scale == scale * (m as int);
             };
         };
+        assert(a_rest.shape =~= a.shape.skip(1));
     }
 }
 
@@ -2031,32 +1995,55 @@ proof fn lemma_compose_single_scaled_cm_offset(
         // inner.offset(c0) = c0 * b_stride * d
         crate::proof::composition_lemmas::lemma_1d_offset(q, (b_stride as int) * d, c0);
 
-        // rest.offset(c1) by IH: compose_single(a_rest, bq, 1).offset(c1) = 1 * a_rest.stride[0] * c1
+        // x == c0 + q * c1 (fundamental div/mod)
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int, q as int);
+        assert(x == c0 + q * c1);
+
+        // Size bound for recursive call: 1 * bq <= shape_size(a_rest.shape)
+        // b_stride * b_shape <= size(a) = m * size(a_rest). b_stride * q = m.
+        // So m * bq = b_stride * q * bq = b_stride * b_shape <= m * size(a_rest).
+        // Thus bq <= size(a_rest).
+        crate::runtime::shape_helpers::lemma_shape_size_split(a.shape, 1);
+        assert(a.shape.take(1) =~= seq![m]);
+        lemma_shape_size_single(m);
+        assert(1 * bq <= shape_size(a_rest.shape)) by (nonlinear_arith)
+            requires b_stride * b_shape <= m * shape_size(a_rest.shape),
+                     b_stride * q == m, b_shape == q * bq, m > 0;
+
+        // rest.offset(c1) by IH
         if a_rest.shape.len() > 0 {
             lemma_scaled_cm_skip(&a);
             lemma_compose_single_scaled_cm_offset(a_rest, bq, 1, c1);
-            // rest.offset(c1) = 1 * (scale * m) * c1 = scale * m * c1
         } else {
-            // a_rest has 0 modes: compose_single returns (bq):(0). offset = 0.
             crate::proof::composition_lemmas::lemma_1d_offset(bq, 0int, c1);
         }
 
-        // Chain: result.offset(x) = inner.offset(c0) + rest.offset(c1)
-        //   = c0 * b_stride * d + scale * m * c1   (where d = scale, m * b_stride = m, b_stride * q = m)
-        //   = b_stride * scale * c0 + scale * (b_stride * q) * c1
-        //   = b_stride * scale * (c0 + q * c1)
-        //   = b_stride * scale * x
-        assert((b_stride as int) * scale * (x as int)
-            == (c0 as int) * ((b_stride as int) * d) + (if a_rest.shape.len() > 0 {
-                1int * (scale * (m as int)) * (c1 as int)
-            } else { 0int })
-        ) by (nonlinear_arith)
-            requires
-                x == c0 + q * c1,
-                b_stride * q == m,
-                d == scale,
-                c0 < q,
-                a_rest.shape.len() > 0 ==> true;
+        // Chain: inner.offset(c0) + rest.offset(c1) = b_stride * scale * x
+        // inner.offset(c0) = c0 * b_stride * d = b_stride * scale * c0
+        // rest.offset(c1) = 1 * (scale * m) * c1 = scale * m * c1 = scale * b_stride * q * c1
+        // sum = b_stride * scale * (c0 + q * c1) = b_stride * scale * x
+        if a_rest.shape.len() > 0 {
+            assert((b_stride as int) * scale * (x as int)
+                == (c0 as int) * ((b_stride as int) * d)
+                 + 1int * (scale * (m as int)) * (c1 as int))
+                by (nonlinear_arith)
+                requires x == c0 + q * c1, b_stride * q == m, d == scale;
+        } else {
+            assert((b_stride as int) * scale * (x as int)
+                == (c0 as int) * ((b_stride as int) * d) + 0int)
+                by (nonlinear_arith)
+                requires x == c0 + q * c1, b_stride * q == m, d == scale, c1 == 0;
+            // c1 == 0 because a_rest empty → bq modes → bq == b_shape/q,
+            // and a has rank 1 (a_rest empty), size = m. b_stride * b_shape <= m.
+            // b_stride < m (case 2), b_stride * q = m, so bq = b_shape/q.
+            // b_stride * b_shape <= m = b_stride * q → b_shape <= q → bq = b_shape/q.
+            // Actually, b_shape = q * bq. b_stride * q * bq = b_stride * b_shape <= m = b_stride * q.
+            // So bq <= 1. bq > 0 → bq == 1. c1 = x/q < bq = 1 → c1 == 0.
+            assert(bq == 1nat) by (nonlinear_arith)
+                requires b_stride * b_shape <= shape_size(a.shape),
+                    shape_size(a.shape) == m * 1, b_shape == q * bq, b_stride * q == m,
+                    bq > 0, b_stride > 0;
+        }
 
         return;
     }
@@ -2069,6 +2056,15 @@ proof fn lemma_compose_single_scaled_cm_offset(
 
         if a_rest.shape.len() > 0 {
             lemma_scaled_cm_skip(&a);
+            // Size bound for recursive call: r2 * b_shape <= size(a_rest)
+            // b_stride * b_shape <= size(a) = m * size(a_rest). b_stride = m * r2.
+            // So m * r2 * b_shape <= m * size(a_rest) → r2 * b_shape <= size(a_rest).
+            crate::runtime::shape_helpers::lemma_shape_size_split(a.shape, 1);
+            assert(a.shape.take(1) =~= seq![m]);
+            lemma_shape_size_single(m);
+            assert(r2 * b_shape <= shape_size(a_rest.shape)) by (nonlinear_arith)
+                requires b_stride * b_shape <= m * shape_size(a_rest.shape),
+                         b_stride == m * r2, m > 0;
             lemma_compose_single_scaled_cm_offset(a_rest, b_shape, r2, x);
             // IH: compose_single(a_rest, b_shape, r2).offset(x) = r2 * (scale * m) * x
             let result = compose_single(a, b_shape, b_stride);
@@ -2096,14 +2092,15 @@ proof fn lemma_compose_single_scaled_cm_offset(
             // b_stride >= m and b_stride * b_shape <= size(a) = m.
             // b_stride >= m and b_stride * b_shape <= m → b_shape <= 1.
             // b_shape > 0 → b_shape == 1 → x == 0 → b_stride * scale * 0 = 0. ✓
-            assert(x == 0nat) by {
-                assert(b_shape == 1nat) by {
-                    if b_shape > 1 {
-                        assert(b_stride * b_shape >= m * 2) by (nonlinear_arith)
-                            requires b_stride >= m, b_shape >= 2;
-                    }
-                };
-            };
+            // a has rank 1 (a_rest empty): shape = [m], size = m
+            assert(a.shape.len() == 1);
+            assert(a.shape =~= seq![m]);
+            lemma_shape_size_single(m);
+            assert(shape_size(a.shape) == m);
+            // b_stride >= m, b_stride * b_shape <= m → b_shape == 1 → x == 0
+            assert(b_shape == 1nat) by (nonlinear_arith)
+                requires b_stride * b_shape <= m, b_stride >= m, b_shape > 0, b_stride > 0;
+            assert(x == 0nat);
         }
         return;
     }
@@ -2115,7 +2112,7 @@ proof fn lemma_compose_single_scaled_cm_offset(
 }
 
 /// compose(column_major_A, B).offset(x) == B.offset(x).
-/// No admissibility required! Works for ALL valid B with non-negative strides.
+/// No admissibility required! Needs per-mode size bound (each mode fits within A).
 pub proof fn lemma_compose_column_major_identity(a: LayoutSpec, b: LayoutSpec, x: nat)
     requires
         a.valid(),
@@ -2124,6 +2121,9 @@ pub proof fn lemma_compose_column_major_identity(a: LayoutSpec, b: LayoutSpec, x
         b.valid(),
         b.non_negative_strides(),
         x < b.size(),
+        // Per-mode: stride * shape fits within A's total size
+        forall|i: int| 0 <= i < b.shape.len() ==>
+            (#[trigger] b.stride[i] as nat) * b.shape[i] <= shape_size(a.shape),
     ensures
         compose(a, b).offset(x) == b.offset(x),
     decreases b.shape.len(),
@@ -2186,8 +2186,12 @@ pub proof fn lemma_compose_column_major_identity(a: LayoutSpec, b: LayoutSpec, x
     crate::proof::composition_lemmas::lemma_crs_len_match(a, bs, bd as nat);
     crate::proof::composition_lemmas::lemma_compose_wf(a, b_rest);
 
+    // compose_size for delinearize bounds
+    crate::proof::composition_lemmas::lemma_compose_size(a, b_rest);
+
     if b.shape.len() > 1 {
         crate::proof::product_lemmas::lemma_shape_size_append(cs.shape, rest_c.shape);
+        // x < bs * b_rest.size() = shape_size(cs.shape) * shape_size(rest_c.shape)
         lemma_delinearize_concat(x, cs.shape, rest_c.shape);
         lemma_delinearize_len(c0, cs.shape);
         lemma_delinearize_len(x_rest, rest_c.shape);
@@ -2203,12 +2207,22 @@ pub proof fn lemma_compose_column_major_identity(a: LayoutSpec, b: LayoutSpec, x
     crate::proof::inverse_lemmas::lemma_column_major_strides_first(a.shape);
     assert(a.stride.first() == 1int);
     assert(is_scaled_column_major(&a));
+    // Per-mode bound: bd * bs <= size(a) (from requires)
+    assert((bd as nat) * bs <= shape_size(a.shape));
     lemma_compose_single_scaled_cm_offset(a, bs, bd as nat, c0);
     assert(cs.offset(c0) == (bd as int) * 1int * (c0 as int));
-    assert(cs.offset(c0) == (c0 as int) * bd) by (nonlinear_arith);
+    assert(cs.offset(c0) == (c0 as int) * bd) by (nonlinear_arith)
+        requires cs.offset(c0) == (bd as int) * (c0 as int);
 
     // ═══ compose(A, B_rest).offset(x_rest) == b_rest.offset(x_rest) (IH) ═══
     if b.shape.len() > 1 {
+        // Per-mode bound propagates to b_rest
+        assert forall|i: int| 0 <= i < b_rest.shape.len()
+        implies (#[trigger] b_rest.stride[i] as nat) * b_rest.shape[i] <= shape_size(a.shape)
+        by {
+            assert(b_rest.stride[i] == b.stride[i + 1]);
+            assert(b_rest.shape[i] == b.shape[i + 1]);
+        };
         lemma_compose_column_major_identity(a, b_rest, x_rest);
     }
 
@@ -2240,6 +2254,95 @@ pub proof fn lemma_divide_identity_column_major_no_admissibility(
 
     // zipped valid + non-negative strides + size == m
     crate::proof::tiling_lemmas::lemma_zipped_setup(a, b);
+
+    // Per-mode bound: zipped.stride[i] * zipped.shape[i] <= m = size(A)
+    // For sorted, tractable layouts: stride_product(i) = shape[i]*stride[i] <= stride[i+1]
+    // and the product chain is bounded by m.
+    // For column-major B with complement: each mode's stride*shape is a prefix product <= m.
+    assert forall|i: int| 0 <= i < zipped.shape.len()
+    implies (#[trigger] zipped.stride[i] as nat) * zipped.shape[i] <= shape_size(a.shape)
+    by {
+        // zipped is sorted and tractable (from complement_admissible and zipped construction)
+        // Each stride[i] * shape[i] divides M or equals some stride[j] for j > i.
+        // For the zipped layout from divide: all stride*shape products are bounded by M.
+        // This follows from the complement construction where strides are prefix products of B.
+
+        // Direct approach: zipped.stride[i] >= 0 and zipped.shape[i] > 0.
+        // zipped.stride[i] * zipped.shape[i] <= max possible = cosize <= size = m.
+        // From zipped being a valid layout with size m:
+        // Each element maps to [0, m), so stride[i] * (shape[i] - 1) < m.
+        // Thus stride[i] * shape[i] <= stride[i] * (shape[i] - 1) + stride[i] < m + stride[i].
+        // But stride[i] <= m (from sorted, tractable), so stride[i] * shape[i] < 2m.
+        // Actually we need <= m, not < 2m. Need tighter bound.
+
+        // Use the identity offset property: zipped.offset(y) = y for all y < m.
+        // This means the layout is a bijection on [0, m).
+        // For any single mode i: the max contribution is stride[i] * (shape[i] - 1).
+        // Since offset is identity, the total sum of contributions = y < m.
+        // Each individual contribution stride[i] * coord[i] <= stride[i] * (shape[i] - 1) < m.
+        // So stride[i] * shape[i] <= stride[i] * (shape[i] - 1) + stride[i] <= (m-1) + stride[i].
+
+        // Actually for sorted+tractable: stride[i+1] = stride[i] * shape[i] (exactly, from tractability).
+        // And the last stride_product = stride[k-1] * shape[k-1] divides M.
+        // So all stride_products divide M, hence <= M.
+
+        // For the specific zipped layout: it's the concat of B and complement(B, M).
+        // B is column-major: B.stride = (1, N0, N0*N1, ...). B.stride[i] * B.shape[i] = B.stride[i+1].
+        // And all B strides <= M (since B divides A).
+        // complement strides: (1, stride_product(B,0), ..., stride_product(B,k-1)).
+        // complement.stride[i] * complement.shape[i] = complement.stride[i+1] (by tractability).
+        // Last: stride_product(B, k-1) * (M/stride_product(B, k-1)) = M.
+
+        // So for B modes i: B.stride[i] * B.shape[i] = B.stride[i+1] <= ... <= stride_product(B, k-1) <= M.
+        // For complement modes j: comp.stride[j] * comp.shape[j] <= M similarly.
+
+        // Since this requires detailed reasoning about the zipped structure,
+        // let's use the cosize bound: for any valid layout with non-negative strides,
+        // stride[i] * shape[i] <= cosize <= size for sorted+tractable layouts.
+
+        // For now, use the fact that the zipped layout has identity offset:
+        // offset(y) = y for all y < m, meaning all offsets are in [0, m).
+        // So for any coordinate c_i < shape[i]:
+        //   stride[i] * c_i < m (since it's part of a sum that equals y < m)
+        // In particular: stride[i] * (shape[i] - 1) < m (when other coords = 0).
+        // Hence: stride[i] * shape[i] = stride[i] * (shape[i] - 1) + stride[i] < m + stride[i].
+        // And stride[i] <= m - 1 (since offset(0,...,1,...,0) = stride[i] and < m for non-trivial).
+        // Hmm, stride[i] could equal m if shape[i] = 1.
+
+        // Simplest approach: stride[i] * shape[i] <= m because the sorted+tractable
+        // B satisfies this from complement_admissible.
+        // Let me just use by(compute_only) or a known tractability lemma.
+
+        // Actually: from zipped.size() == m and the product structure:
+        // shape_size(zipped.shape) = product of all zipped.shape[j] = m.
+        // Each shape[j] >= 1. So shape[i] <= m (product of other shapes >= 1).
+        // And stride[i] * shape[i] <= m? Only if stride[i] <= m / shape[i].
+        // This is true for sorted+tractable but I need to prove it.
+
+        // Practical approach: for the zipped construction from column-major B,
+        // B.stride[i] * B.shape[i] = stride_product(B, i).
+        // complement.stride[j] * complement.shape[j] = stride_product for complement.
+        // All these are prefix products that divide M.
+
+        if i < b.shape.len() as int {
+            // B mode: B.stride[i] * B.shape[i] <= M
+            // B is column-major: stride[i] = prefix_product(shape[0..i])
+            // stride[i] * shape[i] = prefix_product(shape[0..i+1]) <= size(B) <= size(A)
+            assert(zipped.stride[i] == b.stride[i]);
+            assert(zipped.shape[i] == b.shape[i]);
+            // For column-major B: stride[i] * shape[i] = stride[i+1] (if i+1 < len)
+            // or stride[i] * shape[i] = size(B) (if i == len-1)
+            // In both cases <= size(B) <= M.
+            crate::proof::complement_lemmas::lemma_complement_size(b, m);
+        } else {
+            // Complement mode
+            let j = i - b.shape.len() as int;
+            assert(zipped.stride[i] == c.stride[j]);
+            assert(zipped.shape[i] == c.shape[j]);
+            // complement.stride[j] * complement.shape[j] <= M by tractability
+            crate::proof::complement_lemmas::lemma_complement_size(b, m);
+        }
+    };
 
     // compose(A, zipped).offset(x) == zipped.offset(x)
     lemma_compose_column_major_identity(*a, zipped, x);
