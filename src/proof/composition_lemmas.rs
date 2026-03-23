@@ -1863,14 +1863,13 @@ pub proof fn lemma_compose_wf(a: LayoutSpec, b: LayoutSpec)
     }
 }
 
-/// Helper: shape_size(compose(a, b).shape) == b.size() when each mode is admissible.
+/// shape_size(compose(a, b).shape) == b.size().
+/// NOTE: No admissibility needed — compose_single always preserves size after spec fix.
 pub proof fn lemma_compose_size(a: LayoutSpec, b: LayoutSpec)
     requires
         a.valid(),
         b.valid(),
         b.non_negative_strides(),
-        forall|i: int| 0 <= i < b.shape.len() ==>
-            compose_single_admissible(a, #[trigger] b.shape[i], b.stride[i] as nat),
     ensures
         shape_size(compose(a, b).shape) == b.size(),
     decreases b.shape.len(),
@@ -1893,19 +1892,11 @@ pub proof fn lemma_compose_size(a: LayoutSpec, b: LayoutSpec)
             assert forall|i: int| 0 <= i < b_rest.stride.len()
             implies #[trigger] b_rest.stride[i] >= 0 by { assert(b_rest.stride[i] == b.stride[i + 1]); };
         };
-        assert forall|i: int| 0 <= i < b_rest.shape.len()
-        implies compose_single_admissible(a, #[trigger] b_rest.shape[i], b_rest.stride[i] as nat)
-        by {
-            assert(b_rest.shape[i] == b.shape[i + 1]);
-            assert(b_rest.stride[i] == b.stride[i + 1]);
-        };
         lemma_compose_size(a, b_rest);
         lemma_crs_size(a, b.shape.first(), b.stride.first() as nat);
         let rest_c = compose(a, b_rest);
         assert(compose(a, b).shape =~= cs.shape.add(rest_c.shape));
         crate::proof::product_lemmas::lemma_shape_size_append(cs.shape, rest_c.shape);
-        // shape_size(compose(a, b).shape) = shape_size(cs.shape) * shape_size(rest_c.shape)
-        //                                = bs * b_rest.size() = b.size()
         crate::runtime::shape_helpers::lemma_shape_size_split(b.shape, 1);
         assert(b.shape.take(1) =~= seq![b.shape.first()]);
         lemma_shape_size_single(b.shape.first());
@@ -2045,14 +2036,7 @@ pub proof fn lemma_compose_recursive_correct(a: LayoutSpec, b: LayoutSpec, x: na
     crate::proof::product_lemmas::lemma_shape_size_append(cs.shape, rest_c.shape);
 
     // x < shape_size(cs.shape) * shape_size(rest_c.shape)
-    // shape_size(rest_c.shape) == b_rest.size() (from lemma_compose_size)
-    lemma_correct_at_implies_admissible(a, b);
-    assert forall|i: int| 0 <= i < b_rest.shape.len()
-    implies compose_single_admissible(a, #[trigger] b_rest.shape[i], b_rest.stride[i] as nat)
-    by {
-        assert(b_rest.shape[i] == b.shape[i + 1]);
-        assert(b_rest.stride[i] == b.stride[i + 1]);
-    };
+    // shape_size(rest_c.shape) == b_rest.size() (no admissibility needed after spec fix)
     lemma_compose_size(a, b_rest);
     assert(shape_size(rest_c.shape) == b_rest.size());
     crate::runtime::shape_helpers::lemma_shape_size_split(b.shape, 1);

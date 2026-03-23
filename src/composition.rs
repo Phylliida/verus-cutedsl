@@ -226,7 +226,7 @@ pub open spec fn compose_single(
 /// Unlike `compose_linear`, each single-mode result can be multi-mode (from straddling),
 /// so the output rank may be larger than B's rank.
 pub open spec fn compose(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
-    recommends a.valid(), b.valid(),
+    recommends a.valid(), b.valid(), b.non_negative_strides(),
     decreases b.shape.len(),
 {
     if b.shape.len() == 0 {
