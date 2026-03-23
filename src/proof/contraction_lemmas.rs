@@ -368,4 +368,50 @@ pub proof fn lemma_gemm_accumulation_correct<R: Ring>(
     }
 }
 
+// ══════════════════════════════════════════════════════════════
+// Bridge: exec spec ↔ contraction spec
+// ══════════════════════════════════════════════════════════════
+
+/// Bridge between gemm_element_spec (concrete i64 sequences) and
+/// gemm_contraction_value (abstract Ring summation).
+///
+/// When the Ring is integers (i64 values interpreted as int),
+/// gemm_element_spec equals gemm_contraction_value. This closes the
+/// spec→proof→exec loop: the exec computes gemm_element_spec (verified),
+/// and gemm_element_spec equals the abstract contraction value.
+///
+/// Specifically: gemm_element_spec(a, b, K, N, i, j) ==
+///   gemm_contraction_value(|i,k| a[i*K+k] as int, |k,j| b[k*N+j] as int, i, j, K)
+///
+/// when using integers as the Ring (where mul = *, add = +, zero = 0).
+pub proof fn lemma_gemm_element_spec_matches_contraction(
+    a: Seq<i64>, b: Seq<i64>,
+    k_size: nat, n: nat,
+    i: nat, j: nat, kk: nat,
+)
+    requires kk <= k_size,
+    ensures
+        crate::runtime::contraction::gemm_partial_sum(a, b, k_size, n, i, j, kk)
+            == sum::<int>(
+                |k: int| (a[(i * k_size + k) as int] as int) * (b[(k * n + j) as int] as int),
+                0, kk as int),
+    decreases kk,
+{
+    if kk == 0 {
+        verus_algebra::summation::lemma_sum_empty::<int>(
+            |k: int| (a[(i * k_size + k) as int] as int) * (b[(k * n + j) as int] as int),
+            0, 0);
+    } else {
+        lemma_gemm_element_spec_matches_contraction(a, b, k_size, n, i, j, (kk - 1) as nat);
+        verus_algebra::summation::lemma_sum_peel_last::<int>(
+            |k: int| (a[(i * k_size + k) as int] as int) * (b[(k * n + j) as int] as int),
+            0, kk as int);
+        // peel_last: sum(0, kk) .eqv( sum(0, kk-1) + f(kk-1) )
+        // IH: partial_sum(kk-1) == sum(0, kk-1)
+        // partial_sum(kk) = partial_sum(kk-1) + a[...] * b[...]
+        // sum(0, kk) = sum(0, kk-1) + a[...] * b[...]
+        // Both equal, QED.
+    }
+}
+
 } // verus!

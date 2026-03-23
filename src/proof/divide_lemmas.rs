@@ -1664,179 +1664,8 @@ pub proof fn lemma_divide_recursive_agrees_mode(a: &LayoutSpec, n: nat)
 // logical_divide (using compose) correctness for column-major
 // ══════════════════════════════════════════════════════════════
 
-/// Predicate: the zipped layout from divide is compose_recursive_correct_at.
-/// This ensures logical_divide (using compose) produces correct offsets.
-pub open spec fn divide_compose_admissible(a: &LayoutSpec, b: &LayoutSpec) -> bool {
-    let m = shape_size(a.shape);
-    let c = complement(b, m);
-    let zipped = LayoutSpec {
-        shape: b.shape.add(c.shape),
-        stride: b.stride.add(c.stride),
-    };
-    crate::proof::composition_lemmas::compose_recursive_correct_at(*a, zipped)
-}
-
-/// For column-major A, per-mode compose_single_admissible implies compose_recursive_correct_at.
-/// The additivity condition is trivially satisfied because column-major A has identity offset:
-/// A.offset(a + b) = a + b = A.offset(a) + A.offset(b).
-pub proof fn lemma_column_major_admissible_implies_correct_at(
-    a: LayoutSpec, b: LayoutSpec,
-)
-    requires
-        a.valid(),
-        a.shape.len() > 0,
-        a.stride =~= column_major_strides(a.shape),
-        b.valid(),
-        b.non_negative_strides(),
-        forall|i: int| 0 <= i < b.shape.len() ==>
-            crate::proof::composition_lemmas::compose_single_admissible(
-                a, #[trigger] b.shape[i], b.stride[i] as nat),
-    ensures
-        crate::proof::composition_lemmas::compose_recursive_correct_at(a, b),
-    decreases b.shape.len(),
-{
-    if b.shape.len() > 0 {
-        let b_rest = LayoutSpec { shape: b.shape.skip(1), stride: b.stride.skip(1) };
-
-        // b_rest valid + non-negative strides
-        assert(b_rest.valid()) by {
-            assert forall|i: int| 0 <= i < b_rest.shape.len()
-            implies #[trigger] b_rest.shape[i] > 0 by { assert(b_rest.shape[i] == b.shape[i + 1]); };
-        };
-        assert(b_rest.non_negative_strides()) by {
-            assert forall|i: int| 0 <= i < b_rest.stride.len()
-            implies #[trigger] b_rest.stride[i] >= 0 by { assert(b_rest.stride[i] == b.stride[i + 1]); };
-        };
-
-        // Per-mode admissibility for b_rest
-        assert forall|i: int| 0 <= i < b_rest.shape.len()
-        implies crate::proof::composition_lemmas::compose_single_admissible(
-            a, #[trigger] b_rest.shape[i], b_rest.stride[i] as nat)
-        by {
-            assert(b_rest.shape[i] == b.shape[i + 1]);
-            assert(b_rest.stride[i] == b.stride[i + 1]);
-        };
-
-        // IH: compose_recursive_correct_at(a, b_rest)
-        lemma_column_major_admissible_implies_correct_at(a, b_rest);
-
-        // Condition 1: compose_single_admissible for first mode (from requires)
-        assert(crate::proof::composition_lemmas::compose_single_admissible(
-            a, b.shape.first(), b.stride.first() as nat));
-
-        // Condition 3: offset additivity (trivial for column-major)
-        // A.offset(y) == y for all y < size(A), so A.offset(a + b) = a + b = a + b
-        assert forall|c: nat, rest_off: nat|
-            c < b.shape.first()
-            && rest_off < a.size()
-            && (b.stride.first() * (c as int)) >= 0
-            && ((b.stride.first() * (c as int)) as nat + rest_off) < a.size()
-        implies
-            #[trigger] a.offset((b.stride.first() * (c as int)) as nat + rest_off)
-                == a.offset((b.stride.first() * (c as int)) as nat) + a.offset(rest_off)
-        by {
-            let combined = (b.stride.first() * (c as int)) as nat + rest_off;
-            let first_off = (b.stride.first() * (c as int)) as nat;
-            // A.offset(x) == x for column-major
-            lemma_column_major_offset_is_identity(a.shape, combined);
-            lemma_column_major_offset_is_identity(a.shape, first_off);
-            lemma_column_major_offset_is_identity(a.shape, rest_off);
-            // A.offset(combined) = combined = first_off + rest_off = A.offset(first_off) + A.offset(rest_off)
-        };
-    }
-}
-
-/// For column-major A and B with divide_compose_admissible,
-/// logical_divide(A, B) has identity offset.
-pub proof fn lemma_divide_offset_column_major_compose(
-    a: &LayoutSpec, b: &LayoutSpec, x: nat,
-)
-    requires
-        divide_admissible(a, b),
-        a.stride =~= column_major_strides(a.shape),
-        b.stride =~= column_major_strides(b.shape),
-        divide_compose_admissible(a, b),
-        x < shape_size(a.shape),
-    ensures
-        logical_divide(a, b).offset(x) == x as int,
-{
-    let m = shape_size(a.shape);
-    let c = complement(b, m);
-    let zipped = LayoutSpec {
-        shape: b.shape.add(c.shape),
-        stride: b.stride.add(c.stride),
-    };
-
-    // zipped valid + non-negative strides + size == m
-    crate::proof::tiling_lemmas::lemma_zipped_setup(a, b);
-
-    // zipped has identity offset for column-major B
-    lemma_zipped_identity_offset(b, m, x);
-    assert(zipped.offset(x) == x as int);
-    assert(zipped.offset(x) >= 0);
-
-    // A has identity offset (column-major)
-    crate::proof::inverse_lemmas::lemma_column_major_strides_first(a.shape);
-    assert(a.stride[0] == 1int);
-    lemma_column_major_offset_is_identity(a.shape, x);
-    assert(LayoutSpec { shape: a.shape, stride: column_major_strides(a.shape) }.offset(x) == x as int);
-
-    // compose_recursive_correct_at holds (from requires)
-    assert(crate::proof::composition_lemmas::compose_recursive_correct_at(*a, zipped));
-
-    // Apply multi-mode compose correctness:
-    // compose(A, zipped).offset(x) == A.offset(zipped.offset(x))
-    crate::proof::composition_lemmas::lemma_compose_recursive_correct(*a, zipped, x);
-    assert(compose(*a, zipped).offset(x) == a.offset(zipped.offset(x) as nat));
-
-    // A.offset(x) == x (column-major identity)
-    assert(zipped.offset(x) as nat == x);
-    assert(a.offset(x) == x as int);
-}
-
-/// Simpler version: takes per-mode zipped admissibility directly.
-/// The caller establishes compose_single_admissible for each zipped mode,
-/// and this lemma handles the column-major additivity automatically.
-pub proof fn lemma_divide_offset_column_major_compose_from_modes(
-    a: &LayoutSpec, b: &LayoutSpec, x: nat,
-)
-    requires
-        divide_admissible(a, b),
-        a.stride =~= column_major_strides(a.shape),
-        b.stride =~= column_major_strides(b.shape),
-        x < shape_size(a.shape),
-        // Per-mode admissibility for the zipped layout
-        ({
-            let m = shape_size(a.shape);
-            let c = complement(b, m);
-            let zipped = LayoutSpec {
-                shape: b.shape.add(c.shape),
-                stride: b.stride.add(c.stride),
-            };
-            forall|i: int| 0 <= i < zipped.shape.len() ==>
-                crate::proof::composition_lemmas::compose_single_admissible(
-                    *a, #[trigger] zipped.shape[i], zipped.stride[i] as nat)
-        }),
-    ensures
-        logical_divide(a, b).offset(x) == x as int,
-{
-    let m = shape_size(a.shape);
-    let c = complement(b, m);
-    let zipped = LayoutSpec {
-        shape: b.shape.add(c.shape),
-        stride: b.stride.add(c.stride),
-    };
-
-    // zipped valid + non-negative strides
-    crate::proof::tiling_lemmas::lemma_zipped_setup(a, b);
-
-    // Column-major admissibility → compose_recursive_correct_at
-    lemma_column_major_admissible_implies_correct_at(*a, zipped);
-
-    // Now use the existing proof
-    assert(divide_compose_admissible(a, b));
-    lemma_divide_offset_column_major_compose(a, b, x);
-}
+// (Old admissibility-based infrastructure removed — superseded by
+// lemma_divide_identity_column_major_no_admissibility which needs no admissibility.)
 
 // ══════════════════════════════════════════════════════════════
 // Column-major compose identity (NO admissibility required!)
@@ -2275,34 +2104,13 @@ proof fn lemma_zipped_mode_bound(a: &LayoutSpec, b: &LayoutSpec, i: int)
     crate::proof::tiling_lemmas::lemma_zipped_setup(a, b);
 
     if i < b.shape.len() as int {
-        // B mode: use cm_prefix_product_identity
+        // B mode: B is column-major (sorted+tractable), use general mode bound
         assert(zipped.stride[i] == b.stride[i]);
         assert(zipped.shape[i] == b.shape[i]);
-        assert(b.stride =~= column_major_strides(b.shape));
-        lemma_cm_prefix_product_identity(b.shape, i as nat);
-        // shape[i] <= size(skip(i))
-        let s_tail = b.shape.skip(i);
-        if s_tail.len() == 1 {
-            assert(s_tail =~= seq![b.shape[i]]);
-            lemma_shape_size_single(b.shape[i]);
-        } else {
-            crate::runtime::shape_helpers::lemma_shape_size_split(s_tail, 1);
-            assert(s_tail.take(1) =~= seq![b.shape[i]]);
-            lemma_shape_size_single(b.shape[i]);
-            assert(shape_valid(s_tail.skip(1))) by {
-                assert forall|j: int| 0 <= j < s_tail.skip(1).len()
-                implies #[trigger] s_tail.skip(1)[j] > 0
-                by { assert(s_tail.skip(1)[j] == b.shape[i + 1 + j]); };
-            };
-            lemma_shape_size_positive(s_tail.skip(1));
-            assert(b.shape[i] <= b.shape[i] * shape_size(s_tail.skip(1)))
-                by (nonlinear_arith)
-                requires shape_size(s_tail.skip(1)) >= 1nat, b.shape[i] > 0;
-        }
-        assert((b.stride[i] as nat) * b.shape[i]
-            <= (b.stride[i] as nat) * shape_size(b.shape.skip(i))) by (nonlinear_arith)
-            requires b.shape[i] <= shape_size(b.shape.skip(i)), b.stride[i] >= 0;
-        // size(B) <= m
+        // B is sorted+tractable (column-major)
+        crate::proof::gemm_lemmas::lemma_cm_sorted_tractable(b.shape);
+        // Last stride_product of B divides m (from complement_admissible)
+        // size(B) divides m → last stride_product divides m
         crate::proof::product_lemmas::lemma_shape_size_append(b.shape, c.shape);
         assert(shape_valid(c.shape)) by {
             assert forall|j: int| 0 <= j < c.shape.len()
@@ -2310,9 +2118,10 @@ proof fn lemma_zipped_mode_bound(a: &LayoutSpec, b: &LayoutSpec, i: int)
             by { assert(c.shape[j] == zipped.shape[b.shape.len() as int + j]); };
         };
         lemma_shape_size_positive(c.shape);
-        assert(shape_size(b.shape) <= m) by (nonlinear_arith)
-            requires m == shape_size(b.shape) * shape_size(c.shape),
-                     shape_size(c.shape) >= 1nat;
+        // Need: (m as int) % ((b.shape.last() as int) * b.stride.last()) == 0
+        // From complement_admissible: this IS one of the conditions.
+        // complement_admissible(b, m) includes this.
+        crate::proof::composition_lemmas::lemma_sorted_tractable_mode_bound(b, m, i);
     } else {
         // Complement mode: unfold complement_shape/stride definitions
         let j = i - b.shape.len() as int;

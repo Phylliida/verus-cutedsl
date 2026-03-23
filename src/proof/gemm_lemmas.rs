@@ -1878,9 +1878,72 @@ proof fn lemma_cm_nonneg(shape: Seq<nat>)
     }
 }
 
+/// Column-major layout is sorted (strides non-decreasing).
+proof fn lemma_cm_sorted(shape: Seq<nat>)
+    requires shape_valid(shape), shape.len() > 0,
+    ensures make_column_major(shape).is_sorted(),
+    decreases shape.len(),
+{
+    crate::proof::injectivity_lemmas::lemma_column_major_strides_len(shape);
+    crate::proof::inverse_lemmas::lemma_column_major_strides_first(shape);
+    let l = make_column_major(shape);
+    if shape.len() == 1 {
+        assert(l.is_sorted()) by {
+            assert forall|i: int, j: int| 0 <= i < j < l.stride.len()
+            implies #[trigger] l.stride[i] <= #[trigger] l.stride[j] by {};
+        };
+    } else {
+        let s0 = shape.first();
+        let rest_shape = shape.skip(1);
+        assert(shape_valid(rest_shape)) by {
+            assert forall|i: int| 0 <= i < rest_shape.len()
+            implies #[trigger] rest_shape[i] > 0 by { assert(rest_shape[i] == shape[i + 1]); };
+        };
+        let cm_rest = column_major_strides(rest_shape);
+        assert(l.stride =~= seq![1int].add(scale_strides_spec(cm_rest, s0 as int)));
+        lemma_cm_sorted(rest_shape);
+        lemma_cm_nonneg(rest_shape);
+        let l_rest = make_column_major(rest_shape);
+        crate::proof::inverse_lemmas::lemma_column_major_strides_first(rest_shape);
+        crate::proof::injectivity_lemmas::lemma_column_major_strides_len(rest_shape);
+        vstd::arithmetic::mul::lemma_mul_basics(s0 as int);
+        // Establish stride values
+        assert forall|k: int| 0 <= k < cm_rest.len()
+        implies l.stride[k + 1] == (s0 as int) * #[trigger] cm_rest[k]
+        by {
+            assert(seq![1int].add(scale_strides_spec(cm_rest, s0 as int))[k + 1]
+                == scale_strides_spec(cm_rest, s0 as int)[k]);
+        };
+        assert(l.is_sorted()) by {
+            assert forall|i: int, j: int| 0 <= i < j < l.stride.len()
+            implies #[trigger] l.stride[i] <= #[trigger] l.stride[j] by {
+                if i == 0 {
+                    assert(l.stride[j] == (s0 as int) * cm_rest[j - 1]);
+                    if rest_shape.len() > 1 && j > 1 {
+                        assert(l_rest.stride[0] <= l_rest.stride[j - 1]);
+                    }
+                    assert(cm_rest[j - 1] >= 1) by {
+                        if j == 1 { assert(cm_rest[0] == 1int); }
+                        else { assert(l_rest.stride[j - 1] >= l_rest.stride[0]); }
+                    };
+                    assert((s0 as int) * cm_rest[j - 1] >= 1) by (nonlinear_arith)
+                        requires (s0 as int) >= 1, cm_rest[j - 1] >= 1;
+                } else {
+                    assert(l.stride[i] == (s0 as int) * cm_rest[i - 1]);
+                    assert(l.stride[j] == (s0 as int) * cm_rest[j - 1]);
+                    assert(l_rest.stride[i - 1] <= l_rest.stride[j - 1]);
+                    assert(cm_rest[i - 1] <= cm_rest[j - 1]);
+                    assert((s0 as int) * cm_rest[i - 1] <= (s0 as int) * cm_rest[j - 1])
+                        by (nonlinear_arith)
+                        requires (s0 as int) > 0, cm_rest[i - 1] <= cm_rest[j - 1];
+                }
+            };
+        };
+    }
+}
+
 /// Column-major layout is valid + sorted + tractable + non-negative + stride[0] > 0.
 /// General rank (not just 2D).
-#[verifier::rlimit(80)]
 pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
     requires
         shape_valid(shape),
@@ -1903,19 +1966,15 @@ pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
     assert(l.valid()) by {
         assert forall|i: int| 0 <= i < l.shape.len() implies #[trigger] l.shape[i] > 0 by {};
     };
+    // Non-negative + sorted from helpers
+    lemma_cm_nonneg(shape);
+    lemma_cm_sorted(shape);
 
     if shape.len() == 1 {
-        // Rank 1: sorted/tractable are trivially true (no pairs to check)
-        assert(l.is_sorted()) by {
-            assert forall|i: int| 0 <= i < l.stride.len() as int - 1
-            implies l.stride[i] <= #[trigger] l.stride[i + 1] by {};
-        };
+        // Rank 1: tractable trivially true (no pairs)
         assert(l.is_tractable()) by {
             assert forall|i: int| 0 <= i < l.stride.len() as int - 1
             implies #[trigger] l.tractable_at(i) by {};
-        };
-        assert(l.non_negative_strides()) by {
-            assert forall|i: int| 0 <= i < l.stride.len() implies #[trigger] l.stride[i] >= 0 by {};
         };
     } else {
         // cm(shape) = [1] ++ scale(cm(skip(1)), shape[0])
@@ -1954,46 +2013,6 @@ pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
                 == scale_strides_spec(cm_rest, s0 as int)[k]);
         };
 
-        // non_negative from helper
-        lemma_cm_nonneg(shape);
-
-        // sorted: forall|i, j| 0 <= i < j < len ==> stride[i] <= stride[j]
-        assert(l.is_sorted()) by {
-            assert forall|i: int, j: int| 0 <= i < j < l.stride.len()
-            implies #[trigger] l.stride[i] <= #[trigger] l.stride[j] by {
-                // Use sorted transitivity from the IH
-                // stride[0] = 1. stride[k+1] = s0 * cm_rest[k].
-                // For i=0: stride[0] = 1. stride[j] = s0 * cm_rest[j-1] >= s0 * 1 >= 1. ✓
-                // For i>0: stride[i] = s0*cm_rest[i-1]. stride[j] = s0*cm_rest[j-1].
-                //   cm_rest[i-1] <= cm_rest[j-1] from l_rest.is_sorted().
-                //   s0 * cm_rest[i-1] <= s0 * cm_rest[j-1]. ✓
-                if i == 0 {
-                    // stride[0] = 1. stride[j] = s0 * cm_rest[j-1] >= s0 * 1 >= 1.
-                    assert(l.stride[j] == (s0 as int) * cm_rest[j - 1]);
-                    // cm_rest[j-1] >= cm_rest[0] = 1 (from l_rest.is_sorted + cm_first)
-                    if rest_shape.len() > 1 && j > 1 {
-                        // Trigger l_rest.is_sorted: stride[0] <= stride[j-1]
-                        assert(l_rest.stride[0] <= l_rest.stride[j - 1]);
-                    }
-                    assert(cm_rest[j - 1] >= 1) by {
-                        if j == 1 { assert(cm_rest[0] == 1int); }
-                        else { assert(l_rest.stride[j - 1] >= l_rest.stride[0]); }
-                    };
-                    assert((s0 as int) * cm_rest[j - 1] >= 1) by (nonlinear_arith)
-                        requires (s0 as int) >= 1, cm_rest[j - 1] >= 1;
-                } else {
-                    // stride[i] = s0*cm_rest[i-1], stride[j] = s0*cm_rest[j-1]
-                    assert(l.stride[i] == (s0 as int) * cm_rest[i - 1]);
-                    assert(l.stride[j] == (s0 as int) * cm_rest[j - 1]);
-                    // Trigger l_rest.is_sorted: stride[i-1] <= stride[j-1]
-                    assert(l_rest.stride[i - 1] <= l_rest.stride[j - 1]);
-                    assert(cm_rest[i - 1] <= cm_rest[j - 1]);
-                    assert((s0 as int) * cm_rest[i - 1] <= (s0 as int) * cm_rest[j - 1])
-                        by (nonlinear_arith)
-                        requires (s0 as int) > 0, cm_rest[i - 1] <= cm_rest[j - 1];
-                }
-            };
-        };
         // tractable: stride[0]*shape[0] = 1*s0 = s0. stride[1] = s0*cm_rest[0].
         // s0 % s0 == 0 trivially? No: stride[1] % (stride[0]*shape[0]) = (s0*cm_rest[0]) % s0.
         // cm_rest[0] = 1 if rest non-empty, so stride[1] = s0. s0 % s0 == 0. ✓
