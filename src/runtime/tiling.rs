@@ -157,7 +157,7 @@ pub fn zipped_divide_exec(
         crate::proof::composition_lemmas::lemma_compose_shape(a@, zipped@);
     }
 
-    let result_layout = super::ops::compose_exec(a, &zipped);
+    let result_layout = super::ops::compose_linear_exec(a, &zipped);
 
     proof {
         let b_spec = b@;

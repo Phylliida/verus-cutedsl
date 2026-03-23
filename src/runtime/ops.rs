@@ -64,8 +64,8 @@ pub fn compose_single_mode_exec(a: &RuntimeLayout, b_shape: u64, b_stride: u64) 
     }
 }
 
-/// Compose A with multi-mode B at runtime.
-pub fn compose_exec(a: &RuntimeLayout, b: &RuntimeLayout) -> (result: RuntimeLayout)
+/// Legacy compose: compose_linear(A, B) at runtime. First-mode only.
+pub fn compose_linear_exec(a: &RuntimeLayout, b: &RuntimeLayout) -> (result: RuntimeLayout)
     requires
         a.wf_spec(),
         b.wf_spec(),
@@ -1373,7 +1373,7 @@ pub fn divide_tile_exec(a: &RuntimeLayout, b: &RuntimeLayout) -> (result: Runtim
         result.wf_spec(),
         result@ == divide_tile(&a@, &b@),
 {
-    compose_exec(a, b)
+    compose_linear_exec(a, b)
 }
 
 /// Divide rest at runtime: compose_linear(A, complement(B, size(A))).
@@ -1407,7 +1407,7 @@ pub fn divide_rest_exec(
         crate::proof::composition_lemmas::lemma_compose_shape(a@, complement_result@);
         crate::proof::complement_lemmas::lemma_complement_valid(&b@, shape_size(a@.shape));
     }
-    compose_exec(a, complement_result)
+    compose_linear_exec(a, complement_result)
 }
 
 /// Blocked product at runtime: alias for logical_product_exec.

@@ -175,20 +175,35 @@ Tractability ensures the modes tile the codomain without gaps or overlaps within
 
 **Composition** `A compose B` produces a layout whose offset function is `A(B(x))`.
 
-For `A = (S_A, D_A)` and a single-mode `B = (N):(r)`:
-1. Find the split index `i` such that `r = M_0 * ... * M_{i-1} * c` where `c | M_i`
-2. The result shape slices through A's modes starting at the split point
+The composition is implemented as a recursive algorithm (`compose_single`) that handles
+three cases for a single-mode `B = (N):(r)`:
 
-For multi-mode B, composition distributes: `A compose (B_0, B_1, ...) = (A compose B_0, A compose B_1, ...)`
+1. **Within first mode** (`r * N <= M_0`): Result is `(N):(r * d_0)`. B's image fits
+   entirely within A's first mode.
+
+2. **Straddle** (`r < M_0`, `M_0 % r == 0`): B crosses A's first mode boundary.
+   Split into `(M_0/r):(r * d_0)` for the within-first-mode part, then recurse on
+   remaining modes with `compose_single(A_rest, N/(M_0/r), 1)`. This produces a
+   MULTI-mode result from a single-mode input — the key difference from the "linear"
+   compose which always produces rank-1 output.
+
+3. **Skip** (`r >= M_0`, `r % M_0 == 0`): B's stride spans entire first mode.
+   Skip to `compose_single(A_rest, N, r/M_0)`.
+
+For multi-mode B, composition distributes: `A compose (B_0, B_1, ...) = (A compose_single B_0, ...)`
 
 The key verified property:
 
 ```
-(A compose B)(x) == A(B(x))    for all x < size(B)
+compose_single(A, N, r).offset(x) == A.offset(r * x)    for all x < N
 ```
 
-This is the fundamental correctness theorem for composition: the algebraic construction
-on shape/stride pairs produces the same result as functional composition.
+This is the fundamental correctness theorem: proved by induction on A's rank using
+modular scaling identities (`a*(x%b) == (a*x)%(a*b)`) for the straddle case.
+
+**Note:** The crate also contains a legacy `compose_linear` which multiplies all B strides
+by `A.stride[0]` — this is only correct when B's image fits within A's first mode.
+`compose` (= `compose_recursive`) is the correct general implementation.
 
 ### 2.7 Complement
 
@@ -277,19 +292,30 @@ bijectivity proof (swizzle composed with itself is identity).
 These are the core theorems about layouts as mathematical objects. They are proved once
 and used as building blocks for everything else.
 
-| Property | Statement | Difficulty |
-|----------|-----------|------------|
-| Delinearize roundtrip | `linearize(delinearize(x, S), S) == x` | Easy (induction on rank) |
-| Coordinate bounds | `delinearize(x, S)[i] < S[i]` | Easy |
-| Offset bounds | `0 <= L(x) < cosize(L)` for non-neg strides | Medium |
-| Composition correctness | `(A compose B)(x) == A(B(x))` | Hard (case split on mode boundaries) |
-| Complement disjointness | Codomains of A and complement(A,M) intersect only at 0 | Hard |
-| Complement completeness | Union of codomains covers [0,M) | Hard |
-| Complement size | `size(complement(A,M)) == M / size(A)` | Medium |
-| Division decomposition | logical_divide visits every element exactly once | Hard (follows from complement) |
-| Coalesce equivalence | `coalesce(L)(x) == L(x)` | Medium |
-| Swizzle involution | `swizzle(swizzle(x)) == x` | Easy (XOR self-inverse) |
-| Swizzle bijectivity | swizzle is a bijection on its domain | Medium (follows from involution) |
+| Property | Statement | Status |
+|----------|-----------|--------|
+| Delinearize roundtrip | `linearize(delinearize(x, S), S) == x` | ✅ Proved |
+| Coordinate bounds | `delinearize(x, S)[i] < S[i]` | ✅ Proved |
+| Offset bounds | `0 <= L(x) < cosize(L)` for non-neg strides | ✅ Proved |
+| Composition correctness | `compose_single(A, N, r).offset(x) == A.offset(r * x)` | ✅ Proved (CuTe recursive) |
+| Complement size | `size(complement(A,M)) == M / size(A)` | ✅ Proved |
+| Complement validity | complement is valid, tractable, injective, positive strides | ✅ Proved |
+| Complement bijectivity | Zipped layout (B, complement) is bijective onto [0, M) | ✅ Proved |
+| Division offset | `logical_divide(A, B).offset(x) == A.offset(x)` | ✅ Proved (rank-1 A, column-major A, recursive) |
+| Division mode offset | `logical_divide_mode(A, N).offset(x) == A.offset(x)` | ✅ Proved (any A) |
+| Coalesce equivalence | `coalesce(L)(x) == L(x)` | ✅ Proved |
+| Flatten idempotence | `flatten(flatten(L)) == flatten(L)` | ✅ Proved |
+| Flatten canonicality | offset-equivalent sorted+tractable layouts flatten identically | ✅ Proved |
+| Product associativity | `product(product(A,B),C).offset == product(A,product(B,C)).offset` | ✅ Proved |
+| Product identity | `product(scalar, A).offset == A.offset` (both sides) | ✅ Proved |
+| Inverse correctness | `L(R(j)) == j` and `LI(L(i)) == i` | ✅ Proved |
+| Inverse unification | `left_inverse(L).offset == right_inverse(L).offset` | ✅ Proved |
+| Swizzle involution | `swizzle(swizzle(x)) == x` | ✅ Proved |
+| Swizzle bijectivity | swizzle is a bijection on its domain | ✅ Proved |
+| Blelloch scan | `blelloch_result(data) == exclusive_scan(data)` | ✅ Proved |
+| Brent-Kung scan | `bk_result(data) == inclusive_scan(data)` | ✅ Proved |
+| Radix sort | `is_sorted(radix_sort(data))` | ✅ Proved |
+| Multiblock scan | Three-phase + lookback correctness | ✅ Proved |
 
 ### 3.2 Layer 2: Operation Specifications (future)
 
@@ -766,9 +792,11 @@ targeting. It can be used to validate hand-written kernels, generate verified te
 or serve as a reference implementation. Codegen adds value but also adds a large unverified
 TCB (the proc macro). Better to establish the verified foundation first.
 
-**No `assume(false)` in the algebra layer.** All layout algebra proofs should be complete
-(no proof debt). `#[verifier::external_body]` is used only for GPU intrinsics in the future
-codegen layer, and each such use is documented and tested.
+**No `assume(false)` in the algebra layer.** All 1383 verified functions have zero proof debt.
+This was achieved through CuTe-style recursive composition, modular scaling lemmas, and
+careful proof engineering (branch isolation, explicit predicate unfolding).
+`#[verifier::external_body]` is used only for bitwise operations (`bxor`, `shr`, `shl`,
+`band_mask`) with verified `ensures` clauses.
 
 **Follow verus-cad patterns exactly.** Same `wf_spec()` pattern, same `Ghost<Model>` + `View`
 bridging, same module organization (`proof/` subdirectory, `runtime/` subdirectory), same

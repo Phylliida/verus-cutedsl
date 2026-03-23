@@ -1,180 +1,274 @@
-# verus-cutedsl Roadmap
+# verus-cutedsl: Roadmap & Implementation Guide
 
-## Current State (205 verified, 0 assume, 4 external_body)
+## Current State (as of March 2026)
 
-**Spec**: shape, layout (injectivity, surjectivity, bijectivity, column-major, row-major, identity, seq_reverse), compose, complement, divide, product, coalesce, swizzle, slice, dice
-**Proof**: round-trips, offset preservation (coalesce), element-wise compose, complement rank/size/injectivity/tractability, divide rank/tiling, product rank/size/validity/offset-decomposition, swizzle involution, column-major injectivity/bijectivity, row-major injectivity, identity injectivity/bijectivity, compose correctness (general A), compose associativity, compose preserves injectivity, coalesce preserves injectivity, dot product scale/reverse, identity-offset implies bijective, general tractable-injective theorem, delinearize/linearize over concatenation
-**Runtime**: all ops fully verified (compose, complement, product, coalesce, offset, cosize, is_tractable, is_sorted, has_non_negative_strides, slice, dice)
+**1383 verified functions, 0 errors, 0 assumes.**
 
-## Phase 1: Injectivity (No-Aliasing Property)
+### What exists
 
-The key safety property: distinct indices map to distinct offsets.
+**Spec layer** (pure math):
+- `shape.rs` — shapes, delinearize, linearize, dot_product
+- `layout.rs` — LayoutSpec with offset, cosize, validity, sortedness, tractability, injectivity, surjectivity, bijectivity, has_no_unit_modes
+- `composition.rs` — `compose` (CuTe recursive, correct), `compose_linear` (legacy, first-mode only), `compose_single` (recursive single-mode building block), `compose_extended` (deprecated), `compose_single_mode` / `compose_single_mode_extended` (building blocks for legacy compose)
+- `complement.rs` — complement(A, M), complement_admissible, stride_product
+- `divide.rs` — `logical_divide` (CuTe recursive, correct), `logical_divide_linear` (legacy), `logical_divide_mode` (convenience first-mode), `logical_divide_extended` (deprecated), divide_tile, divide_rest, num_tiles
+- `product.rs` — logical_product, blocked_product, raked_product, scalar_layout, scale_strides
+- `coalesce.rs` — coalesce, coalesce_pair, flatten (canonical, idempotent), flatten_partial (one-pass), remove_units_iter, modes_coalesceable, is_fully_coalesced, group_modes
+- `inverse.rs` — right_inverse, left_inverse, shape_prefix_products
+- `swizzle.rs` — swizzle, pow2, bit operations
+- `permutation.rs` — permute_modes, compose_permutations, swap_permutation
+- `slice.rs` — slice_layout, dice_layout
+- `tiling.rs` — DividedLayout, zipped_divide, tile_shape, rest_shape, predicated_divide, warp_partition, register_partition
+- `predication.rs` — ceil_div, padded_size, predicated layouts
+- `compatibility.rs` — offset_equivalent, size_compatible, offset_compatible
+- `gemm.rs` — TensorSpec, GemmSpec, gemm_spec, tiled GEMM specs
+- `contraction.rs` — tensor contraction specs (Einstein summation)
+- `scan.rs` — reduce, inclusive_scan, exclusive_scan, compact operations
+- `scan_blelloch.rs`, `scan_brent_kung.rs`, `scan_tree.rs`, `scan_multiblock.rs`, `scan_segmented.rs` — algorithm-specific scan specs
+- `radix_sort.rs` — radix_step, radix_sort, scatter specs
 
-### 1a. Injectivity Spec ✅
-- `LayoutSpec::is_injective() -> bool` — `forall i, j: i != j ==> offset(i) != offset(j)` ✅
-- `LayoutSpec::offset_hit(k) -> bool` — existential helper for surjectivity ✅
-- `LayoutSpec::is_surjective_upto(m: nat) -> bool` — `forall k < m: offset_hit(k)` ✅
-- `LayoutSpec::is_bijective_upto(m: nat) -> bool` — injective + surjective ✅
+**Proof layer** (~800 proof functions):
+- All key theorems proved with zero assumes (see README.md for full list)
+- Key files: composition_lemmas.rs (compose_single correctness), coalesce_lemmas.rs (canonicality), divide_lemmas.rs, product_lemmas.rs, inverse_lemmas.rs, complement_lemmas.rs, injectivity_lemmas.rs, integer_helpers.rs
 
-### 1b. Injectivity of Standard Layouts ✅
-- `lemma_column_major_injective(shape)` ✅ — stride = (1, M0, M0*M1, ...) is injective
-- `lemma_column_major_bijective(shape)` ✅ — bijective onto [0, size)
-- `lemma_identity_injective(m)` ✅ — (M):(1) is injective
-- `lemma_identity_bijective(m)` ✅ — bijective onto [0, m)
-- `lemma_row_major_injective(shape)` ✅ — stride = (..., M1*M2, M2, 1) is injective (via reversal + column-major roundtrip)
-- Helpers: `make_column_major`, `make_row_major`, `make_identity`, `column_major_strides`, `row_major_strides`, `seq_reverse`, `scale_strides_spec` ✅
+**Runtime layer** (exec functions):
+- `runtime/layout.rs` — RuntimeLayout with Ghost<LayoutSpec>, wf_spec(), offset computation, Display/Debug
+- `runtime/ops.rs` — compose_linear_exec (NOTE: implements compose_linear, NOT compose!), complement_exec, logical_product_exec, coalesce_exec, flatten_exec, slice_exec, dice_exec, divide_tile_exec, divide_rest_exec, divide_mode_exec, group_modes_exec, remove_units_iter_exec, zipped_divide_exec
+- `runtime/inverse.rs` — right_inverse_exec
+- `runtime/scan.rs` — hillis_steele, tree_reduce, blelloch_exclusive_scan, brent_kung_inclusive_scan (all generic over ExecRing trait)
+- `runtime/scan_multiblock.rs` — three_phase_inclusive_scan, compact, histogram, multi_split, reduce
+- `runtime/scan_segmented.rs` — segmented scan exec
+- `runtime/radix_sort.rs` — radix_step_exec, radix_sort_exec
+- `runtime/swizzle.rs` — swizzled_offset_exec, bxor/shr/shl/band_mask external body wrappers
+- `runtime/gemm.rs` — gemm_staged_cta_kernel, gemm_k_tile_loop, gemm_dispatch
+- `runtime/tiling.rs` — zipped_divide_exec, tile_shape_exec, rest_shape_exec
+- `runtime/predication.rs` — ceil_div_exec, padded_size_exec, predicate_exec
+- `runtime/contraction.rs` — contraction_output_shape_exec
+- `runtime/shape_helpers.rs` — shape_size_exec, delinearize_exec, dot_product_exec
 
-### 1c. Injectivity Preservation (partial) ✅
-- `lemma_compose_preserves_injectivity_1d_a(a, b)` ✅ — rank-1 A injective + B injective => A∘B injective
-- `lemma_coalesce_preserves_injectivity(l)` ✅ — coalesce at position 0 preserves injectivity
-- `lemma_identity_offset_implies_injective(l)` ✅ — general: identity-offset => injective
-- `lemma_identity_offset_implies_bijective(l)` ✅ — general: identity-offset => bijective
-- `lemma_complement_injective(a, m)` ✅ — complement is always injective (via general tractable-injective theorem)
-- `lemma_positive_tractable_injective(layout)` ✅ — any tractable layout with positive strides is injective
-- `lemma_divide_bijective(a, b)` — logical_divide is a bijective rearrangement (deferred: needs complement surjectivity)
+### Naming conventions (important!)
 
-### 1d. Runtime Injectivity Check
-- `RuntimeLayout::is_injective() -> bool` — exec check (O(n²) pairwise or structural)
+After our rename:
+- `compose` = CuTe recursive (correct). Spec in composition.rs line ~228. Uses `compose_single` internally.
+- `compose_linear` = legacy first-mode-only. Spec in composition.rs line ~141. Uses `compose_single_mode` internally.
+- `compose_linear_exec` = exec for `compose_linear` (NOT `compose`!). This is the key gap.
+- `logical_divide` = CuTe recursive (correct). Uses `compose` internally.
+- `logical_divide_linear` = legacy. Uses `compose_linear` internally.
+- `flatten` = canonical idempotent form = `coalesce(flatten_partial(L))`.
+- `flatten_partial` = one pass = `remove_units_iter(coalesce(L), 0)`. NOT idempotent.
 
-## Phase 2: Full Composition Correctness (partial) ✅
+### Key proof patterns discovered
 
-### 2a. Compose Correctness ✅
-- `lemma_compose_correct_1d_a(a, b, x)` ✅ — `compose(a,b).offset(x) == a.offset(b.offset(x))` for rank-1 A, arbitrary B
-- `lemma_compose_shape(a, b)` ✅ — `compose(a,b).shape =~= b.shape`
-- Helpers: `lemma_offset_eq_layout`, `lemma_compose_stride_1d`, `lemma_compose_single_mode_stride_1d` ✅
-- `lemma_compose_correct(a, b, x)` ✅ — general multi-mode A (when B's image fits in A's first mode)
-- Helpers: `lemma_offset_within_first_mode`, `lemma_compose_stride_general`, `lemma_compose_single_mode_stride_value` ✅
+1. **`return` per branch** — isolates postcondition checking. Essential for multi-case inductive proofs.
+2. **Duplicate proof into if-else branches** — z3 can't merge conditional facts across branches for spec function applications.
+3. **Recursive `open spec fn` predicates** don't auto-unfold reliably. Assert branch conditions explicitly (`assert(!(cond1)); assert(cond2);`) to guide z3.
+4. **`lemma_offset_eq_layout`** bridges `=~=` to offset equality. Z3 can't do this even with `==`.
+5. **Minimize helper requires** — use `a.valid(), b_shape > 0` instead of recursive predicates when possible.
+6. **`by (compute_only)`** for concrete values — 98% rlimit reduction.
+7. **`delinearize_concat` + `dot_product_append`** is the universal offset decomposition.
+8. **Modular scaling** (`lemma_mod_scale`, `lemma_div_scale`) enables straddle case proofs.
 
-### 2b. Composition Associativity ✅
-- `lemma_compose_associative(a, b, c)` ✅ — `compose(compose(a,b),c).shape/stride =~= compose(a,compose(b,c)).shape/stride`
+### Key integer helpers available (in proof/integer_helpers.rs)
 
-## Phase 3: Coalesce Correctness
+- `lemma_div_div(x, a, b)` — `(x/a)/b == x/(a*b)`
+- `lemma_mod_mod(x, a, b)` — `(x%(a*b))%a == x%a`
+- `lemma_mod_div_mixed(x, a, b)` — `(x%(a*b))/a == (x/a)%b`
+- `lemma_mod_scale(x, a, b)` — `a*(x%b) == (a*x)%(a*b)`
+- `lemma_div_scale(x, a, b)` — `x/b == (a*x)/(a*b)`
+- `lemma_div_mod_decompose(a, b, d)` — `(a + d*b) % d == a, (a + d*b) / d == b`
+- `lemma_div_upper_bound(x, d, y)` — `x < d*y ==> x/d < y`
+- `lemma_mixed_radix_bound` — `coord + extent*rest < extent*rest_size`
+- Plus: mul_pos, mul_nonneg, mul_le_right, multiple_scaled, sum_multiples, diff_multiples, divisibility_transitive
 
-### 3a. Full Coalesce Chain
-- `coalesce(layout) -> LayoutSpec` — iteratively coalesce all adjacent coalesceable pairs
-- `lemma_coalesce_offset(layout, idx)` — `coalesce(layout).offset(idx) == layout.offset(idx)` for all idx
-- `lemma_coalesce_size(layout)` — `size(coalesce(layout)) == size(layout)`
+### Key shape/offset helpers available
 
-### 3b. Remove Unit Modes
-- `lemma_remove_unit_modes_offset(layout, idx)` — unit mode removal preserves offset
-- `lemma_remove_unit_modes_size(layout)` — size preserved
+- `lemma_delinearize_concat(x, s_a, s_b)` — delinearize distributes over shape concat
+- `lemma_dot_product_append(c_a, c_b, s_a, s_b)` — dot product splits over concat
+- `lemma_offset_within_first_mode(layout, x)` — `x < shape[0] ==> offset(x) == x * stride[0]`
+- `lemma_offset_at_split_mode(layout, i, x)` — `offset(pp[i]*x) == x * stride[i]`
+- `lemma_shape_size_split(s, k)` — `size(s) == size(take(k)) * size(skip(k))`
+- `lemma_take1_eq_first(s)` — `s.take(1) =~= seq![s.first()]`
+- `lemma_zipped_setup(a, b)` — one-call: zipped layout valid + nonneg strides + size == M
+- `lemma_shape0_lt_size(layout)` — `shape[0] < size` for rank >= 2 with no unit modes
+- `lemma_skip1_preserves_canonical(layout)` — skip(1) preserves valid/sorted/tractable/coalesced/unit-free
 
-### 3c. Runtime
-- `coalesce_exec(layout) -> RuntimeLayout` — full coalesce chain (loop until stable)
+---
 
-## Phase 4: Division & Product Correctness
+## Next Steps: Implementation Guide
 
-### 4a. Division Correctness ✅ (substantially complete)
-- Division offset/bijectivity theorems exist for rank-1 A, column-major A
-- `lemma_zipped_bijective` resolves complement surjectivity blocker
-- `lemma_divide_size(a, b)` — `size(logical_divide(a,b)) == size(a)`
-- `lemma_divide_offset(a, b, x)` — `logical_divide(a,b).offset(x) == a.offset(x)` (bijective rearrangement)
+### 1. Runtime `compose_exec` for the correct compose
 
-### 4b. Product Correctness (partial) ✅
-- `lemma_product_valid(a, b)` ✅ — logical_product is valid
-- `lemma_product_offset(a, b, x)` ✅ — `product(a,b).offset(x) == a.offset(x % size_a) + cosize(a) * b.offset(x / size_a)`
-- Helpers: `lemma_delinearize_concat`, `lemma_linearize_concat`, `lemma_dot_product_append`, `lemma_coords_in_bounds_concat` ✅
-- `lemma_product_compatible(a, b)` — first modes compatible with A (deferred)
+**What:** Add an exec function that implements `compose` (= `compose_single` distributed over B's modes) at runtime, producing a `RuntimeLayout` whose `@` equals `compose(a@, b@)`.
 
-## Phase 5: Slice & Dice ✅
+**Why it's needed:** Currently `compose_linear_exec` implements `compose_linear` (first-mode only). Runtime code using it gets wrong strides for non-column-major multi-rank A.
 
-### 5a. Slice/Dice Spec ✅
-- `slice_layout(layout, mode, coord) -> LayoutSpec` ✅ — fix coordinate in one mode, rank-1
-- `slice_offset(layout, mode, coord) -> int` ✅ — constant offset from fixing the coordinate
-- `dice_layout(layout, mode) -> LayoutSpec` ✅ — keep only one mode, rank-1
+**Difficulty:** Medium-Hard. The challenge is the straddle case: `compose_single` can produce MULTI-mode output from a single input mode. So the output rank isn't known at compile time — it depends on how B's strides align with A's modes.
 
-### 5b. Slice/Dice Proofs ✅
-- `lemma_slice_rank`, `lemma_slice_shape_valid`, `lemma_slice_valid` ✅
-- `lemma_slice_mode0`, `lemma_slice_last_mode` ✅
-- `lemma_dice_rank`, `lemma_dice_valid`, `lemma_dice_size` ✅
+**Approach:**
+1. Implement `compose_single_exec(a: &RuntimeLayout, b_shape: u64, b_stride: u64) -> RuntimeLayout` that mirrors the spec:
+   - Case 1 (within first mode): trivial, same as compose_single_mode
+   - Case 2 (straddle): compute `q = m/b_stride`, build `[q] ++ recursive_result` shape/stride
+   - Case 3 (skip): recurse on `a.skip(1)` with `b_stride / m`
+   - Case 4 (fallback): same as case 1
+2. Implement `compose_exec(a, b)` that distributes `compose_single_exec` over B's modes, concatenating shapes/strides
+3. Requires proving: `compose_single_admissible` holds for the runtime inputs (this is checked by the caller's requires)
+4. Overflow: need `shape_size(result.shape) <= u64::MAX` and intermediate stride products fit in i64
 
-### 5c. Runtime ✅
-- `slice_exec(layout, mode, coord) -> (RuntimeLayout, i64)` ✅ — returns residual layout + constant offset
-- `dice_exec(layout, mode) -> RuntimeLayout` ✅
+**Key files to modify:**
+- `runtime/ops.rs` — add `compose_single_exec`, add new `compose_exec` (rename old to `compose_linear_exec`)
+- Need `lemma_crs_shape_valid`, `lemma_crs_len_match`, `lemma_crs_size` for the proof obligations
 
-## Phase 6: Flatten / Unflatten
+**Estimated lines:** ~150 exec + ~50 proof annotations
 
-### 6a. Flatten Spec
-- `flatten(layout: LayoutSpec) -> LayoutSpec` — already flat (our layouts are non-hierarchical)
-  - In CuTe, flatten removes nesting. Our `LayoutSpec` is already flat, so this is a no-op.
-  - BUT: we could add hierarchical `HierLayout` if needed for tiled_divide/zipped_divide
+### 2. End-to-end GEMM verification with correct compose
 
-### 6b. Group Modes
-- `group_modes(layout, begin, end) -> LayoutSpec` — group a range of modes
-  - This is structural: doesn't change offset, just groups modes
-  - Useful for zipped_divide/tiled_divide output
+**What:** Update the GEMM infrastructure to use `compose` (correct) instead of `compose_linear` (broken).
 
-## Phase 7: Inverse Operations
+**Why:** The GEMM pipeline (`gemm.rs`, `runtime/gemm.rs`, `proof/gemm_lemmas.rs`) was built with `compose_linear`. For column-major matrices this works (compose_linear == compose for column-major). But for non-column-major (e.g., row-major, strided) matrices, the tiling is wrong.
 
-### 7a. Right Inverse
-- `right_inverse(layout: LayoutSpec) -> LayoutSpec` — `compose(layout, right_inverse(layout)) == identity`
-  - Requires surjective layout
-  - Algorithm: coalesce, sort by stride, compute inverse strides
+**Difficulty:** Medium. Most changes are mechanical (s/compose_linear/compose/). The hard part is establishing `compose_single_admissible` for GEMM-specific layouts.
 
-### 7b. Left Inverse
-- `left_inverse(layout: LayoutSpec) -> LayoutSpec` — `compose(left_inverse(layout), layout) == identity`
-  - Requires injective layout
+**Approach:**
+1. Audit `gemm.rs` and `proof/gemm_lemmas.rs` for `compose_linear` / `logical_divide_linear` usage
+2. Replace with `compose` / `logical_divide` where applicable
+3. Prove `compose_single_admissible` for the specific tile shapes used in GEMM (typically column-major tiles dividing column-major matrices, where admissibility holds trivially)
+4. Update `runtime/gemm.rs` exec functions to use the new `compose_exec` (once task #1 is done)
+5. Verify the end-to-end correctness theorem `lemma_gemm_e2e_correctness` still holds
 
-### 7c. Proofs
-- `lemma_right_inverse_correct(layout, x)` — `layout.offset(right_inverse(layout).offset(x)) == x`
-- `lemma_left_inverse_correct(layout, x)` — `left_inverse(layout).offset(layout.offset(x)) == x`
+**Key insight:** For column-major layouts (the common GEMM case), `compose` and `compose_linear` produce identical results. So the existing proofs should mostly work unchanged. The value is in EXTENDING correctness to non-column-major cases.
 
-### 7d. Runtime
-- `right_inverse_exec(layout) -> RuntimeLayout`
-- `left_inverse_exec(layout) -> RuntimeLayout`
+**Key files:**
+- `gemm.rs` — spec definitions
+- `proof/gemm_lemmas.rs` — 108 proof functions, most reference compose_linear
+- `runtime/gemm.rs` — exec functions
+- `verus-vulkan/src/gemm_dispatch.rs` — downstream consumer
 
-## Phase 8: Zipped/Tiled Divide & Product ✅ (substantially complete)
+**Estimated effort:** 2-3 sessions for mechanical rename + admissibility proofs
 
-127 proof lemmas covering partition disjointness, SM80/SM90 atoms, pipeline soundness, and 3-level warp/register partitioning.
+### 3. Tensor contraction proofs
 
-### 8a. Zipped Divide ✅
-- `zipped_divide(a, b) -> (LayoutSpec, LayoutSpec)` — tile modes + rest modes separated
-- `lemma_zipped_bijective` — complement surjectivity resolved
+**What:** Add proof lemmas for tensor contraction correctness. The spec (`contraction.rs`) and exec (`runtime/contraction.rs`) exist but have no proof module.
 
-### 8b. Tiled Divide ✅
-- `tiled_divide(a, b) -> (LayoutSpec, LayoutSpec)` — similar but flattened differently
+**Why:** Tensor contraction (Einstein summation) generalizes matrix multiplication. Proving its correctness would close a gap in the GEMM pipeline and enable verified general tensor operations.
 
-### 8c. Blocked/Raked Product ✅
-- `blocked_product(a, b)` — contiguous block distribution
-- `raked_product(a, b)` — cyclic/interleaved distribution
+**Difficulty:** Hard. Contraction involves summing over contracted indices, which requires reasoning about permutations and reductions simultaneously.
 
-## Phase 9: verus-vulkan Integration (in progress)
+**Approach:**
+1. Create `proof/contraction_lemmas.rs`
+2. Start with the simplest case: matrix multiplication as a contraction (contract one index of a 2D x 2D → 2D tensor)
+3. Prove: `contraction_output[i,j] == sum_k A[i,k] * B[k,j]` using the layout algebra
+4. Key proof technique: use `lemma_delinearize_concat` to decompose the multi-index, then show the contraction sum equals the expected dot product
 
-Bridge CuTe abstract layout proofs to Vulkan's concrete dispatch API:
-- `parallel_dispatch.rs` — general parallel ↔ sequential equivalence theorem
-- `gemm_dispatch.rs` — CuTe ↔ Vulkan GEMM bridge (dispatch safety + master correctness)
-- `gemm_sm80.rs` — concrete SM80 m16n8k16 instantiation (BM=128, BN=128, BK=32)
-- Maps WorkGroup ↔ CTA tile, Invocation ↔ thread partition
-- Proves parallel GPU dispatch equals sequential execution via write disjointness
+**Current contraction spec** (from contraction.rs):
+- `ContractionSpec` has `input_layouts`, `output_layout`, `contracted_modes`
+- The contraction pairs modes from different inputs and sums over them
+- `runtime/contraction.rs` has `contraction_output_shape_exec` but no `contraction_exec`
 
-## Phase 10: Tiling DSL
+**Key files:**
+- `contraction.rs` — spec
+- `runtime/contraction.rs` — exec (partial)
+- New: `proof/contraction_lemmas.rs`
 
-High-level API where users describe decompositions declaratively:
+**Estimated effort:** 3-4 sessions
 
-```rust
-let tiled = tile(global_layout)
-    .by(block_shape)       // logical_divide
-    .at(block_coord)       // slice
-    .partition(thread_layout)  // zipped_divide
-    .at(thread_id);        // slice
+### 4. Multi-mode compose correctness
+
+**What:** Prove `compose(A, B).offset(x) == A.offset(B.offset(x))` for multi-mode B, using the recursive compose.
+
+**Why:** We proved `compose_single(A, N, r).offset(x) == A.offset(r*x)` for single-mode B. The multi-mode version distributes over B's modes. The missing piece is showing the sum of per-mode contributions equals `A.offset(B.offset(x))`.
+
+**Difficulty:** Hard. This is the same offset-additivity challenge we faced with `compose_extended_correct`. The key difference: `compose_single` handles mode boundaries correctly, so the additivity should hold more broadly.
+
+**Approach:**
+Two possible strategies:
+
+**Strategy A: Direct additivity proof**
+Prove that for the specific B layouts produced by complement (used in logical_divide), A.offset is additive over the mode decomposition. This uses `lemma_offset_at_split_mode` to show each mode contribution addresses a distinct mode of A.
+
+Preconditions: each B mode's stride is a prefix product of A's shape (or fits within A's first mode). Under these conditions, the contributions don't interfere.
+
+**Strategy B: Use the existing `compose_extended_correct_at` framework**
+The predicate `compose_extended_correct_at` captures offset additivity. We could prove that for `compose_single`-based composition, this predicate is satisfied when `compose_single_admissible` holds. Then the existing `lemma_compose_extended_correct` gives the multi-mode result.
+
+This requires showing: `compose_single(A, N, r).offset(x) == A.offset(r*x)` implies the additivity condition for the recursive compose's output.
+
+**Strategy C: Induction on B's rank (recommended)**
+Follow the same structure as `lemma_compose_extended_correct` but using `compose_single` instead of `compose_single_mode_extended`. The proof is by induction on B's rank:
+- Base: B has 0 modes → both sides 0
+- Step: decompose B into first mode + rest, use `compose_single` correctness for first mode, IH for rest, and additivity for the combination
+
+The additivity precondition can be: "A.offset(r*c + rest_offset) == A.offset(r*c) + A.offset(rest_offset)" when r*c and rest_offset address disjoint modes of A.
+
+**Key insight:** The hardest part isn't the induction — it's proving the additivity condition. For the divide use case (zipped layout with identity offset), additivity follows from the delinearize decomposition of A. For the general case, it needs a careful characterization of when mode contributions are independent.
+
+**Key files:**
+- `proof/composition_lemmas.rs` — add `lemma_compose_correct` for the new compose
+- Reuse: `lemma_compose_single_correct`, `lemma_crs_shape_valid`, `lemma_crs_len_match`, `lemma_crs_size`
+
+**Estimated effort:** 2-3 sessions
+
+### 5. Codegen layer (WGSL/PTX emission)
+
+**What:** Add a proc macro layer that takes Rust functions using CuTe operations and emits GPU shader code (WGSL for WebGPU, PTX for CUDA).
+
+**Why:** This is the bridge from "verified algebra" to "verified GPU kernels." The algebra proves tiling/partitioning is correct; codegen turns those proofs into actual GPU code.
+
+**Difficulty:** Very Hard (but different kind — software engineering, not theorem proving).
+
+**Approach:**
+1. **Phase 1: WGSL string emission** (simplest backend)
+   - Define a `#[kernel]` proc macro attribute
+   - Parse the function body for CuTe operations (layout.offset, compose, divide, etc.)
+   - Emit WGSL compute shader source with the index arithmetic inlined
+   - Shared memory → `var<workgroup>`, barriers → `workgroupBarrier()`
+
+2. **Phase 2: Intrinsic axiomatization**
+   - Add `#[verifier::external_body]` functions for GPU operations: `global_load`, `shared_store`, `mma_sync`, `barrier`
+   - Each has `ensures` clauses matching the spec-level operation
+   - Property-based testing validates the ensures against CPU reference
+
+3. **Phase 3: Per-kernel verification**
+   - Write a verified GEMM kernel using the intrinsics
+   - The proof uses layout algebra lemmas to establish:
+     - Thread-to-element mapping is bijective (no missed/redundant work)
+     - Shared memory indexing is in-bounds
+     - The accumulation loop computes the correct matrix product
+   - Codegen emits the shader; Verus verifies the coordination logic
+
+**Trust boundary:**
+- VERIFIED: Layout algebra, kernel coordination, functional correctness
+- TRUSTED: Proc macro codegen, WGSL compiler, GPU hardware
+- TESTED: Intrinsic specs (property-based testing vs CPU reference)
+
+**Key files:**
+- New crate: `verus-cutedsl-codegen/` (proc macro crate)
+- New in verus-cutedsl: `intrinsics.rs` for external_body GPU operations
+- New in verus-vulkan: kernel implementations using the codegen
+
+**Estimated effort:** 5+ sessions for Phase 1, ongoing for Phases 2-3
+
+---
+
+## Dependency order
+
+```
+#1 (compose_exec) ← independent, start immediately
+#4 (multi-mode compose proof) ← independent, start immediately
+#2 (GEMM update) ← depends on #1 (needs runtime compose_exec)
+#3 (contraction proofs) ← independent but benefits from #4
+#5 (codegen) ← depends on #1 and #2 (needs working runtime)
 ```
 
-Each step produces a verified `RuntimeLayout` with proof that:
-- All offsets are in bounds
-- No aliasing between different thread_ids
-- Full coverage of the input
+**Recommended order:** Start #1 and #4 in parallel, then #2, then #3 and #5.
 
-## Implementation Order
+---
 
-Priority by value × feasibility:
+## Crate statistics
 
-1. **Phase 1** (Injectivity) — highest value, moderate difficulty
-2. **Phase 2** (Compose correctness) — needed by Phase 1c and 4
-3. **Phase 4a** (Division correctness) — proves the tiling is valid
-4. **Phase 5** (Slice/Dice) — enables practical tiling workflows
-5. **Phase 3** (Coalesce correctness) — needed for inverses
-6. **Phase 7** (Inverses) — nice-to-have, complex
-7. **Phase 8** (Zipped/Tiled variants) — mostly structural
-8. **Phase 6** (Flatten) — trivial for flat layouts
-9. **Phase 9** (vulkan integration) — depends on 1-5
-10. **Phase 10** (DSL) — depends on everything
+- **Spec functions:** ~400
+- **Proof functions:** ~800
+- **Exec functions:** ~180
+- **Types:** 11 types, 1 trait
+- **Total rlimit:** ~63M (optimized from ~66M)
+- **Hot functions:** left_inverse_exec (3.1M), coalesce_pair_offset_general (2.9M), right_inverse_build_correct (2.2M)
+- **External body functions:** 4 (bxor, shr, shl, band_mask) — all with verified ensures
