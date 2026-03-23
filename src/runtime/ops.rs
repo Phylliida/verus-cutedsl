@@ -273,6 +273,22 @@ fn compose_single_exec_at(
         return RuntimeLayout::new(sv, stv);
     }
 
+    // Past case 1: bridge exec check to spec check
+    proof {
+        // b_stride > 0 (since exec case 1 was b_stride == 0 || b_shape <= m/b_stride, which is false)
+        assert(b_stride > 0u64);
+        assert(b_shape > m / b_stride);
+        // Therefore b_stride * b_shape > m (in nat)
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
+        let ghost q_tmp = (m / b_stride) as nat;
+        let ghost r_tmp = (m % b_stride) as nat;
+        assert(m as nat == (b_stride as nat) * q_tmp + r_tmp);
+        assert(r_tmp < b_stride as nat);
+        assert(b_shape as nat > q_tmp);
+        assert((b_stride as nat) * (b_shape as nat) > m as nat) by (nonlinear_arith)
+            requires b_shape as nat > q_tmp, b_stride as nat > 0, m as nat == (b_stride as nat) * q_tmp + r_tmp, r_tmp < b_stride as nat;
+    }
+
     // ═══════════════════════════════════════════════════
     // Case 2: straddle first mode boundary
     // ═══════════════════════════════════════════════════
@@ -381,8 +397,10 @@ fn compose_single_exec_at(
                 by {
                     if j == 0 {
                     } else {
-                        assert(sv@[j] == rest.shape@[j - 1]);
-                        assert(rest@.shape[j - 1] == rest.shape@[j - 1] as nat);
+                        // Trigger invariant with (j-1) as quantifier variable
+                        let j2 = j - 1;
+                        assert(sv@[j2 + 1] == rest.shape@[j2]);  // triggers loop invariant
+                        assert(rest@.shape[j2] == rest.shape@[j2] as nat);
                     }
                 };
             };
@@ -396,7 +414,8 @@ fn compose_single_exec_at(
                     if j == 0 {
                         assert(new_stride as int == (b_stride as int) * (d as int));
                     } else {
-                        assert(stv@[j] == rest.stride@[j - 1]);
+                        let j2 = j - 1;
+                        assert(stv@[j2 + 1] == rest.stride@[j2]);  // triggers loop invariant
                     }
                 };
             };
@@ -406,8 +425,9 @@ fn compose_single_exec_at(
                 assert forall|j: int| 0 <= j < sv@.len() implies #[trigger] sv@[j] > 0u64 by {
                     if j == 0 {
                     } else {
-                        assert(sv@[j] == rest.shape@[j - 1]);
-                        assert(rest@.shape[j - 1] > 0nat);
+                        let j2 = j - 1;
+                        assert(sv@[j2 + 1] == rest.shape@[j2]);  // triggers loop invariant
+                        assert(rest@.shape[j2] > 0nat);
                     }
                 };
             };
@@ -501,6 +521,256 @@ pub fn compose_single_exec(a: &RuntimeLayout, b_shape: u64, b_stride: u64) -> (r
     compose_single_exec_at(a, 0, b_shape, b_stride)
 }
 
+/// Correct multi-mode composition at runtime (recursive helper).
+///
+/// Computes compose(a@, layout_skip(b@, b_offset)) by processing B's modes
+/// from b_offset to the end, calling compose_single_exec for each.
+fn compose_exec_at(
+    a: &RuntimeLayout,
+    b: &RuntimeLayout,
+    b_offset: usize,
+) -> (result: RuntimeLayout)
+    requires
+        a.wf_spec(),
+        b.wf_spec(),
+        b@.non_negative_strides(),
+        b_offset <= b.shape.len(),
+        forall|i: int| 0 <= i < b@.shape.len() ==> (
+            a@.shape.len() > 0 ==>
+            crate::proof::composition_lemmas::compose_single_admissible(
+                a@, #[trigger] b@.shape[i], b@.stride[i] as nat
+            )
+        ),
+        forall|i: int| 0 <= i < compose(a@, layout_skip(b@, b_offset as int)).stride.len() ==> {
+            &&& #[trigger] compose(a@, layout_skip(b@, b_offset as int)).stride[i] >= i64::MIN as int
+            &&& compose(a@, layout_skip(b@, b_offset as int)).stride[i] <= i64::MAX as int
+        },
+        shape_size(compose(a@, layout_skip(b@, b_offset as int)).shape) <= u64::MAX as nat,
+    ensures
+        result.wf_spec(),
+        result@ == compose(a@, layout_skip(b@, b_offset as int)),
+    decreases b.shape@.len() - b_offset,
+{
+    let ghost b_suffix = layout_skip(b@, b_offset as int);
+    let ghost spec_result = compose(a@, b_suffix);
+
+    if b_offset >= b.shape.len() {
+        // Empty: compose(a, empty_b) = empty layout
+        let sv: Vec<u64> = Vec::new();
+        let stv: Vec<i64> = Vec::new();
+        proof {
+            assert(b_suffix.shape.len() == 0);
+            assert(shape_to_nat_seq(sv@) =~= Seq::<nat>::empty());
+            assert(strides_to_int_seq(stv@) =~= Seq::<int>::empty());
+            assert(shape_valid_u64(sv@));
+        }
+        return RuntimeLayout::new(sv, stv);
+    }
+
+    let b_stride_i: u64 = b.stride[b_offset] as u64;
+
+    proof {
+        assert(b_suffix.shape.len() > 0);
+        assert(b_suffix.shape.first() == b@.shape[b_offset as int]) by {
+            assert(b@.shape.skip(b_offset as int)[0] == b@.shape[b_offset as int]);
+        };
+        assert(b_suffix.stride.first() == b@.stride[b_offset as int]) by {
+            assert(b@.stride.skip(b_offset as int)[0] == b@.stride[b_offset as int]);
+        };
+        assert(b@.stride[b_offset as int] >= 0);
+    }
+
+    let ghost cs = compose_single(a@, b@.shape[b_offset as int], b@.stride[b_offset as int] as nat);
+
+    // Unfold compose for b_suffix and prove strides fit
+    proof {
+        let b_suffix_rest = layout_skip(b@, (b_offset + 1) as int);
+        assert(b_suffix.shape.skip(1) =~= b_suffix_rest.shape) by {
+            assert(b@.shape.skip(b_offset as int).skip(1) =~= b@.shape.skip((b_offset + 1) as int));
+        };
+        assert(b_suffix.stride.skip(1) =~= b_suffix_rest.stride) by {
+            assert(b@.stride.skip(b_offset as int).skip(1) =~= b@.stride.skip((b_offset + 1) as int));
+        };
+
+        if b_suffix.shape.len() == 1 {
+            assert(spec_result == cs);
+        } else {
+            assert(spec_result.shape =~= cs.shape.add(compose(a@, b_suffix_rest).shape));
+            assert(spec_result.stride =~= cs.stride.add(compose(a@, b_suffix_rest).stride));
+        }
+
+        // compose_single strides fit i64
+        assert forall|k: int| 0 <= k < cs.stride.len()
+        implies {
+            &&& #[trigger] cs.stride[k] >= i64::MIN as int
+            &&& cs.stride[k] <= i64::MAX as int
+        } by {
+            assert(spec_result.stride[k] == cs.stride[k]);
+        };
+    }
+
+    let first: RuntimeLayout = compose_single_exec(a, b.shape[b_offset], b_stride_i);
+
+    // Base case: only one mode left
+    if b_offset + 1 >= b.shape.len() {
+        proof {
+            assert(b_suffix.shape.len() == 1);
+            assert(spec_result == cs);
+        }
+        return first;
+    }
+
+    // Recursive case: get rest and concatenate
+    proof {
+        let b_suffix_rest = layout_skip(b@, (b_offset + 1) as int);
+        let rest_compose = compose(a@, b_suffix_rest);
+
+        assert(spec_result.shape =~= cs.shape.add(rest_compose.shape));
+        assert(spec_result.stride =~= cs.stride.add(rest_compose.stride));
+
+        // rest strides fit i64
+        assert forall|k: int| 0 <= k < rest_compose.stride.len()
+        implies {
+            &&& #[trigger] rest_compose.stride[k] >= i64::MIN as int
+            &&& rest_compose.stride[k] <= i64::MAX as int
+        } by {
+            assert(spec_result.stride[cs.stride.len() as int + k] == rest_compose.stride[k]);
+        };
+
+        // rest shape_size fits u64
+        crate::proof::product_lemmas::lemma_shape_size_append(cs.shape, rest_compose.shape);
+        assert(shape_size(spec_result.shape) == shape_size(cs.shape) * shape_size(rest_compose.shape));
+        // shape_size(cs.shape) >= 1: cs = compose_single(a@, b_shape_i, b_stride_i)
+        // If a has modes: admissible, so lemma_crs_size gives shape_size == b_shape_i > 0
+        // If a has no modes: cs.shape = seq![b_shape_i], shape_size = b_shape_i > 0
+        assert(shape_size(cs.shape) >= 1nat) by {
+            if a@.shape.len() > 0 {
+                crate::proof::composition_lemmas::lemma_crs_size(
+                    a@, b@.shape[b_offset as int], b@.stride[b_offset as int] as nat);
+                assert(shape_size(cs.shape) == b@.shape[b_offset as int]);
+                assert(b@.shape[b_offset as int] > 0nat);
+            } else {
+                assert(cs.shape =~= seq![b@.shape[b_offset as int]]);
+                crate::proof::shape_lemmas::lemma_shape_size_single(b@.shape[b_offset as int]);
+            }
+        };
+        assert(shape_size(rest_compose.shape) <= shape_size(spec_result.shape)) by (nonlinear_arith)
+            requires
+                shape_size(spec_result.shape) == shape_size(cs.shape) * shape_size(rest_compose.shape),
+                shape_size(cs.shape) >= 1nat;
+    }
+
+    let rest: RuntimeLayout = compose_exec_at(a, b, b_offset + 1);
+
+    // Concatenate first ++ rest
+    let mut sv: Vec<u64> = Vec::new();
+    let mut stv: Vec<i64> = Vec::new();
+
+    let mut k: usize = 0;
+    while k < first.shape.len()
+        invariant
+            0 <= k <= first.shape.len(),
+            first.wf_spec(),
+            sv@.len() == k,
+            stv@.len() == k,
+            forall|j: int| 0 <= j < k as int ==> {
+                &&& #[trigger] sv@[j] == first.shape@[j]
+                &&& stv@[j] == first.stride@[j]
+            },
+            shape_valid_u64(sv@),
+        decreases first.shape.len() - k,
+    {
+        proof {
+            assert(first@.shape[k as int] > 0nat);
+            assert(first.shape@[k as int] as nat == first@.shape[k as int]);
+        }
+        sv.push(first.shape[k]);
+        stv.push(first.stride[k]);
+        k = k + 1;
+    }
+
+    let ghost first_len = sv@.len();
+    let mut k2: usize = 0;
+    while k2 < rest.shape.len()
+        invariant
+            0 <= k2 <= rest.shape.len(),
+            rest.wf_spec(),
+            first.wf_spec(),
+            sv@.len() == first_len + k2,
+            stv@.len() == first_len + k2,
+            first_len == first.shape@.len(),
+            forall|j: int| 0 <= j < first_len as int ==> {
+                &&& #[trigger] sv@[j] == first.shape@[j]
+                &&& stv@[j] == first.stride@[j]
+            },
+            forall|j: int| 0 <= j < k2 as int ==> {
+                &&& #[trigger] sv@[first_len + j] == rest.shape@[j]
+                &&& stv@[first_len + j] == rest.stride@[j]
+            },
+            shape_valid_u64(sv@),
+        decreases rest.shape.len() - k2,
+    {
+        proof {
+            assert(rest@.shape[k2 as int] > 0nat);
+            assert(rest.shape@[k2 as int] as nat == rest@.shape[k2 as int]);
+        }
+        sv.push(rest.shape[k2]);
+        stv.push(rest.stride[k2]);
+        k2 = k2 + 1;
+    }
+
+    proof {
+        let b_suffix_rest = layout_skip(b@, (b_offset + 1) as int);
+        assert(first@ == cs);
+        assert(rest@ == compose(a@, b_suffix_rest));
+        assert(spec_result.shape =~= cs.shape.add(compose(a@, b_suffix_rest).shape));
+        assert(spec_result.stride =~= cs.stride.add(compose(a@, b_suffix_rest).stride));
+
+        // shape_to_nat_seq(sv@) =~= spec_result.shape
+        assert(shape_to_nat_seq(sv@) =~= spec_result.shape) by {
+            assert forall|j: int| 0 <= j < sv@.len() as int
+            implies shape_to_nat_seq(sv@)[j] == spec_result.shape[j]
+            by {
+                if j < first_len as int {
+                    // From first copy loop invariant
+                    assert(sv@[j] == first.shape@[j]);
+                    assert(first@.shape[j] == first.shape@[j] as nat);
+                    assert(spec_result.shape[j] == cs.shape[j]);
+                } else {
+                    // From rest copy loop invariant (trigger: sv@[first_len + j2])
+                    let j2 = j - first_len as int;
+                    assert(j == first_len + j2);
+                    assert(sv@[first_len + j2] == rest.shape@[j2]);  // triggers invariant
+                    assert(rest@.shape[j2] == rest.shape@[j2] as nat);
+                    assert(spec_result.shape[j] == compose(a@, b_suffix_rest).shape[j2]);
+                }
+            };
+        };
+
+        // strides_to_int_seq(stv@) =~= spec_result.stride
+        assert(strides_to_int_seq(stv@) =~= spec_result.stride) by {
+            assert forall|j: int| 0 <= j < stv@.len() as int
+            implies strides_to_int_seq(stv@)[j] == spec_result.stride[j]
+            by {
+                if j < first_len as int {
+                    // Trigger invariant via sv@[j], then get stv@[j]
+                    assert(sv@[j] == first.shape@[j]);  // triggers forall
+                    assert(stv@[j] == first.stride@[j]); // now available
+                    assert(first@.stride[j] == first.stride@[j] as int);
+                } else {
+                    let j2 = j - first_len as int;
+                    assert(j == first_len + j2);
+                    assert(sv@[first_len + j2] == rest.shape@[j2]);  // triggers forall
+                    assert(stv@[first_len + j2] == rest.stride@[j2]); // now available
+                    assert(rest@.stride[j2] == rest.stride@[j2] as int);
+                }
+            };
+        };
+    }
+
+    RuntimeLayout::new(sv, stv)
+}
+
 /// Correct multi-mode composition at runtime.
 ///
 /// Distributes compose_single_exec over B's modes, producing a RuntimeLayout
@@ -527,223 +797,11 @@ pub fn compose_exec(a: &RuntimeLayout, b: &RuntimeLayout) -> (result: RuntimeLay
         result.wf_spec(),
         result@ == compose(a@, b@),
 {
-    let ghost spec_result = compose(a@, b@);
-    let mut result_shape: Vec<u64> = Vec::new();
-    let mut result_stride: Vec<i64> = Vec::new();
-    let mut i: usize = 0;
-
     proof {
-        assert(b@.shape.skip(0int) =~= b@.shape);
-        assert(b@.stride.skip(0int) =~= b@.stride);
+        assert(layout_skip(b@, 0int).shape =~= b@.shape);
+        assert(layout_skip(b@, 0int).stride =~= b@.stride);
     }
-
-    while i < b.shape.len()
-        invariant
-            0 <= i <= b.shape.len(),
-            a.wf_spec(),
-            b.wf_spec(),
-            b@.non_negative_strides(),
-            result_shape@.len() == result_stride@.len(),
-            shape_valid_u64(result_shape@),
-            // Suffix-based decomposition
-            spec_result.shape =~= shape_to_nat_seq(result_shape@).add(
-                compose(a@, layout_skip(b@, i as int)).shape
-            ),
-            spec_result.stride =~= strides_to_int_seq(result_stride@).add(
-                compose(a@, layout_skip(b@, i as int)).stride
-            ),
-            // Forward requires
-            forall|j: int| 0 <= j < b@.shape.len() ==> (
-                a@.shape.len() > 0 ==>
-                crate::proof::composition_lemmas::compose_single_admissible(
-                    a@, #[trigger] b@.shape[j], b@.stride[j] as nat
-                )
-            ),
-            forall|j: int| 0 <= j < spec_result.stride.len() ==> {
-                &&& #[trigger] spec_result.stride[j] >= i64::MIN as int
-                &&& spec_result.stride[j] <= i64::MAX as int
-            },
-            shape_size(spec_result.shape) <= u64::MAX as nat,
-        decreases b.shape.len() - i,
-    {
-        let b_stride_i: u64 = b.stride[i] as u64;
-
-        proof {
-            let b_suffix = layout_skip(b@, i as int);
-            assert(b_suffix.shape.len() > 0);
-            assert(b_suffix.shape.first() == b@.shape[i as int]) by {
-                assert(b@.shape.skip(i as int)[0] == b@.shape[i as int]);
-            };
-            assert(b_suffix.stride.first() == b@.stride[i as int]) by {
-                assert(b@.stride.skip(i as int)[0] == b@.stride[i as int]);
-            };
-            assert(b@.stride[i as int] >= 0);
-
-            let cs = compose_single(a@, b@.shape[i as int], b@.stride[i as int] as nat);
-            let b_suffix_rest = layout_skip(b@, (i + 1) as int);
-
-            // Prove: compose(a, b_suffix) unfolds to cs ++ compose(a, b_suffix_rest)
-            assert(b_suffix.shape.skip(1) =~= b_suffix_rest.shape) by {
-                assert(b@.shape.skip(i as int).skip(1) =~= b@.shape.skip((i + 1) as int));
-            };
-            assert(b_suffix.stride.skip(1) =~= b_suffix_rest.stride) by {
-                assert(b@.stride.skip(i as int).skip(1) =~= b@.stride.skip((i + 1) as int));
-            };
-
-            if b_suffix.shape.len() == 1 {
-                assert(compose(a@, b_suffix) == cs);
-                assert(compose(a@, b_suffix_rest).shape.len() == 0);
-                assert(compose(a@, b_suffix).shape =~= cs.shape.add(compose(a@, b_suffix_rest).shape));
-                assert(compose(a@, b_suffix).stride =~= cs.stride.add(compose(a@, b_suffix_rest).stride));
-            } else {
-                assert(compose(a@, b_suffix).shape =~= cs.shape.add(compose(a@, b_suffix_rest).shape));
-                assert(compose(a@, b_suffix).stride =~= cs.stride.add(compose(a@, b_suffix_rest).stride));
-            }
-
-            // compose_single strides fit i64 (they're at known offsets in spec_result)
-            let pushed_len = result_stride@.len() as int;
-            assert forall|k: int| 0 <= k < cs.stride.len()
-            implies {
-                &&& #[trigger] cs.stride[k] >= i64::MIN as int
-                &&& cs.stride[k] <= i64::MAX as int
-            } by {
-                assert(spec_result.stride[pushed_len + k] == cs.stride[k]);
-            };
-        }
-
-        let single: RuntimeLayout = compose_single_exec(a, b.shape[i], b_stride_i);
-
-        // Append single's modes to result
-        let ghost old_len = result_shape@.len();
-        let mut k: usize = 0;
-        while k < single.shape.len()
-            invariant
-                0 <= k <= single.shape.len(),
-                single.wf_spec(),
-                result_shape@.len() == old_len + k,
-                result_stride@.len() == old_len + k,
-                shape_valid_u64(result_shape@),
-                forall|j: int| 0 <= j < old_len as int ==>
-                    #[trigger] result_shape@[j] as nat == shape_to_nat_seq(result_shape@)[j],
-                forall|j: int| 0 <= j < k as int ==> {
-                    &&& #[trigger] result_shape@[old_len + j] == single.shape@[j]
-                    &&& result_stride@[old_len + j] == single.stride@[j]
-                },
-            decreases single.shape.len() - k,
-        {
-            proof {
-                // single.shape[k] > 0
-                assert(single@.shape[k as int] > 0nat);
-                assert(single.shape@[k as int] as nat == single@.shape[k as int]);
-            }
-            result_shape.push(single.shape[k]);
-            result_stride.push(single.stride[k]);
-            k = k + 1;
-        }
-
-        proof {
-            let cs = compose_single(a@, b@.shape[i as int], b@.stride[i as int] as nat);
-            let b_suffix_rest = layout_skip(b@, (i + 1) as int);
-
-            // Show shape_to_nat_seq(result_shape@) =~= old_pushed ++ cs.shape
-            assert(shape_to_nat_seq(result_shape@) =~=
-                shape_to_nat_seq(result_shape@).take(old_len as int).add(
-                    shape_to_nat_seq(result_shape@).skip(old_len as int)
-                )
-            );
-
-            // The appended part maps to cs.shape
-            assert(single@ == cs);
-            assert forall|j: int| 0 <= j < single.shape@.len() as int
-            implies shape_to_nat_seq(result_shape@)[old_len as int + j] == cs.shape[j]
-            by {
-                assert(result_shape@[old_len + j] == single.shape@[j]);
-                assert(single.shape@[j] as nat == single@.shape[j]);
-            };
-
-            assert forall|j: int| 0 <= j < single.stride@.len() as int
-            implies strides_to_int_seq(result_stride@)[old_len as int + j] == cs.stride[j]
-            by {
-                assert(result_stride@[old_len + j] == single.stride@[j]);
-                assert(single.stride@[j] as int == single@.stride[j]);
-            };
-
-            // Update suffix invariant
-            let old_pushed_shape = shape_to_nat_seq(result_shape@).take(old_len as int);
-            let old_pushed_stride = strides_to_int_seq(result_stride@).take(old_len as int);
-
-            // spec_result.shape =~= old_pushed ++ compose(a@, b_suffix).shape
-            //   = old_pushed ++ cs.shape ++ compose(a@, b_suffix_rest).shape
-            //   = shape_to_nat_seq(result_shape@) ++ compose(a@, b_suffix_rest).shape
-
-            assert(spec_result.shape =~= shape_to_nat_seq(result_shape@).add(
-                compose(a@, b_suffix_rest).shape
-            )) by {
-                let b_suffix = layout_skip(b@, i as int);
-                // From outer invariant before this iteration
-                // spec_result.shape =~= old_pushed ++ compose(a@, b_suffix).shape
-                // compose(a@, b_suffix).shape =~= cs.shape ++ compose(a@, b_suffix_rest).shape
-                // So spec_result.shape =~= old_pushed ++ cs.shape ++ compose(a@, b_suffix_rest).shape
-                // And result_shape@ = old_result_shape@ ++ single.shape@
-                // shape_to_nat_seq(result_shape@) =~= old_pushed ++ cs.shape
-                // So spec_result.shape =~= shape_to_nat_seq(result_shape@) ++ compose(a@, b_suffix_rest).shape
-                assert forall|j: int| 0 <= j < spec_result.shape.len()
-                implies spec_result.shape[j] == shape_to_nat_seq(result_shape@).add(
-                    compose(a@, b_suffix_rest).shape
-                )[j]
-                by {
-                    let new_pushed = shape_to_nat_seq(result_shape@);
-                    let remaining = compose(a@, b_suffix_rest).shape;
-                    if j < old_len as int {
-                        // j < old_len: both equal old_pushed[j]
-                        assert(new_pushed[j] == shape_to_nat_seq(result_shape@)[j]);
-                    } else if j < new_pushed.len() as int {
-                        // old_len <= j < new_pushed.len(): from cs.shape
-                        let k2 = j - old_len as int;
-                        assert(new_pushed[j] == cs.shape[k2]);
-                    } else {
-                        // j >= new_pushed.len(): from remaining
-                        let k2 = j - new_pushed.len() as int;
-                        assert(remaining[k2] == compose(a@, b_suffix_rest).shape[k2]);
-                    }
-                };
-            };
-
-            assert(spec_result.stride =~= strides_to_int_seq(result_stride@).add(
-                compose(a@, b_suffix_rest).stride
-            )) by {
-                assert forall|j: int| 0 <= j < spec_result.stride.len()
-                implies spec_result.stride[j] == strides_to_int_seq(result_stride@).add(
-                    compose(a@, b_suffix_rest).stride
-                )[j]
-                by {
-                    let new_pushed = strides_to_int_seq(result_stride@);
-                    let remaining = compose(a@, b_suffix_rest).stride;
-                    if j < old_len as int {
-                    } else if j < new_pushed.len() as int {
-                        let k2 = j - old_len as int;
-                        assert(new_pushed[j] == cs.stride[k2]);
-                    } else {
-                        let k2 = j - new_pushed.len() as int;
-                    }
-                };
-            };
-        }
-
-        i = i + 1;
-    }
-
-    proof {
-        // After loop: b_suffix is empty, compose(a, empty) is empty
-        let empty_suffix = layout_skip(b@, b@.shape.len() as int);
-        assert(empty_suffix.shape.len() == 0);
-        assert(compose(a@, empty_suffix).shape.len() == 0);
-        assert(compose(a@, empty_suffix).stride.len() == 0);
-        assert(shape_to_nat_seq(result_shape@) =~= spec_result.shape);
-        assert(strides_to_int_seq(result_stride@) =~= spec_result.stride);
-    }
-
-    RuntimeLayout::new(result_shape, result_stride)
+    compose_exec_at(a, b, 0)
 }
 
 /// Complement of layout A with respect to target size M at runtime.
