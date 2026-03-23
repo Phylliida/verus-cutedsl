@@ -716,24 +716,23 @@ pub fn gemm_naive_exec(
                 let a_val = a[i * k_size + kk];
                 let b_val = b[kk * n + j];
                 proof {
-                    // Product fits in i128 (i64 * i64 < 2^126 < i128::MAX)
-                    assert((a_val as i128) * (b_val as i128) >= i128::MIN as i128) by (nonlinear_arith)
-                        requires i64::MIN as int <= a_val as int, a_val as int <= i64::MAX as int,
-                                 i64::MIN as int <= b_val as int, b_val as int <= i64::MAX as int;
-                    assert((a_val as i128) * (b_val as i128) <= i128::MAX as i128) by (nonlinear_arith)
-                        requires i64::MIN as int <= a_val as int, a_val as int <= i64::MAX as int,
-                                 i64::MIN as int <= b_val as int, b_val as int <= i64::MAX as int;
-                    // Product fits in i64 (trigger the forall with concrete indices)
-                    assert(a_val == a@[(i * k_size + kk) as int]);
-                    assert(b_val == b@[(kk * n + j) as int]);
+                    // Trigger the product bound forall
+                    let ghost a_idx = (i * k_size + kk) as int;
+                    let ghost b_idx = (kk * n + j) as int;
+                    let ghost av = a@[a_idx];
+                    let ghost bv = b@[b_idx];
+                    // This triggers the product-bound forall (multi-trigger on a@[...], b@[...])
+                    assert((av as int) * (bv as int) >= i64::MIN as int);
+                    assert((av as int) * (bv as int) <= i64::MAX as int);
+
+                    // New partial sum fits in i64
+                    let ghost new_ps = gemm_partial_sum(a@, b@, k_size as nat, n as nat, i as nat, j as nat, (kk + 1) as nat);
+                    assert(new_ps == (acc as int) + (av as int) * (bv as int));
+                    assert(new_ps >= i64::MIN as int);
+                    assert(new_ps <= i64::MAX as int);
                 }
+                // Compute product via i128 (i64*i64 always fits in i128)
                 let prod: i64 = (((a_val as i128) * (b_val as i128)) as i64);
-                proof {
-                    assert(prod as int == (a_val as int) * (b_val as int));
-                    // New partial sum
-                    assert(gemm_partial_sum(a@, b@, k_size as nat, n as nat, i as nat, j as nat, (kk + 1) as nat)
-                        == (acc as int) + (a_val as int) * (b_val as int));
-                }
                 acc = acc + prod;
                 kk = kk + 1;
             }
