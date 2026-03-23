@@ -238,8 +238,28 @@ fn compose_single_exec_at(
     // ═══════════════════════════════════════════════════
     // Case 1: within first mode → (b_shape):(b_stride * d)
     // ═══════════════════════════════════════════════════
-    if (b_stride as u128) * (b_shape as u128) <= m as u128 {
-        let new_stride: i64 = ((b_stride as i128) * (d as i128)) as i64;
+    // Check b_stride * b_shape <= m without overflow:
+    // equivalent to b_stride == 0 || b_shape <= m / b_stride (for non-negative integers)
+    if b_stride == 0 || b_shape <= m / b_stride {
+        proof {
+            // Bridge: this exec condition matches spec condition b_stride * b_shape <= m
+            if b_stride > 0 {
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
+                assert((b_shape as nat) * (b_stride as nat) <= m as nat) by (nonlinear_arith)
+                    requires b_shape <= m / b_stride, b_stride > 0,
+                        m as nat == (b_stride as nat) * ((m / b_stride) as nat) + (m % b_stride) as nat;
+            }
+            // Output stride fits i64 (from precondition)
+            assert(spec_result.stride.len() == 1);
+            assert(spec_result.stride[0] == (b_stride as int) * (d as int));
+            assert((b_stride as int) * (d as int) >= i64::MIN as int);
+            assert((b_stride as int) * (d as int) <= i64::MAX as int);
+        }
+        let new_stride: i64 = if b_stride == 0 {
+            0i64
+        } else {
+            ((b_stride as i128) * (d as i128)) as i64
+        };
         let mut sv: Vec<u64> = Vec::new();
         sv.push(b_shape);
         let mut stv: Vec<i64> = Vec::new();
@@ -258,6 +278,14 @@ fn compose_single_exec_at(
     // ═══════════════════════════════════════════════════
     if b_stride > 0 && b_stride < m && m % b_stride == 0 {
         let q: u64 = m / b_stride;
+
+        proof {
+            // Stride overflow: first output stride is b_stride * d, which is spec_result.stride[0]
+            assert(spec_result.stride[0] == (b_stride as int) * (d as int));
+            assert((b_stride as int) * (d as int) >= i64::MIN as int);
+            assert((b_stride as int) * (d as int) <= i64::MAX as int);
+        }
+
         let new_stride: i64 = ((b_stride as i128) * (d as i128)) as i64;
 
         proof {
@@ -423,6 +451,13 @@ fn compose_single_exec_at(
     // ═══════════════════════════════════════════════════
     // Case 4: fallback (unreachable under admissibility)
     // ═══════════════════════════════════════════════════
+    proof {
+        // Output stride fits i64
+        assert(spec_result.stride.len() == 1);
+        assert(spec_result.stride[0] == (b_stride as int) * (d as int));
+        assert((b_stride as int) * (d as int) >= i64::MIN as int);
+        assert((b_stride as int) * (d as int) <= i64::MAX as int);
+    }
     let new_stride: i64 = ((b_stride as i128) * (d as i128)) as i64;
     let mut sv: Vec<u64> = Vec::new();
     sv.push(b_shape);
