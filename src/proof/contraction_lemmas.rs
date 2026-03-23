@@ -244,8 +244,12 @@ pub proof fn lemma_gathered_product_single(shape: &Seq<nat>, mode: nat)
     requires mode < shape.len(),
     ensures gathered_product(shape, &seq![mode]) == shape[mode as int],
 {
-    assert(seq![mode].drop_last() =~= Seq::<nat>::empty());
-    vstd::arithmetic::mul::lemma_mul_basics(shape[mode as int] as int);
+    let modes = seq![mode];
+    assert(modes.last() == mode);
+    assert(modes.drop_last() =~= Seq::<nat>::empty());
+    assert(gathered_product(shape, &modes.drop_last()) == 1nat);
+    assert(shape[mode as int] * 1nat == shape[mode as int]) by (nonlinear_arith)
+        requires shape[mode as int] >= 0;
 }
 
 } // verus!
