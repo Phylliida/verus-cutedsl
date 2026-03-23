@@ -2411,13 +2411,19 @@ pub proof fn lemma_row_major_gemm_divide_identity(
     let a_cm = make_column_major(seq![k, m]);
     let tile = make_column_major(seq![tile_k, tile_m]);
 
-    lemma_cm_2d_divide_admissible(k, m, tile_k, tile_m);
-    lemma_cm_2d_strides(k, m);
-    lemma_cm_2d_strides(tile_k, tile_m);
-
-    // Bridge: make_column_major produces stride == column_major_strides(shape) by definition
-    assert(a_cm.stride =~= column_major_strides(a_cm.shape));
-    assert(tile.stride =~= column_major_strides(tile.shape));
+    // General-rank divide admissibility
+    let ghost a_shape = seq![k, m];
+    let ghost t_shape = seq![tile_k, tile_m];
+    assert(shape_valid(a_shape)) by {
+        assert forall|i: int| 0 <= i < a_shape.len() implies #[trigger] a_shape[i] > 0 by {};
+    };
+    assert(shape_valid(t_shape)) by {
+        assert forall|i: int| 0 <= i < t_shape.len() implies #[trigger] t_shape[i] > 0 by {};
+    };
+    assert forall|i: int| 0 <= i < a_shape.len() implies
+        #[trigger] t_shape[i] <= a_shape[i] && a_shape[i] % t_shape[i] == 0
+    by {};
+    lemma_cm_divide_admissible(a_shape, t_shape);
 
     // shape_size(a_cm.shape) == k * m
     lemma_cm_2d_strides(k, m);
@@ -3296,8 +3302,19 @@ pub proof fn lemma_gemm_e2e_row_major<R: Ring>(
     crate::proof::contraction_lemmas::lemma_gemm_contraction_matches_spec::<R>(
         a_val, b_val, m, k, n);
 
-    // Divide admissibility
-    lemma_cm_2d_divide_admissible(k, m, tile_k, tile_m);
+    // Divide admissibility (general rank)
+    let ghost a_shape = seq![k, m];
+    let ghost t_shape = seq![tile_k, tile_m];
+    assert(shape_valid(a_shape)) by {
+        assert forall|i: int| 0 <= i < a_shape.len() implies #[trigger] a_shape[i] > 0 by {};
+    };
+    assert(shape_valid(t_shape)) by {
+        assert forall|i: int| 0 <= i < t_shape.len() implies #[trigger] t_shape[i] > 0 by {};
+    };
+    assert forall|i: int| 0 <= i < a_shape.len() implies
+        #[trigger] t_shape[i] <= a_shape[i] && a_shape[i] % t_shape[i] == 0
+    by {};
+    lemma_cm_divide_admissible(a_shape, t_shape);
 
     // Divide identity offset (proven for any x < k*m)
     // Callers use lemma_row_major_gemm_divide_identity(m, k, tile_k, tile_m, x) per-element.
