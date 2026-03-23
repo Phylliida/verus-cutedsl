@@ -768,10 +768,18 @@ pub fn gemm_naive_exec(
                 let prod_wide: i128 = (a_val as i128) * (b_val as i128);
                 proof {
                     assert(prod_wide as int == (a_val as int) * (b_val as int));
+                    // prod_wide fits in i64: |prod| <= bound^2 <= i64::MAX
+                    // -(bound^2) >= -(i64::MAX) >= i64::MIN
+                    assert(prod_wide as int >= -(bound as int) * (bound as int));
+                    assert(prod_wide as int <= (bound as int) * (bound as int));
+                    assert((bound as int) * (bound as int) <= i64::MAX as int);
+                    assert(-(bound as int) * (bound as int) >= i64::MIN as int) by (nonlinear_arith)
+                        requires (bound as int) * (bound as int) <= i64::MAX as int;
+                    assert(prod_wide >= i64::MIN as i128);
+                    assert(prod_wide <= i64::MAX as i128);
                 }
                 let prod: i64 = prod_wide as i64;
                 proof {
-                    assert(prod as int == prod_wide as int);
                     assert(prod as int == (a_val as int) * (b_val as int));
                     assert(gemm_partial_sum(a@, b@, k_size as nat, n as nat, i as nat, j as nat, (kk + 1) as nat)
                         == (acc as int) + prod as int);
