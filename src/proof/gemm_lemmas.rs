@@ -1841,9 +1841,46 @@ pub proof fn lemma_sm80_smem_bank_conflict_free(
 // Row-major GEMM support
 // ══════════════════════════════════════════════════════════════
 
+/// Column-major layout has non-negative strides.
+proof fn lemma_cm_nonneg(shape: Seq<nat>)
+    requires shape_valid(shape), shape.len() > 0,
+    ensures make_column_major(shape).non_negative_strides(),
+    decreases shape.len(),
+{
+    crate::proof::injectivity_lemmas::lemma_column_major_strides_len(shape);
+    crate::proof::inverse_lemmas::lemma_column_major_strides_first(shape);
+    let l = make_column_major(shape);
+    if shape.len() == 1 {
+        assert(l.non_negative_strides()) by {
+            assert forall|i: int| 0 <= i < l.stride.len() implies #[trigger] l.stride[i] >= 0 by {};
+        };
+    } else {
+        let s0 = shape.first();
+        let rest = shape.skip(1);
+        assert(shape_valid(rest)) by {
+            assert forall|i: int| 0 <= i < rest.len() implies #[trigger] rest[i] > 0
+            by { assert(rest[i] == shape[i + 1]); };
+        };
+        lemma_cm_nonneg(rest);
+        let cm_rest = column_major_strides(rest);
+        assert(l.stride =~= seq![1int].add(scale_strides_spec(cm_rest, s0 as int)));
+        let l_rest = make_column_major(rest);
+        assert(l.non_negative_strides()) by {
+            assert forall|i: int| 0 <= i < l.stride.len() implies #[trigger] l.stride[i] >= 0 by {
+                if i == 0 {} else {
+                    assert(l.stride[i] == (s0 as int) * cm_rest[i - 1]);
+                    assert(l_rest.stride[i - 1] >= 0);
+                    assert((s0 as int) * cm_rest[i - 1] >= 0) by (nonlinear_arith)
+                        requires (s0 as int) > 0, cm_rest[i - 1] >= 0;
+                }
+            };
+        };
+    }
+}
+
 /// Column-major layout is valid + sorted + tractable + non-negative + stride[0] > 0.
 /// General rank (not just 2D).
-#[verifier::rlimit(20)]
+#[verifier::rlimit(80)]
 pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
     requires
         shape_valid(shape),
@@ -1917,19 +1954,8 @@ pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
                 == scale_strides_spec(cm_rest, s0 as int)[k]);
         };
 
-        // non_negative: stride[0] = 1 >= 0. stride[i+1] = s0 * cm_rest[i] >= 0 (s0 > 0, cm_rest >= 0).
-        assert(l.non_negative_strides()) by {
-            assert forall|i: int| 0 <= i < l.stride.len() implies #[trigger] l.stride[i] >= 0 by {
-                if i == 0 {
-                } else {
-                    assert(l.stride[i] == (s0 as int) * cm_rest[i - 1]);
-                    assert(l_rest.stride[i - 1] >= 0);
-                    assert(cm_rest[i - 1] >= 0);
-                    assert((s0 as int) * cm_rest[i - 1] >= 0) by (nonlinear_arith)
-                        requires (s0 as int) > 0, cm_rest[i - 1] >= 0;
-                }
-            };
-        };
+        // non_negative from helper
+        lemma_cm_nonneg(shape);
 
         // sorted: stride[i] <= stride[i+1] for all i
         assert forall|i: int| 0 <= i < l.stride.len() as int - 1
@@ -1948,8 +1974,6 @@ pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
                     requires (s0 as int) > 0, cm_rest[i - 1] <= cm_rest[i];
             }
         };
-        assert(l.is_sorted());
-
         // tractable: stride[0]*shape[0] = 1*s0 = s0. stride[1] = s0*cm_rest[0].
         // s0 % s0 == 0 trivially? No: stride[1] % (stride[0]*shape[0]) = (s0*cm_rest[0]) % s0.
         // cm_rest[0] = 1 if rest non-empty, so stride[1] = s0. s0 % s0 == 0. ✓
@@ -1967,33 +1991,71 @@ pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
         // = s0 * cm_rest[i] is a multiple of s0*cm_rest[i-1]*shape[i] iff
         //   cm_rest[i] is a multiple of cm_rest[i-1]*shape[i], which we know from tractable.
 
-        if rest_shape.len() > 0 {
-            lemma_cm_sorted_tractable(rest_shape);
-        }
+        // tractable
+        assert forall|i: int| 0 <= i < l.stride.len() as int - 1
+        implies #[trigger] l.tractable_at(i) by {
+            if i == 0 {
+                // stride[0]*shape[0] = 1*s0 = s0. stride[1] = s0*cm_rest[0] = s0*1 = s0.
+                // s0 > 0 and stride[1] % s0 == 0.
+                assert((l.shape[0] as int) * l.stride[0] == s0 as int);
+                assert(l.stride[1] == (s0 as int) * cm_rest[0]);
+                assert(cm_rest[0] == 1int);
+                vstd::arithmetic::mul::lemma_mul_basics(s0 as int);
+                assert(l.stride[1] == s0 as int);
+            } else {
+                // l.stride[i] = s0 * cm_rest[i-1], l.stride[i+1] = s0 * cm_rest[i]
+                // l.shape[i] = rest_shape[i-1]
+                // product = l.shape[i] * l.stride[i] = rest_shape[i-1] * s0 * cm_rest[i-1]
+                //         = s0 * (rest_shape[i-1] * cm_rest[i-1])
+                // From IH tractable: cm_rest[i] % (rest_shape[i-1] * cm_rest[i-1]) == 0
+                // So s0 * cm_rest[i] % (s0 * rest_shape[i-1] * cm_rest[i-1]) == 0
+                assert(l.stride[i] == (s0 as int) * cm_rest[i - 1]);
+                assert(l.stride[i + 1] == (s0 as int) * cm_rest[i]);
+                assert(l.shape[i] == rest_shape[i - 1]);
 
-        assert(l.is_tractable()) by {
-            assert forall|i: int| 0 <= i < l.stride.len() as int - 1
-            implies #[trigger] l.tractable_at(i) by {
-                if i == 0 {
-                    // stride[0]*shape[0] = 1*s0 = s0. stride[1] = s0 (if cm_rest[0]=1).
-                    vstd::arithmetic::mul::lemma_mul_basics(s0 as int);
-                    if rest_shape.len() > 0 {
-                        crate::proof::inverse_lemmas::lemma_column_major_strides_first(rest_shape);
-                        vstd::arithmetic::mul::lemma_mul_basics(s0 as int);
-                    }
-                } else {
-                    // From cm_rest tractable: cm_rest[i] % (cm_rest[i-1] * rest_shape[i-1]) == 0
-                    // Scale by s0: s0*cm_rest[i] % (s0*cm_rest[i-1]*shape[i]) == 0
-                    assert(l.stride[i] == (s0 as int) * cm_rest[i - 1]);
-                    assert(l.stride[i + 1] == (s0 as int) * cm_rest[i]);
-                    assert(l.shape[i] == rest_shape[i - 1]);
-                    if rest_shape.len() > 1 {
-                        let l_rest = make_column_major(rest_shape);
-                        assert(l_rest.tractable_at(i - 1));
-                    }
-                }
-            };
+                // IH: l_rest.tractable_at(i-1)
+                assert(l_rest.tractable_at(i - 1));
+                let sp_rest = (rest_shape[i - 1] as int) * cm_rest[i - 1];
+                assert(sp_rest > 0);
+                assert(cm_rest[i] % sp_rest == 0);
+
+                // Scale: (s0 * cm_rest[i]) % (s0 * sp_rest) == 0
+                // product = shape[i] * stride[i]
+                let sh_i = l.shape[i] as int;
+                let st_i = l.stride[i];
+                assert(sh_i == rest_shape[i - 1] as int);
+                assert(st_i == (s0 as int) * cm_rest[i - 1]);
+                assert(sh_i > 0) by { assert(l.shape[i] > 0nat); };
+                assert(st_i > 0) by {
+                    crate::proof::composition_lemmas::lemma_sorted_stride_transitive(&l, 0, i);
+                    assert(l.stride[i] >= l.stride[0]);
+                };
+                let sp_l = sh_i * st_i;
+                // cm_rest[i] % sp_rest == 0 → cm_rest[i] = sp_rest * q for some q
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(cm_rest[i], sp_rest);
+                let q_div = cm_rest[i] / sp_rest;
+                assert(cm_rest[i] == sp_rest * q_div + cm_rest[i] % sp_rest);
+                assert(cm_rest[i] == sp_rest * q_div);
+                // l.stride[i+1] = s0 * cm_rest[i] = s0 * sp_rest * q_div
+                // sp_l = sh_i * s0 * cm_rest[i-1] = s0 * (sh_i * cm_rest[i-1]) = s0 * sp_rest
+                // So l.stride[i+1] = sp_l * q_div. Hence l.stride[i+1] % sp_l == 0.
+                assert(l.stride[i + 1] == (s0 as int) * (sp_rest * q_div)) by (nonlinear_arith)
+                    requires l.stride[i + 1] == (s0 as int) * cm_rest[i],
+                             cm_rest[i] == sp_rest * q_div;
+                assert(sp_l == (s0 as int) * sp_rest) by (nonlinear_arith)
+                    requires sp_l == sh_i * st_i,
+                             sh_i == rest_shape[i - 1] as int,
+                             st_i == (s0 as int) * cm_rest[i - 1],
+                             sp_rest == (rest_shape[i - 1] as int) * cm_rest[i - 1];
+                assert(l.stride[i + 1] == sp_l * q_div) by (nonlinear_arith)
+                    requires l.stride[i + 1] == (s0 as int) * (sp_rest * q_div),
+                             sp_l == (s0 as int) * sp_rest;
+                assert(sp_l > 0) by (nonlinear_arith)
+                    requires sh_i > 0, st_i > 0, sp_l == sh_i * st_i;
+                vstd::arithmetic::div_mod::lemma_mod_multiples_basic(q_div, sp_l);
+            }
         };
+        assert(l.is_tractable());
     }
 }
 

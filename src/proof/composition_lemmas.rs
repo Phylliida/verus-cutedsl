@@ -2106,7 +2106,7 @@ pub proof fn lemma_compose_recursive_correct(a: LayoutSpec, b: LayoutSpec, x: na
 // ══════════════════════════════════════════════════════════════
 
 /// Helper: sorted strides are transitive — stride[lo] <= stride[hi].
-proof fn lemma_sorted_stride_transitive(layout: &LayoutSpec, lo: int, hi: int)
+pub proof fn lemma_sorted_stride_transitive(layout: &LayoutSpec, lo: int, hi: int)
     requires
         layout.is_sorted(),
         0 <= lo <= hi,
