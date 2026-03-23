@@ -1729,6 +1729,7 @@ pub proof fn lemma_sm80_smem_tile_swizzle_divide(
 // ══════════════════════════════════════════════════════════════
 
 /// Divided column-major SMEM tile has identity offset (using correct compose).
+/// No admissibility required — same preconditions as the compose_linear version.
 pub proof fn lemma_smem_divide_identity_compose(
     smem_base: &LayoutSpec, thread_tile: &LayoutSpec, x: nat,
 )
@@ -1736,16 +1737,16 @@ pub proof fn lemma_smem_divide_identity_compose(
         divide_admissible(smem_base, thread_tile),
         smem_base.stride =~= column_major_strides(smem_base.shape),
         thread_tile.stride =~= column_major_strides(thread_tile.shape),
-        crate::proof::divide_lemmas::divide_compose_admissible(smem_base, thread_tile),
         x < shape_size(smem_base.shape),
     ensures
         logical_divide(smem_base, thread_tile).offset(x) == x as int,
 {
-    crate::proof::divide_lemmas::lemma_divide_offset_column_major_compose(
+    crate::proof::divide_lemmas::lemma_divide_identity_column_major_no_admissibility(
         smem_base, thread_tile, x);
 }
 
 /// Swizzled divided SMEM injectivity (using correct compose).
+/// No admissibility required.
 pub proof fn lemma_smem_swizzle_divide_injective_compose(
     smem_base: &LayoutSpec, thread_tile: &LayoutSpec,
     b_bits: nat, m_bits: nat, s_bits: nat,
@@ -1754,7 +1755,6 @@ pub proof fn lemma_smem_swizzle_divide_injective_compose(
         divide_admissible(smem_base, thread_tile),
         smem_base.stride =~= column_major_strides(smem_base.shape),
         thread_tile.stride =~= column_major_strides(thread_tile.shape),
-        crate::proof::divide_lemmas::divide_compose_admissible(smem_base, thread_tile),
         swizzle_admissible(b_bits, m_bits, s_bits),
         shape_size(smem_base.shape) <= pow2(m_bits + s_bits + b_bits),
     ensures
@@ -1785,7 +1785,7 @@ pub proof fn lemma_smem_swizzle_divide_injective_compose(
     };
 }
 
-/// SM80 instantiation with correct compose.
+/// SM80 instantiation with correct compose. No admissibility required.
 pub proof fn lemma_sm80_smem_tile_swizzle_divide_compose(
     smem_base: &LayoutSpec, thread_tile: &LayoutSpec,
 )
@@ -1793,7 +1793,6 @@ pub proof fn lemma_sm80_smem_tile_swizzle_divide_compose(
         divide_admissible(smem_base, thread_tile),
         smem_base.stride =~= column_major_strides(smem_base.shape),
         thread_tile.stride =~= column_major_strides(thread_tile.shape),
-        crate::proof::divide_lemmas::divide_compose_admissible(smem_base, thread_tile),
         shape_size(smem_base.shape) <= pow2(6),
     ensures
         forall|i: nat, j: nat|
