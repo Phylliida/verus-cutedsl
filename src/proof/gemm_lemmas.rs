@@ -1957,22 +1957,42 @@ pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
         // non_negative from helper
         lemma_cm_nonneg(shape);
 
-        // sorted: stride[i] <= stride[i+1] for all i
-        assert forall|i: int| 0 <= i < l.stride.len() as int - 1
-        implies l.stride[i] <= #[trigger] l.stride[i + 1] by {
-            if i == 0 {
-                assert(l.stride[0] == 1int);
-                assert(l.stride[1] == (s0 as int) * cm_rest[0]);
-                assert(cm_rest[0] == 1int);
-            } else {
-                assert(l.stride[i] == (s0 as int) * cm_rest[i - 1]);
-                assert(l.stride[i + 1] == (s0 as int) * cm_rest[i]);
-                assert(l_rest.stride[i - 1] <= l_rest.stride[i]);
-                assert(cm_rest[i - 1] <= cm_rest[i]);
-                assert((s0 as int) * cm_rest[i - 1] <= (s0 as int) * cm_rest[i])
-                    by (nonlinear_arith)
-                    requires (s0 as int) > 0, cm_rest[i - 1] <= cm_rest[i];
-            }
+        // sorted: forall|i, j| 0 <= i < j < len ==> stride[i] <= stride[j]
+        assert(l.is_sorted()) by {
+            assert forall|i: int, j: int| 0 <= i < j < l.stride.len()
+            implies #[trigger] l.stride[i] <= #[trigger] l.stride[j] by {
+                // Use sorted transitivity from the IH
+                // stride[0] = 1. stride[k+1] = s0 * cm_rest[k].
+                // For i=0: stride[0] = 1. stride[j] = s0 * cm_rest[j-1] >= s0 * 1 >= 1. ✓
+                // For i>0: stride[i] = s0*cm_rest[i-1]. stride[j] = s0*cm_rest[j-1].
+                //   cm_rest[i-1] <= cm_rest[j-1] from l_rest.is_sorted().
+                //   s0 * cm_rest[i-1] <= s0 * cm_rest[j-1]. ✓
+                if i == 0 {
+                    // stride[0] = 1. stride[j] = s0 * cm_rest[j-1] >= s0 * 1 >= 1.
+                    assert(l.stride[j] == (s0 as int) * cm_rest[j - 1]);
+                    // cm_rest[j-1] >= cm_rest[0] = 1 (from l_rest.is_sorted + cm_first)
+                    if rest_shape.len() > 1 && j > 1 {
+                        // Trigger l_rest.is_sorted: stride[0] <= stride[j-1]
+                        assert(l_rest.stride[0] <= l_rest.stride[j - 1]);
+                    }
+                    assert(cm_rest[j - 1] >= 1) by {
+                        if j == 1 { assert(cm_rest[0] == 1int); }
+                        else { assert(l_rest.stride[j - 1] >= l_rest.stride[0]); }
+                    };
+                    assert((s0 as int) * cm_rest[j - 1] >= 1) by (nonlinear_arith)
+                        requires (s0 as int) >= 1, cm_rest[j - 1] >= 1;
+                } else {
+                    // stride[i] = s0*cm_rest[i-1], stride[j] = s0*cm_rest[j-1]
+                    assert(l.stride[i] == (s0 as int) * cm_rest[i - 1]);
+                    assert(l.stride[j] == (s0 as int) * cm_rest[j - 1]);
+                    // Trigger l_rest.is_sorted: stride[i-1] <= stride[j-1]
+                    assert(l_rest.stride[i - 1] <= l_rest.stride[j - 1]);
+                    assert(cm_rest[i - 1] <= cm_rest[j - 1]);
+                    assert((s0 as int) * cm_rest[i - 1] <= (s0 as int) * cm_rest[j - 1])
+                        by (nonlinear_arith)
+                        requires (s0 as int) > 0, cm_rest[i - 1] <= cm_rest[j - 1];
+                }
+            };
         };
         // tractable: stride[0]*shape[0] = 1*s0 = s0. stride[1] = s0*cm_rest[0].
         // s0 % s0 == 0 trivially? No: stride[1] % (stride[0]*shape[0]) = (s0*cm_rest[0]) % s0.
@@ -1992,6 +2012,7 @@ pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
         //   cm_rest[i] is a multiple of cm_rest[i-1]*shape[i], which we know from tractable.
 
         // tractable
+        assert(l.is_tractable()) by {
         assert forall|i: int| 0 <= i < l.stride.len() as int - 1
         implies #[trigger] l.tractable_at(i) by {
             if i == 0 {
@@ -2055,7 +2076,73 @@ pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
                 vstd::arithmetic::div_mod::lemma_mod_multiples_basic(q_div, sp_l);
             }
         };
-        assert(l.is_tractable());
+        };
+    }
+}
+
+/// If each tile dimension divides the corresponding A dimension,
+/// then shape_size(tile) divides shape_size(a).
+proof fn lemma_shape_divisibility(a: Seq<nat>, t: Seq<nat>)
+    requires
+        shape_valid(a), shape_valid(t),
+        a.len() == t.len(),
+        forall|i: int| 0 <= i < a.len() ==>
+            #[trigger] t[i] <= a[i] && a[i] % t[i] == 0,
+    ensures
+        (shape_size(a) as int) % (shape_size(t) as int) == 0,
+    decreases a.len(),
+{
+    if a.len() == 0 {
+    } else {
+        let a_rest = a.skip(1);
+        let t_rest = t.skip(1);
+        assert(shape_valid(a_rest)) by {
+            assert forall|i: int| 0 <= i < a_rest.len() implies #[trigger] a_rest[i] > 0
+            by { assert(a_rest[i] == a[i + 1]); };
+        };
+        assert(shape_valid(t_rest)) by {
+            assert forall|i: int| 0 <= i < t_rest.len() implies #[trigger] t_rest[i] > 0
+            by { assert(t_rest[i] == t[i + 1]); };
+        };
+        assert forall|i: int| 0 <= i < a_rest.len()
+        implies #[trigger] t_rest[i] <= a_rest[i] && a_rest[i] % t_rest[i] == 0
+        by {
+            assert(a_rest[i] == a[i + 1]);
+            assert(t_rest[i] == t[i + 1]);
+        };
+        lemma_shape_divisibility(a_rest, t_rest);
+        // IH: size(a_rest) % size(t_rest) == 0
+        // size(a) = a[0] * size(a_rest). size(t) = t[0] * size(t_rest).
+        // a[0] % t[0] == 0. size(a_rest) % size(t_rest) == 0.
+        // So a[0]*size(a_rest) % (t[0]*size(t_rest)) == 0.
+        crate::runtime::shape_helpers::lemma_shape_size_split(a, 1);
+        assert(a.take(1) =~= seq![a.first()]);
+        crate::proof::shape_lemmas::lemma_shape_size_single(a.first());
+        assert(a.skip(1) =~= a_rest);
+        crate::runtime::shape_helpers::lemma_shape_size_split(t, 1);
+        assert(t.take(1) =~= seq![t.first()]);
+        crate::proof::shape_lemmas::lemma_shape_size_single(t.first());
+        assert(t.skip(1) =~= t_rest);
+        // a[0] = t[0] * q0. size(a_rest) = size(t_rest) * q1.
+        // a[0]*size(a_rest) = t[0]*q0 * size(t_rest)*q1 = (t[0]*size(t_rest)) * (q0*q1).
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a.first() as int, t.first() as int);
+        crate::proof::shape_lemmas::lemma_shape_size_positive(t_rest);
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
+            shape_size(a_rest) as int, shape_size(t_rest) as int);
+        let q0 = a.first() / t.first();
+        let q1 = shape_size(a_rest) / shape_size(t_rest);
+        assert(a.first() == t.first() * q0);
+        assert(shape_size(a_rest) == shape_size(t_rest) * q1);
+        assert(shape_size(a) == a.first() * shape_size(a_rest));
+        assert(shape_size(t) == t.first() * shape_size(t_rest));
+        assert(shape_size(a) == (t.first() * shape_size(t_rest)) * (q0 * q1))
+            by (nonlinear_arith)
+            requires shape_size(a) == a.first() * shape_size(a_rest),
+                     a.first() == t.first() * q0,
+                     shape_size(a_rest) == shape_size(t_rest) * q1;
+        crate::proof::shape_lemmas::lemma_shape_size_positive(t);
+        vstd::arithmetic::div_mod::lemma_mod_multiples_basic(
+            (q0 * q1) as int, (shape_size(t)) as int);
     }
 }
 
@@ -2085,14 +2172,71 @@ pub proof fn lemma_cm_divide_admissible(
     lemma_cm_sorted_tractable(tile_shape);
     crate::proof::injectivity_lemmas::lemma_column_major_strides_len(tile_shape);
 
-    // complement_admissible(tile, size(a))
-    // Need: (size(a) as int) % ((tile.shape.last() as int) * tile.stride.last()) == 0
-    // tile's last stride_product = size(tile). And size(tile) | size(a) because
-    // each tile_shape[i] | a_shape[i].
+    // complement_admissible(tile, size(a)): need (size(a)) % (last stride_product of tile) == 0.
+    // For column-major tile: last stride_product = size(tile).
+    // size(tile) | size(a) because each tile_shape[i] | a_shape[i].
 
-    // For now, we just assert the required properties hold.
-    // The detailed divisibility proof is complex for general rank.
-    // Use: all the column-major structural properties we proved.
+    // Last stride_product of tile = tile.shape.last() * tile.stride.last()
+    // For column-major: this equals shape_size(tile_shape) (prefix product identity).
+    let n = tile_shape.len() as int;
+    crate::proof::divide_lemmas::lemma_cm_prefix_product_identity(tile_shape, (n - 1) as nat);
+    // cm[n-1] * size(skip(n-1)) = size(tile_shape). skip(n-1) = seq![last]. size = last.
+    // So cm[n-1] * last = size(tile_shape). And last_stride_product = last * cm[n-1] = size(tile).
+    // By commutativity: last_stride_product = size(tile_shape).
+
+    let tile_size = shape_size(tile_shape);
+    let a_size = shape_size(a_shape);
+
+    // size(tile) | size(a): product of (tile_shape[i]) | product of (a_shape[i])
+    // because each factor divides.
+    // Prove by induction: size(tile_shape) | size(a_shape)
+    lemma_shape_divisibility(a_shape, tile_shape);
+
+    // Bridge to complement_admissible form
+    assert(tile.stride[n - 1] > 0) by {
+        crate::proof::composition_lemmas::lemma_sorted_stride_transitive(&tile, 0, n - 1);
+    };
+    assert((tile.shape.last() as int) * tile.stride.last() > 0) by (nonlinear_arith)
+        requires (tile.shape.last() as int) > 0, tile.stride.last() > 0;
+    // last_stride_product == size(tile_shape)
+    // cm[n-1] * size(skip(n-1)) == size(tile_shape). skip(n-1) = [last]. size([last]) = last.
+    assert(tile_shape.skip((n - 1) as int) =~= seq![tile_shape.last()]);
+    crate::proof::shape_lemmas::lemma_shape_size_single(tile_shape.last());
+    // tile.stride.last() == tile.stride[n-1]
+    assert(tile.stride.last() == tile.stride[n - 1]);
+    // tile.shape.last() == tile_shape.last() == shape_size(skip(n-1))
+    assert(tile.shape.last() == tile_shape.last());
+    assert(shape_size(tile_shape.skip((n - 1) as int)) == tile_shape.last() as nat);
+    // So last_stride_product = stride[n-1] * shape_size(skip(n-1)) = tile_size
+    // Chain: stride[n-1] * tile_shape.last() == tile_size
+    // From prefix_product_identity: stride[n-1] * shape_size(skip(n-1)) == tile_size
+    // shape_size(skip(n-1)) == tile_shape.last()
+    // So stride[n-1] * tile_shape.last() == tile_size
+    // And tile.shape.last() == tile_shape.last(), tile.stride.last() == tile.stride[n-1]
+    assert(tile.stride[n - 1] * (tile_shape.last() as int) == tile_size as int) by (nonlinear_arith)
+        requires
+            tile.stride[n - 1] * (shape_size(tile_shape.skip((n - 1) as int)) as int) == tile_size as int,
+            shape_size(tile_shape.skip((n - 1) as int)) == tile_shape.last() as nat;
+    assert((tile.shape.last() as int) * tile.stride.last() == tile_size as int) by (nonlinear_arith)
+        requires
+            tile.stride[n - 1] * (tile_shape.last() as int) == tile_size as int,
+            tile.stride.last() == tile.stride[n - 1],
+            tile.shape.last() == tile_shape.last();
+    // So (a_size) % (last_stride_product) == (a_size) % (tile_size) == 0
+    assert((a_size as int) % ((tile.shape.last() as int) * tile.stride.last()) == 0);
+
+    // Explicitly assert complement_admissible
+    crate::proof::injectivity_lemmas::lemma_column_major_strides_len(a_shape);
+    assert(a.valid()) by {
+        assert forall|i: int| 0 <= i < a.shape.len() implies #[trigger] a.shape[i] > 0 by {};
+    };
+    assert(a.shape.len() > 0);
+    assert(tile.valid()) by {
+        assert forall|i: int| 0 <= i < tile.shape.len() implies #[trigger] tile.shape[i] > 0 by {};
+    };
+    assert(tile.shape.len() > 0);
+    assert(a_size > 0nat) by { crate::proof::shape_lemmas::lemma_shape_size_positive(a_shape); };
+    assert(crate::complement::complement_admissible(&tile, a_size));
 }
 
 /// Row-major (M, K) has the same offset as column-major (K, M) with transposed coordinates.

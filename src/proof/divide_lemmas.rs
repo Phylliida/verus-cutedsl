@@ -898,7 +898,7 @@ proof fn lemma_cm_stride_product_is_size(b: &LayoutSpec)
 
 /// column_major_strides(shape)[i] * shape_size(shape.skip(i)) == shape_size(shape)
 /// for 0 <= i < shape.len().
-proof fn lemma_cm_prefix_product_identity(shape: Seq<nat>, i: nat)
+pub proof fn lemma_cm_prefix_product_identity(shape: Seq<nat>, i: nat)
     requires
         shape_valid(shape),
         shape.len() > 0,
