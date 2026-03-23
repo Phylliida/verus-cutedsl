@@ -291,15 +291,16 @@ fn compose_single_exec_at(
 
     // ═══════════════════════════════════════════════════
     // Case 2: straddle first mode boundary
+    // (only when b_shape is divisible by q = m/b_stride)
     // ═══════════════════════════════════════════════════
-    if b_stride > 0 && b_stride < m && m % b_stride == 0 {
-    let q: u64 = m / b_stride;
-    proof {
-        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
-        if q == 0u64 { vstd::arithmetic::mul::lemma_mul_basics(b_stride as int); }
-        assert(q > 0u64);
-    }
-    if b_shape % q == 0 {
+    if b_stride > 0 && b_stride < m && m % b_stride == 0 && ({
+        proof {
+            vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, b_stride as int);
+            if m / b_stride == 0 { vstd::arithmetic::mul::lemma_mul_basics(b_stride as int); }
+        }
+        b_shape % (m / b_stride) == 0
+    }) {
+        let q: u64 = m / b_stride;
 
         proof {
             // Stride overflow: first output stride is b_stride * d, which is spec_result.stride[0]
@@ -443,8 +444,7 @@ fn compose_single_exec_at(
         }
 
         return RuntimeLayout::new(sv, stv);
-    } // b_shape % q == 0
-    } // b_stride > 0 && b_stride < m && m % b_stride == 0
+    }
 
     // ═══════════════════════════════════════════════════
     // Case 3: skip first mode entirely

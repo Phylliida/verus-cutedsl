@@ -1944,4 +1944,157 @@ pub proof fn lemma_zipped_bijective_1d(b: &LayoutSpec, m: nat)
     lemma_swap_preserves_surjective(&sorted, 0, shape_size(sorted_shape));
 }
 
+// ══════════════════════════════════════════════════════════════
+// Complement sorted + tractable
+// ══════════════════════════════════════════════════════════════
+
+/// Complement layout is sorted + tractable + non-negative + stride[0] > 0.
+/// Complement strides = [1, sp(0), sp(1), ..., sp(k-1)] are non-decreasing
+/// (from a's tractability), and the complement is tractable because
+/// comp.stride[i]*comp.shape[i] = a.stride[i] which divides sp(i) = comp.stride[i+1].
+pub proof fn lemma_complement_sorted_tractable(a: &LayoutSpec, m: nat)
+    requires
+        complement_admissible(a, m),
+    ensures ({
+        let c = complement(a, m);
+        &&& c.is_sorted()
+        &&& c.is_tractable()
+        &&& c.non_negative_strides()
+        &&& c.stride[0] > 0
+        &&& (m as int) % ((c.shape.last() as int) * c.stride.last()) == 0
+    }),
+{
+    let c = complement(a, m);
+    let k = a.shape.len();
+    lemma_complement_valid(a, m);
+
+    // Complement strides: [1, sp(0), sp(1), ..., sp(k-1)]
+    // where sp(i) = stride_product(a, i) = a.shape[i] * a.stride[i]
+
+    // stride[0] = 1 > 0
+    assert(c.stride[0] == 1int);
+
+    // All stride_products are positive (from a sorted + a.stride[0] > 0)
+    // sp(i) = a.shape[i] * a.stride[i]. a.shape[i] > 0 (valid). a.stride[i] > 0 (sorted + stride[0] > 0).
+
+    // non-negative: all strides are stride_products or 1, all >= 0
+    assert(c.non_negative_strides()) by {
+        assert forall|i: int| 0 <= i < c.stride.len() implies #[trigger] c.stride[i] >= 0 by {
+            if i == 0 {
+            } else {
+                // c.stride[i] = stride_product(a, i-1) = a.shape[i-1] * a.stride[i-1] > 0
+                assert(c.stride[i] == stride_product(a, i - 1));
+                assert(a.shape[i - 1] > 0nat);
+                assert(a.stride[i - 1] >= a.stride[0]);
+                assert(a.stride[i - 1] > 0);
+            }
+        };
+    };
+
+    // sorted: stride_products are non-decreasing
+    // sp(i) = a.shape[i] * a.stride[i]. From tractable: sp(i-1) | a.stride[i].
+    // So a.stride[i] >= sp(i-1). And sp(i) = a.shape[i] * a.stride[i] >= a.stride[i] >= sp(i-1).
+    assert(c.is_sorted()) by {
+        assert forall|i: int, j: int| 0 <= i < j < c.stride.len()
+        implies #[trigger] c.stride[i] <= #[trigger] c.stride[j] by {
+            if i == 0 {
+                // c.stride[0] = 1. c.stride[j] = sp(j-1) >= 1.
+                if j > 0 {
+                    assert(c.stride[j] == stride_product(a, j - 1));
+                    assert(a.stride[j - 1] >= a.stride[0]);
+                    assert(a.stride[j - 1] > 0);
+                    assert(a.shape[j - 1] > 0nat);
+                }
+            } else {
+                // c.stride[i] = sp(i-1). c.stride[j] = sp(j-1).
+                // Need sp(i-1) <= sp(j-1). This follows from the chain:
+                // sp(i-1) | a.stride[i] (tractable). a.stride[i] <= a.stride[j-1] (a sorted).
+                // a.stride[j-1] <= sp(j-1) (since shape >= 1).
+                assert(c.stride[i] == stride_product(a, i - 1));
+                assert(c.stride[j] == stride_product(a, j - 1));
+                let sp_i1 = stride_product(a, i - 1);
+                let sp_j1 = stride_product(a, j - 1);
+                // a.stride[i-1] > 0 (from sorted: stride[0] <= stride[i-1])
+                crate::proof::composition_lemmas::lemma_sorted_stride_transitive(a, 0, i - 1);
+                assert(a.stride[i - 1] > 0);
+                assert(sp_i1 > 0) by (nonlinear_arith)
+                    requires sp_i1 == (a.shape[i - 1] as int) * a.stride[i - 1],
+                             (a.shape[i - 1] as int) > 0, a.stride[i - 1] > 0;
+                // sp(i-1) | a.stride[i] (from tractable_at(i-1))
+                assert(a.tractable_at(i - 1));
+                assert(a.stride[i] % sp_i1 == 0);
+                // sp(i-1) <= a.stride[i] (positive divisor <= dividend)
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a.stride[i], sp_i1);
+                assert(sp_i1 <= a.stride[i]) by {
+                    if sp_i1 > a.stride[i] {
+                        assert(a.stride[i] / sp_i1 == 0) by (nonlinear_arith)
+                            requires a.stride[i] >= 0, sp_i1 > a.stride[i];
+                        vstd::arithmetic::mul::lemma_mul_basics(sp_i1);
+                        assert(a.stride[i] >= a.stride[0]);
+                    }
+                };
+                // a.stride[i] <= a.stride[j-1] (a sorted)
+                crate::proof::composition_lemmas::lemma_sorted_stride_transitive(a, i, j - 1);
+                assert(a.stride[i] <= a.stride[j - 1]);
+                // a.stride[j-1] > 0
+                crate::proof::composition_lemmas::lemma_sorted_stride_transitive(a, 0, j - 1);
+                assert(a.stride[j - 1] > 0);
+                // a.stride[j-1] <= sp(j-1)
+                assert(sp_j1 >= a.stride[j - 1]) by (nonlinear_arith)
+                    requires sp_j1 == (a.shape[j - 1] as int) * a.stride[j - 1],
+                             (a.shape[j - 1] as int) >= 1, a.stride[j - 1] > 0;
+            }
+        };
+    };
+
+    // tractable: comp.stride[i]*comp.shape[i] divides comp.stride[i+1]
+    assert(c.is_tractable()) by {
+        assert forall|i: int| 0 <= i < c.stride.len() as int - 1
+        implies #[trigger] c.tractable_at(i) by {
+            if i == 0 {
+                // stride[0]*shape[0] = 1 * a.stride[0] = a.stride[0].
+                // stride[1] = sp(0) = a.shape[0] * a.stride[0].
+                // a.stride[0] | (a.shape[0] * a.stride[0]) trivially. ✓
+                assert(c.stride[0] == 1int);
+                assert(c.shape[0] == a.stride[0] as nat);
+                assert(c.stride[1] == stride_product(a, 0));
+            } else if i < k as int {
+                let sp_i1 = stride_product(a, i - 1);
+                assert(c.stride[i] == sp_i1);
+                assert(c.shape[i] == ((a.stride[i] / sp_i1) as nat));
+                assert(c.stride[i + 1] == stride_product(a, i));
+                // sp(i-1) > 0
+                crate::proof::composition_lemmas::lemma_sorted_stride_transitive(a, 0, i - 1);
+                assert(a.stride[i - 1] > 0);
+                assert(sp_i1 > 0) by (nonlinear_arith)
+                    requires sp_i1 == (a.shape[i - 1] as int) * a.stride[i - 1],
+                             (a.shape[i - 1] as int) > 0, a.stride[i - 1] > 0;
+                // sp(i-1) | a.stride[i] (tractable)
+                assert(a.tractable_at(i - 1));
+                assert(a.stride[i] % sp_i1 == 0);
+                vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a.stride[i], sp_i1);
+                // product = sp(i-1) * (a.stride[i] / sp(i-1)) = a.stride[i]
+                let prod = (c.shape[i] as int) * c.stride[i];
+                assert(prod == a.stride[i]);
+                assert(prod > 0) by {
+                    assert(a.stride[i] >= a.stride[0]);
+                    assert(a.stride[i] > 0);
+                };
+                // c.stride[i+1] = sp(i) = a.shape[i] * a.stride[i]
+                // prod = a.stride[i]. a.stride[i] | a.shape[i]*a.stride[i].
+                vstd::arithmetic::div_mod::lemma_mod_multiples_basic(
+                    a.shape[i] as int, a.stride[i]);
+            }
+        };
+    };
+
+    // Last stride_product of complement = sp(k-1) * (m/sp(k-1)) = m
+    assert(c.stride.last() == stride_product(a, k as int - 1));
+    assert(c.shape.last() == ((m as int) / stride_product(a, k as int - 1)) as nat);
+    assert((m as int) % stride_product(a, k as int - 1) == 0) by {
+        assert((m as int) % ((a.shape.last() as int) * a.stride.last()) == 0);
+    };
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, stride_product(a, k as int - 1));
+}
+
 } // verus!
