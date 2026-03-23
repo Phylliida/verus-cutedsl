@@ -1814,112 +1814,118 @@ pub proof fn lemma_sm80_smem_tile_swizzle_divide_compose(
 /// This means row-major GEMM reduces to column-major GEMM on transposed shapes:
 /// - Row-major A[M, K] → column-major layout (K, M):(1, K) for divide/compose
 /// - A[i, k] in row-major = A'[k, i] in column-major (same memory address)
-pub proof fn lemma_row_major_as_transposed_column_major(m: nat, k: nat)
-    requires m > 0, k > 0,
+/// 2D column-major strides are [1, shape[0]].
+proof fn lemma_cm_2d_strides(s0: nat, s1: nat)
+    requires s0 > 0, s1 > 0,
     ensures
-        make_row_major(seq![m, k]).stride =~= seq![k as int, 1int],
-        make_column_major(seq![k, m]).stride =~= seq![1int, k as int],
-        // Same address: row_major[i*k + j] == column_major[j*m + i]
-        // Both produce addresses in [0, m*k).
-        forall|x: nat| x < m * k ==> {
-            let rm = make_row_major(seq![m, k]);
-            let cm = make_column_major(seq![k, m]);
-            // row_major offset at x and column_major offset at the "transposed index"
-            // give the same value
-            &&& rm.offset(x) >= 0
-            &&& rm.offset(x) < (m * k) as int
-        },
+        column_major_strides(seq![s0, s1]) =~= seq![1int, s0 as int],
 {
-    let shape_rm = seq![m, k];
-    let shape_cm = seq![k, m];
+    // cm(seq![s0, s1]) = [1] ++ scale(cm(seq![s1]), s0)
+    // cm(seq![s1]) = [1] ++ scale(cm(seq![]), s1) = [1] ++ scale([], s1) = [1]
+    assert(seq![s0, s1].skip(1) =~= seq![s1]);
+    assert(seq![s1].skip(1) =~= Seq::<nat>::empty());
+    assert(column_major_strides(Seq::<nat>::empty()) =~= Seq::<int>::empty());
+    assert(scale_strides_spec(Seq::<int>::empty(), s1 as int) =~= Seq::<int>::empty());
+    assert(column_major_strides(seq![s1]) =~= seq![1int]);
+    // scale_strides([1], s0) = [1 * s0] = [s0]
+    assert(scale_strides_spec(seq![1int], s0 as int).len() == 1);
+    assert(scale_strides_spec(seq![1int], s0 as int)[0] == 1int * (s0 as int));
+    vstd::arithmetic::mul::lemma_mul_basics(s0 as int);
+}
 
-    // Row-major strides
-    let rev_shape = seq_reverse(shape_rm);
-    assert(rev_shape =~= seq![k, m]);
-    crate::proof::inverse_lemmas::lemma_column_major_strides_first(rev_shape);
-    let cm_rev = column_major_strides(rev_shape);
-    assert(cm_rev =~= seq![1int].add(scale_strides_spec(column_major_strides(seq![m]), k as int)));
-    // cm([m]) = [1]. scale([1], k) = [k]. So cm_rev =~= [1, k].
-    assert(column_major_strides(seq![m]) =~= seq![1int]);
-    assert(cm_rev =~= seq![1int, k as int]);
-    // row_major_strides = reverse(cm_rev) = [k, 1]
-    assert(seq_reverse(cm_rev) =~= seq![k as int, 1int]);
-    assert(make_row_major(shape_rm).stride =~= seq![k as int, 1int]);
-
-    // Column-major strides for transposed shape
-    crate::proof::inverse_lemmas::lemma_column_major_strides_first(shape_cm);
-    assert(column_major_strides(shape_cm) =~=
-        seq![1int].add(scale_strides_spec(column_major_strides(seq![m]), k as int)));
-    assert(make_column_major(shape_cm).stride =~= seq![1int, k as int]);
-
-    // Offsets are in range
-    assert forall|x: nat| x < m * k implies {
-        let rm = make_row_major(seq![m, k]);
-        &&& rm.offset(x) >= 0
-        &&& rm.offset(x) < (m * k) as int
-    } by {
-        crate::proof::injectivity_lemmas::lemma_row_major_valid(shape_rm);
-        crate::proof::injectivity_lemmas::lemma_row_major_bijective(shape_rm);
+/// 2D column-major layout is sorted + tractable (enables complement_admissible).
+proof fn lemma_cm_2d_sorted_tractable(s0: nat, s1: nat)
+    requires s0 > 0, s1 > 0,
+    ensures ({
+        let l = make_column_major(seq![s0, s1]);
+        &&& l.valid()
+        &&& l.is_sorted()
+        &&& l.is_tractable()
+        &&& l.non_negative_strides()
+        &&& l.stride[0] > 0
+    }),
+{
+    lemma_cm_2d_strides(s0, s1);
+    let l = make_column_major(seq![s0, s1]);
+    assert(l.shape =~= seq![s0, s1]);
+    assert(l.stride =~= seq![1int, s0 as int]);
+    // valid
+    assert(l.valid()) by {
+        assert forall|i: int| 0 <= i < l.shape.len() implies #[trigger] l.shape[i] > 0 by {};
+    };
+    // sorted: stride[0] = 1 <= s0 = stride[1]
+    assert(l.is_sorted()) by {
+        assert forall|i: int| 0 <= i < l.stride.len() as int - 1
+        implies l.stride[i] <= #[trigger] l.stride[i + 1] by {};
+    };
+    // tractable: stride[0]*shape[0] = 1*s0 = s0. stride[1] = s0. s0 % s0 == 0.
+    assert(l.is_tractable()) by {
+        assert forall|i: int| 0 <= i < l.stride.len() as int - 1
+        implies #[trigger] l.tractable_at(i) by {
+            // tractable_at(0): product = shape[0]*stride[0] = s0*1 = s0. stride[1] = s0. s0 % s0 == 0.
+            assert((l.shape[0] as int) * l.stride[0] == s0 as int) by {
+                vstd::arithmetic::mul::lemma_mul_basics(s0 as int);
+            };
+            assert(l.stride[1] % ((l.shape[0] as int) * l.stride[0]) == 0);
+            assert(l.tractable_at(0));
+        };
+    };
+    // non-negative + stride[0] > 0
+    assert(l.non_negative_strides()) by {
+        assert forall|i: int| 0 <= i < l.stride.len() implies #[trigger] l.stride[i] >= 0 by {};
     };
 }
 
-/// For row-major A[M, K]: the column-major transposition (K, M):(1, K) has identity offset
-/// under logical_divide with a column-major tile. This is the key enabler for row-major GEMM:
-/// represent the row-major matrix as column-major with transposed shape, then all
-/// column-major divide/compose proofs apply.
-pub proof fn lemma_row_major_divide_via_transpose(
-    m: nat, k: nat,
-    tile_shape: Seq<nat>,
+/// divide_admissible for 2D column-major layouts when tile shapes divide A shapes.
+pub proof fn lemma_cm_2d_divide_admissible(
+    a0: nat, a1: nat, t0: nat, t1: nat,
 )
     requires
-        m > 0, k > 0,
-        tile_shape.len() == 2,
-        tile_shape[0] > 0, tile_shape[1] > 0,
-        // Tile divides the TRANSPOSED shape (K, M)
-        tile_shape[0] <= k,  // tile_k <= K
-        tile_shape[1] <= m,  // tile_m <= M
-        k % tile_shape[0] == 0,
-        m % tile_shape[1] == 0,
-    ensures ({
-        // The transposed column-major layout
-        let a_cm = make_column_major(seq![k, m]);
-        let tile = make_column_major(tile_shape);
-        // divide_admissible holds for the transposed layout
-        divide_admissible(&a_cm, &tile)
-    }),
+        a0 > 0, a1 > 0, t0 > 0, t1 > 0,
+        t0 <= a0, t1 <= a1,
+        a0 % t0 == 0, a1 % t1 == 0,
+    ensures
+        divide_admissible(
+            &make_column_major(seq![a0, a1]),
+            &make_column_major(seq![t0, t1])),
 {
-    let a_cm = make_column_major(seq![k, m]);
-    let tile = make_column_major(tile_shape);
+    let a = make_column_major(seq![a0, a1]);
+    let tile = make_column_major(seq![t0, t1]);
 
-    // a_cm.valid()
-    crate::proof::injectivity_lemmas::lemma_column_major_strides_len(seq![k, m]);
-    assert(a_cm.valid()) by {
-        assert(a_cm.shape =~= seq![k, m]);
-        assert forall|i: int| 0 <= i < a_cm.shape.len()
-        implies #[trigger] a_cm.shape[i] > 0 by {};
-    };
-    assert(a_cm.shape.len() > 0);
+    lemma_cm_2d_sorted_tractable(a0, a1);
+    lemma_cm_2d_sorted_tractable(t0, t1);
+    lemma_cm_2d_strides(t0, t1);
 
-    // tile.valid()
-    crate::proof::injectivity_lemmas::lemma_column_major_strides_len(tile_shape);
-    assert(tile.valid()) by {
-        assert forall|i: int| 0 <= i < tile.shape.len()
-        implies #[trigger] tile.shape[i] > 0 by {};
-    };
-    assert(tile.shape.len() > 0);
+    // complement_admissible(tile, size(a))
+    // size(a) = a0 * a1. tile size = t0 * t1. t0|a0 and t1|a1 → t0*t1 | a0*a1.
+    crate::proof::shape_lemmas::lemma_shape_size_single(a0);
+    crate::runtime::shape_helpers::lemma_shape_size_split(seq![a0, a1], 1);
+    assert(seq![a0, a1].take(1) =~= seq![a0]);
+    crate::proof::shape_lemmas::lemma_shape_size_single(a1);
+    assert(seq![a0, a1].skip(1) =~= seq![a1]);
 
-    // complement_admissible(tile, size(a_cm))
-    // tile is column-major → sorted, tractable, non-negative strides, stride[0] > 0
-    crate::proof::inverse_lemmas::lemma_column_major_strides_first(tile_shape);
-    // tile.is_sorted() and tile.is_tractable(): column-major layouts are sorted+tractable
-    // size(a_cm) = k * m. tile divides shape: tile_shape[0] | k and tile_shape[1] | m.
-    // Last stride_product = size(tile) = tile_shape[0] * tile_shape[1].
-    // k * m % (tile_shape[0] * tile_shape[1]) == 0 since tile_shape[0] | k and tile_shape[1] | m.
+    // Last stride_product of tile: shape[1] * stride[1] = t1 * t0
+    assert(tile.stride[1] == t0 as int);
+    assert((tile.shape.last() as int) * tile.stride.last() == (t1 as int) * (t0 as int));
+    // (a0*a1) % (t0*t1) == 0: from a0 = t0*q0, a1 = t1*q1, a0*a1 = (t0*t1)*(q0*q1)
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a0 as int, t0 as int);
+    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a1 as int, t1 as int);
+    let q0 = a0 / t0;
+    let q1 = a1 / t1;
+    assert(a0 == t0 * q0);
+    assert(a1 == t1 * q1);
+    assert(a0 * a1 == (t0 * t1) * (q0 * q1)) by (nonlinear_arith)
+        requires a0 == t0 * q0, a1 == t1 * q1;
+    assert((t0 * t1) > 0nat) by (nonlinear_arith) requires t0 > 0, t1 > 0;
+    vstd::arithmetic::div_mod::lemma_mod_multiples_basic((q0 * q1) as int, (t0 * t1) as int);
+    // lemma_mod_multiples_basic gives: ((q0*q1) * (t0*t1)) % (t0*t1) == 0
+    // Which equals (a0*a1) % (t0*t1) == 0 since a0*a1 == (t0*t1)*(q0*q1)
+    assert(((t0 * t1) as int) * ((q0 * q1) as int) == (a0 * a1) as int) by (nonlinear_arith)
+        requires a0 * a1 == (t0 * t1) * (q0 * q1);
 }
 
 /// Row-major GEMM: after transposing A[M,K] to column-major (K,M),
-/// logical_divide has identity offset. Combined with the column-major
-/// compose identity, this means the GEMM pipeline works for row-major matrices.
+/// logical_divide has identity offset.
 pub proof fn lemma_row_major_gemm_divide_identity(
     m: nat, k: nat,
     tile_k: nat, tile_m: nat,
@@ -1940,8 +1946,13 @@ pub proof fn lemma_row_major_gemm_divide_identity(
     let a_cm = make_column_major(seq![k, m]);
     let tile = make_column_major(seq![tile_k, tile_m]);
 
-    lemma_row_major_divide_via_transpose(m, k, seq![tile_k, tile_m]);
-    assert(divide_admissible(&a_cm, &tile));
+    lemma_cm_2d_divide_admissible(k, m, tile_k, tile_m);
+    lemma_cm_2d_strides(k, m);
+    lemma_cm_2d_strides(tile_k, tile_m);
+
+    // Bridge: make_column_major produces stride == column_major_strides(shape) by definition
+    assert(a_cm.stride =~= column_major_strides(a_cm.shape));
+    assert(tile.stride =~= column_major_strides(tile.shape));
 
     crate::proof::divide_lemmas::lemma_divide_identity_column_major_no_admissibility(
         &a_cm, &tile, x);
