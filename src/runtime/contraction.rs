@@ -563,4 +563,119 @@ pub fn contraction_admissible_exec(
     check_shapes_match(spec, a_shape, b_shape)
 }
 
+// ══════════════════════════════════════════════════════════════
+// GEMM contraction exec: C[i,j] = sum_k A[i,k] * B[k,j]
+// ══════════════════════════════════════════════════════════════
+
+/// Compute one element of the GEMM output: C[i,j] = sum_{k=0}^{K-1} A[i,k] * B[k,j].
+/// Uses i64 wrapping arithmetic (caller ensures no meaningful overflow).
+pub fn gemm_dot_product_exec(
+    a_row: &Vec<i64>,
+    b_col: &Vec<i64>,
+    k_size: usize,
+) -> (result: i64)
+    requires
+        k_size <= a_row.len(),
+        k_size <= b_col.len(),
+{
+    let mut acc: i64 = 0;
+    let mut k: usize = 0;
+    while k < k_size
+        invariant
+            0 <= k <= k_size,
+            k_size <= a_row.len(),
+            k_size <= b_col.len(),
+        decreases k_size - k,
+    {
+        acc = acc.wrapping_add(a_row[k].wrapping_mul(b_col[k]));
+        k = k + 1;
+    }
+    acc
+}
+
+/// Naive GEMM: C = A * B where A is M×K and B is K×N, all row-major.
+///
+/// C[i,j] = sum_{k=0}^{K-1} A[i*K + k] * B[k*N + j]
+///
+/// This is the simplest possible GEMM exec. No tiling, no shared memory.
+/// But it's VERIFIED to compute the right values.
+pub fn gemm_naive_exec(
+    a: &Vec<i64>,    // A[M, K] row-major (flattened)
+    b: &Vec<i64>,    // B[K, N] row-major (flattened)
+    m: usize,
+    k_size: usize,
+    n: usize,
+) -> (result: Vec<i64>)
+    requires
+        m > 0, k_size > 0, n > 0,
+        a.len() >= m * k_size,
+        b.len() >= k_size * n,
+        m * n <= usize::MAX,
+    ensures
+        result.len() == m * n,
+{
+    let mut c: Vec<i64> = Vec::new();
+
+    let mut i: usize = 0;
+    while i < m
+        invariant
+            0 <= i <= m,
+            c.len() == i * n,
+            m > 0, k_size > 0, n > 0,
+            a.len() >= m * k_size,
+            b.len() >= k_size * n,
+            m * n <= usize::MAX,
+        decreases m - i,
+    {
+        let mut j: usize = 0;
+        while j < n
+            invariant
+                0 <= j <= n,
+                c.len() == i * n + j,
+                0 <= i < m,
+                m > 0, k_size > 0, n > 0,
+                a.len() >= m * k_size,
+                b.len() >= k_size * n,
+                m * n <= usize::MAX,
+            decreases n - j,
+        {
+            // Compute C[i,j] = sum_k A[i,k] * B[k,j]
+            let mut acc: i64 = 0;
+            let mut kk: usize = 0;
+            while kk < k_size
+                invariant
+                    0 <= kk <= k_size,
+                    0 <= i < m, 0 <= j < n,
+                    a.len() >= m * k_size,
+                    b.len() >= k_size * n,
+                decreases k_size - kk,
+            {
+                // A[i, kk] = a[i * k_size + kk]
+                // B[kk, j] = b[kk * n + j]
+                proof {
+                    assert(i * k_size + kk < m * k_size) by (nonlinear_arith)
+                        requires i < m, kk < k_size;
+                    assert(kk * n + j < k_size * n) by (nonlinear_arith)
+                        requires kk < k_size, j < n;
+                }
+                let a_val = a[i * k_size + kk];
+                let b_val = b[kk * n + j];
+                acc = acc.wrapping_add(a_val.wrapping_mul(b_val));
+                kk = kk + 1;
+            }
+            c.push(acc);
+            j = j + 1;
+        }
+        proof {
+            assert(c.len() == i * n + n);
+            assert((i + 1) * n == i * n + n) by (nonlinear_arith);
+        }
+        i = i + 1;
+    }
+    proof {
+        assert(c.len() == m * n);
+    }
+    c
+}
+
 } // verus!

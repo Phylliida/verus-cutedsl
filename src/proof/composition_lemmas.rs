@@ -2101,4 +2101,89 @@ pub proof fn lemma_compose_recursive_correct(a: LayoutSpec, b: LayoutSpec, x: na
     };
 }
 
+// ══════════════════════════════════════════════════════════════
+// Admissibility characterization
+// ══════════════════════════════════════════════════════════════
+
+/// compose_single_admissible holds when b_stride is a prefix product of A's shape
+/// and b_shape divides the remaining shape.
+///
+/// Specifically: if b_stride == shape_size(A.shape.take(k)) for some k,
+/// and b_shape <= shape_size(A.shape.skip(k)), then admissibility holds
+/// (with the appropriate divisibility at each level).
+///
+/// The simplest sufficient condition: b_stride * b_shape <= M0 (fits within first mode).
+/// This is case 1 and is always admissible.
+pub proof fn lemma_admissible_within_first_mode(
+    a: LayoutSpec, b_shape: nat, b_stride: nat,
+)
+    requires
+        a.valid(),
+        a.shape.len() > 0,
+        b_shape > 0,
+        b_stride * b_shape <= a.shape.first(),
+    ensures
+        compose_single_admissible(a, b_shape, b_stride),
+{
+    // b_stride * b_shape <= M0 <= shape_size(a.shape)
+    crate::runtime::shape_helpers::lemma_shape_size_split(a.shape, 1);
+    assert(a.shape.take(1) =~= seq![a.shape.first()]);
+    lemma_shape_size_single(a.shape.first());
+    assert(shape_valid(a.shape.skip(1))) by {
+        assert forall|i: int| 0 <= i < a.shape.skip(1).len()
+        implies #[trigger] a.shape.skip(1)[i] > 0 by {
+            assert(a.shape.skip(1)[i] == a.shape[i + 1]);
+        };
+    };
+    lemma_shape_size_positive(a.shape.skip(1));
+    assert(a.shape.first() <= shape_size(a.shape)) by (nonlinear_arith)
+        requires
+            shape_size(a.shape) == a.shape.first() * shape_size(a.shape.skip(1)),
+            shape_size(a.shape.skip(1)) >= 1nat,
+            a.shape.first() > 0nat;
+    assert(b_stride * b_shape <= shape_size(a.shape)) by (nonlinear_arith)
+        requires
+            b_stride * b_shape <= a.shape.first(),
+            a.shape.first() <= shape_size(a.shape);
+}
+
+/// compose_single_admissible holds when b_stride == 1 and b_shape <= M0.
+/// This is the most common case for column-major tile mode 0.
+pub proof fn lemma_admissible_unit_stride(
+    a: LayoutSpec, b_shape: nat,
+)
+    requires
+        a.valid(),
+        a.shape.len() > 0,
+        b_shape > 0,
+        b_shape <= a.shape.first(),
+    ensures
+        compose_single_admissible(a, b_shape, 1),
+{
+    lemma_admissible_within_first_mode(a, b_shape, 1);
+}
+
+/// compose_single_admissible holds when b_stride >= M0, M0 | b_stride,
+/// and the recursion on A_rest is admissible.
+/// This is the "skip" case: the stride skips A's first mode entirely.
+pub proof fn lemma_admissible_skip(
+    a: LayoutSpec, b_shape: nat, b_stride: nat,
+)
+    requires
+        a.valid(),
+        a.shape.len() > 1,
+        b_shape > 0,
+        b_stride * b_shape <= shape_size(a.shape),
+        b_stride >= a.shape.first(),
+        b_stride % a.shape.first() == 0,
+        compose_single_admissible(
+            LayoutSpec { shape: a.shape.skip(1), stride: a.stride.skip(1) },
+            b_shape, b_stride / a.shape.first()),
+    ensures
+        compose_single_admissible(a, b_shape, b_stride),
+{
+    // The skip case matches when b_stride >= m && m | b_stride
+    // And recursive admissibility holds.
+}
+
 } // verus!
