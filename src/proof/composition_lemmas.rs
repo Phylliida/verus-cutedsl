@@ -1870,6 +1870,55 @@ pub proof fn lemma_compose_wf(a: LayoutSpec, b: LayoutSpec)
     }
 }
 
+/// Helper: shape_size(compose(a, b).shape) == b.size() when each mode is admissible.
+pub proof fn lemma_compose_size(a: LayoutSpec, b: LayoutSpec)
+    requires
+        a.valid(),
+        b.valid(),
+        b.non_negative_strides(),
+        forall|i: int| 0 <= i < b.shape.len() ==>
+            compose_single_admissible(a, #[trigger] b.shape[i], b.stride[i] as nat),
+    ensures
+        shape_size(compose(a, b).shape) == b.size(),
+    decreases b.shape.len(),
+{
+    if b.shape.len() == 0 {
+        assert(compose(a, b).shape =~= Seq::<nat>::empty());
+    } else if b.shape.len() == 1 {
+        lemma_crs_size(a, b.shape.first(), b.stride.first() as nat);
+        assert(compose(a, b) == compose_single(a, b.shape.first(), b.stride.first() as nat));
+        assert(b.shape =~= seq![b.shape.first()]);
+        lemma_shape_size_single(b.shape.first());
+    } else {
+        let cs = compose_single(a, b.shape.first(), b.stride.first() as nat);
+        let b_rest = LayoutSpec { shape: b.shape.skip(1), stride: b.stride.skip(1) };
+        assert(b_rest.valid()) by {
+            assert forall|i: int| 0 <= i < b_rest.shape.len()
+            implies #[trigger] b_rest.shape[i] > 0 by { assert(b_rest.shape[i] == b.shape[i + 1]); };
+        };
+        assert(b_rest.non_negative_strides()) by {
+            assert forall|i: int| 0 <= i < b_rest.stride.len()
+            implies #[trigger] b_rest.stride[i] >= 0 by { assert(b_rest.stride[i] == b.stride[i + 1]); };
+        };
+        assert forall|i: int| 0 <= i < b_rest.shape.len()
+        implies compose_single_admissible(a, #[trigger] b_rest.shape[i], b_rest.stride[i] as nat)
+        by {
+            assert(b_rest.shape[i] == b.shape[i + 1]);
+            assert(b_rest.stride[i] == b.stride[i + 1]);
+        };
+        lemma_compose_size(a, b_rest);
+        lemma_crs_size(a, b.shape.first(), b.stride.first() as nat);
+        let rest_c = compose(a, b_rest);
+        assert(compose(a, b).shape =~= cs.shape.add(rest_c.shape));
+        crate::proof::product_lemmas::lemma_shape_size_append(cs.shape, rest_c.shape);
+        // shape_size(compose(a, b).shape) = shape_size(cs.shape) * shape_size(rest_c.shape)
+        //                                = bs * b_rest.size() = b.size()
+        crate::runtime::shape_helpers::lemma_shape_size_split(b.shape, 1);
+        assert(b.shape.take(1) =~= seq![b.shape.first()]);
+        lemma_shape_size_single(b.shape.first());
+    }
+}
+
 /// Predicate: compose(A, B) is correct at all indices.
 /// Requires single-mode admissibility per mode and offset additivity.
 pub open spec fn compose_recursive_correct_at(a: LayoutSpec, b: LayoutSpec) -> bool
@@ -1896,6 +1945,29 @@ pub open spec fn compose_recursive_correct_at(a: LayoutSpec, b: LayoutSpec) -> b
             #[trigger] a.offset((b.stride.first() * (c as int)) as nat + rest_off)
                 == a.offset((b.stride.first() * (c as int)) as nat) + a.offset(rest_off)
     })
+}
+
+/// Helper: compose_recursive_correct_at implies per-mode admissibility.
+pub proof fn lemma_correct_at_implies_admissible(a: LayoutSpec, b: LayoutSpec)
+    requires compose_recursive_correct_at(a, b),
+    ensures
+        forall|i: int| 0 <= i < b.shape.len() ==>
+            compose_single_admissible(a, #[trigger] b.shape[i], b.stride[i] as nat),
+    decreases b.shape.len(),
+{
+    if b.shape.len() > 0 {
+        let b_rest = LayoutSpec { shape: b.shape.skip(1), stride: b.stride.skip(1) };
+        lemma_correct_at_implies_admissible(a, b_rest);
+        assert forall|i: int| 0 <= i < b.shape.len()
+        implies compose_single_admissible(a, #[trigger] b.shape[i], b.stride[i] as nat)
+        by {
+            if i == 0 {
+            } else {
+                assert(b.shape[i] == b_rest.shape[i - 1]);
+                assert(b.stride[i] == b_rest.stride[i - 1]);
+            }
+        };
+    }
 }
 
 /// Multi-mode compose correctness: compose(A, B).offset(x) == A.offset(B.offset(x)).
@@ -1978,6 +2050,21 @@ pub proof fn lemma_compose_recursive_correct(a: LayoutSpec, b: LayoutSpec, x: na
     lemma_compose_wf(a, b_rest);
 
     crate::proof::product_lemmas::lemma_shape_size_append(cs.shape, rest_c.shape);
+
+    // x < shape_size(cs.shape) * shape_size(rest_c.shape)
+    // shape_size(rest_c.shape) == b_rest.size() (from lemma_compose_size)
+    lemma_correct_at_implies_admissible(a, b);
+    assert forall|i: int| 0 <= i < b_rest.shape.len()
+    implies compose_single_admissible(a, #[trigger] b_rest.shape[i], b_rest.stride[i] as nat)
+    by {
+        assert(b_rest.shape[i] == b.shape[i + 1]);
+        assert(b_rest.stride[i] == b.stride[i + 1]);
+    };
+    lemma_compose_size(a, b_rest);
+    assert(shape_size(rest_c.shape) == b_rest.size());
+    crate::runtime::shape_helpers::lemma_shape_size_split(b.shape, 1);
+    assert(b.shape.take(1) =~= seq![bs]);
+    lemma_shape_size_single(bs);
 
     // Decompose composed.offset(x) via concat
     lemma_delinearize_concat(x, cs.shape, rest_c.shape);

@@ -1660,4 +1660,68 @@ pub proof fn lemma_divide_recursive_agrees_mode(a: &LayoutSpec, n: nat)
     // compose_single returns (n):(1 * d_0) = (n):(d_0)
 }
 
+// ══════════════════════════════════════════════════════════════
+// logical_divide (using compose) correctness for column-major
+// ══════════════════════════════════════════════════════════════
+
+/// Predicate: the zipped layout from divide is compose_recursive_correct_at.
+/// This ensures logical_divide (using compose) produces correct offsets.
+pub open spec fn divide_compose_admissible(a: &LayoutSpec, b: &LayoutSpec) -> bool {
+    let m = shape_size(a.shape);
+    let c = complement(b, m);
+    let zipped = LayoutSpec {
+        shape: b.shape.add(c.shape),
+        stride: b.stride.add(c.stride),
+    };
+    crate::proof::composition_lemmas::compose_recursive_correct_at(*a, zipped)
+}
+
+/// For column-major A and B with divide_compose_admissible,
+/// logical_divide(A, B) has identity offset.
+pub proof fn lemma_divide_offset_column_major_compose(
+    a: &LayoutSpec, b: &LayoutSpec, x: nat,
+)
+    requires
+        divide_admissible(a, b),
+        a.stride =~= column_major_strides(a.shape),
+        b.stride =~= column_major_strides(b.shape),
+        divide_compose_admissible(a, b),
+        x < shape_size(a.shape),
+    ensures
+        logical_divide(a, b).offset(x) == x as int,
+{
+    let m = shape_size(a.shape);
+    let c = complement(b, m);
+    let zipped = LayoutSpec {
+        shape: b.shape.add(c.shape),
+        stride: b.stride.add(c.stride),
+    };
+
+    // zipped valid + non-negative strides + size == m
+    crate::proof::tiling_lemmas::lemma_zipped_setup(a, b);
+
+    // zipped has identity offset for column-major B
+    lemma_zipped_identity_offset(b, m, x);
+    assert(zipped.offset(x) == x as int);
+    assert(zipped.offset(x) >= 0);
+
+    // A has identity offset (column-major)
+    crate::proof::inverse_lemmas::lemma_column_major_strides_first(a.shape);
+    assert(a.stride[0] == 1int);
+    lemma_column_major_offset_is_identity(a.shape, x);
+    assert(LayoutSpec { shape: a.shape, stride: column_major_strides(a.shape) }.offset(x) == x as int);
+
+    // compose_recursive_correct_at holds (from requires)
+    assert(crate::proof::composition_lemmas::compose_recursive_correct_at(*a, zipped));
+
+    // Apply multi-mode compose correctness:
+    // compose(A, zipped).offset(x) == A.offset(zipped.offset(x))
+    crate::proof::composition_lemmas::lemma_compose_recursive_correct(*a, zipped, x);
+    assert(compose(*a, zipped).offset(x) == a.offset(zipped.offset(x) as nat));
+
+    // A.offset(x) == x (column-major identity)
+    assert(zipped.offset(x) as nat == x);
+    assert(a.offset(x) == x as int);
+}
+
 } // verus!

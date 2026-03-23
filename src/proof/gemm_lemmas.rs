@@ -1725,6 +1725,86 @@ pub proof fn lemma_sm80_smem_tile_swizzle_divide(
 }
 
 // ══════════════════════════════════════════════════════════════
+// logical_divide (correct compose) SMEM proofs
+// ══════════════════════════════════════════════════════════════
+
+/// Divided column-major SMEM tile has identity offset (using correct compose).
+pub proof fn lemma_smem_divide_identity_compose(
+    smem_base: &LayoutSpec, thread_tile: &LayoutSpec, x: nat,
+)
+    requires
+        divide_admissible(smem_base, thread_tile),
+        smem_base.stride =~= column_major_strides(smem_base.shape),
+        thread_tile.stride =~= column_major_strides(thread_tile.shape),
+        crate::proof::divide_lemmas::divide_compose_admissible(smem_base, thread_tile),
+        x < shape_size(smem_base.shape),
+    ensures
+        logical_divide(smem_base, thread_tile).offset(x) == x as int,
+{
+    crate::proof::divide_lemmas::lemma_divide_offset_column_major_compose(
+        smem_base, thread_tile, x);
+}
+
+/// Swizzled divided SMEM injectivity (using correct compose).
+pub proof fn lemma_smem_swizzle_divide_injective_compose(
+    smem_base: &LayoutSpec, thread_tile: &LayoutSpec,
+    b_bits: nat, m_bits: nat, s_bits: nat,
+)
+    requires
+        divide_admissible(smem_base, thread_tile),
+        smem_base.stride =~= column_major_strides(smem_base.shape),
+        thread_tile.stride =~= column_major_strides(thread_tile.shape),
+        crate::proof::divide_lemmas::divide_compose_admissible(smem_base, thread_tile),
+        swizzle_admissible(b_bits, m_bits, s_bits),
+        shape_size(smem_base.shape) <= pow2(m_bits + s_bits + b_bits),
+    ensures
+        forall|i: nat, j: nat|
+            i < shape_size(smem_base.shape) && j < shape_size(smem_base.shape) && i != j
+            ==> swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(i) as nat, b_bits, m_bits, s_bits)
+                != swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(j) as nat, b_bits, m_bits, s_bits),
+{
+    let sz = shape_size(smem_base.shape);
+    assert forall|x: nat| x < sz implies
+        #[trigger] logical_divide(smem_base, thread_tile).offset(x) == x as int
+    by {
+        lemma_smem_divide_identity_compose(smem_base, thread_tile, x);
+    };
+
+    crate::proof::swizzle_lemmas::lemma_swizzle_bijection_on_domain(b_bits, m_bits, s_bits);
+
+    assert forall|i: nat, j: nat|
+        i < sz && j < sz && i != j
+    implies
+        swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(i) as nat, b_bits, m_bits, s_bits)
+        != swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(j) as nat, b_bits, m_bits, s_bits)
+    by {
+        assert(logical_divide(smem_base, thread_tile).offset(i) == i as int);
+        assert(logical_divide(smem_base, thread_tile).offset(j) == j as int);
+        assert(i < pow2(m_bits + s_bits + b_bits));
+        assert(j < pow2(m_bits + s_bits + b_bits));
+    };
+}
+
+/// SM80 instantiation with correct compose.
+pub proof fn lemma_sm80_smem_tile_swizzle_divide_compose(
+    smem_base: &LayoutSpec, thread_tile: &LayoutSpec,
+)
+    requires
+        divide_admissible(smem_base, thread_tile),
+        smem_base.stride =~= column_major_strides(smem_base.shape),
+        thread_tile.stride =~= column_major_strides(thread_tile.shape),
+        crate::proof::divide_lemmas::divide_compose_admissible(smem_base, thread_tile),
+        shape_size(smem_base.shape) <= pow2(6),
+    ensures
+        forall|i: nat, j: nat|
+            i < shape_size(smem_base.shape) && j < shape_size(smem_base.shape) && i != j
+            ==> swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(i) as nat, 3, 0, 3)
+                != swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(j) as nat, 3, 0, 3),
+{
+    lemma_smem_swizzle_divide_injective_compose(smem_base, thread_tile, 3, 0, 3);
+}
+
+// ══════════════════════════════════════════════════════════════
 // E2E GEMM correctness proofs (Feature 5 Round 6)
 // ══════════════════════════════════════════════════════════════
 
