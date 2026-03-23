@@ -224,13 +224,14 @@ pub proof fn lemma_delinearize_coord_expr_correct(
     assert(pp > 0nat);
 
     if i == 0 {
-        // Use helper: arith_eval of Mod(Div(Var(0), Const(1)), Const(shape[0])) = (x/1)%shape[0] = x%shape[0]
         assert(shape_prefix_product(shape, 0) == 1nat);
         assert(shape[0] > 0nat);
-        lemma_arith_eval_mod_div(0, 1int, shape[0] as int, seq![x as int]);
+        // Use helper for ArithExpr eval
+        lemma_arith_eval_mod_div(0, pp as int, shape[0] as int, seq![x as int]);
+        // (x / 1) % shape[0] = x % shape[0]
+        assert((x as int) / 1int == x as int);
         // delinearize(x, shape)[0] = x % shape[0]
         crate::proof::shape_lemmas::lemma_delinearize_len(x, shape);
-        assert(delinearize(x, shape)[0] == x % shape.first());
     } else {
         // delinearize(x, shape)[i] = delinearize(x / shape[0], skip(1))[i-1]
         // By IH: = ((x/shape[0]) / pp_rest(i-1)) % shape_rest[i-1]
