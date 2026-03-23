@@ -1339,7 +1339,7 @@ pub open spec fn compose_single_admissible(
 
 /// compose_single always produces shape.len() == stride.len().
 /// Uses minimal requires (no recursive admissibility predicate needed).
-proof fn lemma_crs_len_match(a: LayoutSpec, b_shape: nat, b_stride: nat)
+pub proof fn lemma_crs_len_match(a: LayoutSpec, b_shape: nat, b_stride: nat)
     requires a.valid(), b_shape > 0,
     ensures
         compose_single(a, b_shape, b_stride).shape.len()
@@ -1383,7 +1383,7 @@ proof fn lemma_crs_len_match(a: LayoutSpec, b_shape: nat, b_stride: nat)
 
 /// compose_single always produces valid shape (all entries > 0).
 /// Uses minimal requires (no recursive admissibility predicate needed).
-proof fn lemma_crs_shape_valid(a: LayoutSpec, b_shape: nat, b_stride: nat)
+pub proof fn lemma_crs_shape_valid(a: LayoutSpec, b_shape: nat, b_stride: nat)
     requires a.valid(), b_shape > 0,
     ensures shape_valid(compose_single(a, b_shape, b_stride).shape),
     decreases a.shape.len(),
@@ -1430,7 +1430,7 @@ proof fn lemma_crs_shape_valid(a: LayoutSpec, b_shape: nat, b_stride: nat)
 
 /// compose_single preserves total size: shape_size(result.shape) == b_shape.
 /// (Requires admissibility to ensure straddle case has exact divisibility.)
-proof fn lemma_crs_size(a: LayoutSpec, b_shape: nat, b_stride: nat)
+pub proof fn lemma_crs_size(a: LayoutSpec, b_shape: nat, b_stride: nat)
     requires compose_single_admissible(a, b_shape, b_stride),
     ensures shape_size(compose_single(a, b_shape, b_stride).shape) == b_shape,
     decreases a.shape.len(),
