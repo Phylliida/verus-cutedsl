@@ -569,6 +569,7 @@ pub proof fn lemma_scan_kernel_correct(
         &ArithExpr::Var(0), &ArithExpr::Const(1), env, inputs);
 
     lemma_scan_reduce_matches(input, i + 1, i, env, inputs, &body);
+    // i + 1 > 0, so the second ensures gives us the prefix_sum_spec equality
 }
 
 /// Inductive helper: reduce_sum_arrays for scan body matches prefix_sum_spec.
@@ -586,30 +587,31 @@ proof fn lemma_scan_reduce_matches(
         inputs[0] == input,
         *body == ArithExpr::Index(0, Box::new(ArithExpr::Var(1))),
     ensures
-        reduce_sum_arrays(1, kk as int, body, env, inputs)
-            == (if kk == 0 { 0 } else { prefix_sum_spec(input, (kk - 1) as nat) }),
+        kk == 0 ==> reduce_sum_arrays(1, kk as int, body, env, inputs) == 0,
+        kk > 0 ==> reduce_sum_arrays(1, kk as int, body, env, inputs)
+            == prefix_sum_spec(input, (kk - 1) as nat),
     decreases kk,
 {
     if kk == 0 {
-        assert(reduce_sum_arrays(1, 0int, body, env, inputs) == 0int);
-    } else if kk == 1 {
-        // reduce_sum_arrays(1, 1, body, env, inputs)
-        // = reduce_sum_arrays(1, 0, ...) + eval(body, env_with(env, 1, 0))
-        // = 0 + input[0] = input[0]
-        // prefix_sum_spec(input, 0) = input[0]
-        let ext_env = env_with(env, 1, 0);
-        assert(ext_env[1] == 0int);
-        crate::arith_expr::lemma_eval_with_arrays_index(
-            0, &ArithExpr::Var(1), ext_env, inputs, 0);
     } else {
-        lemma_scan_reduce_matches(input, (kk - 1) as nat, i, env, inputs, body);
-
         let d = (kk - 1) as nat;
         let ext_env = env_with(env, 1, d as int);
         assert(ext_env[1] == d as int);
         assert(d < input.len());
+
+        // Body eval: Index(0, Var(1)) in ext_env = input[d]
         crate::arith_expr::lemma_eval_with_arrays_index(
             0, &ArithExpr::Var(1), ext_env, inputs, d as int);
+        // Connect: body is Index(0, Box(Var(1))), so eval(body, ext_env) == input[d]
+        assert(arith_eval_with_arrays(body, ext_env, inputs) == input[d as int]);
+
+        if kk > 1 {
+            lemma_scan_reduce_matches(input, (kk - 1) as nat, i, env, inputs, body);
+            // IH gives: reduce_sum_arrays(1, kk-1, ...) == prefix_sum_spec(input, kk-2)
+            // reduce_sum(kk) = reduce_sum(kk-1) + input[kk-1]
+            //                = prefix_sum_spec(input, kk-2) + input[kk-1]
+            //                = prefix_sum_spec(input, kk-1) by definition
+        }
     }
 }
 
