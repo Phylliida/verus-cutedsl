@@ -518,12 +518,17 @@ proof fn lemma_conv1d_reduce_matches(
 // Scan (prefix sum) kernel — demonstrates variable-bound Reduce
 // ══════════════════════════════════════════════════════════════
 
-/// Inclusive prefix sum spec: out[i] = Σ_{j=0}^{i} input[j]
-pub open spec fn prefix_sum_spec(input: Seq<int>, i: nat) -> int
-    decreases i + 1,
+/// Partial sum spec: Σ_{j=0}^{kk-1} input[j]. Works for kk=0 (returns 0).
+pub open spec fn partial_sum(input: Seq<int>, kk: nat) -> int
+    decreases kk,
 {
-    if i == 0 { input[0] }
-    else { prefix_sum_spec(input, (i - 1) as nat) + input[i as int] }
+    if kk == 0 { 0 }
+    else { partial_sum(input, (kk - 1) as nat) + input[(kk - 1) as int] }
+}
+
+/// Inclusive prefix sum: out[i] = partial_sum(input, i + 1) = Σ_{j=0}^{i} input[j]
+pub open spec fn prefix_sum_spec(input: Seq<int>, i: nat) -> int {
+    partial_sum(input, i + 1)
 }
 
 /// Inclusive scan kernel: out[i] = Σ_{j=0}^{i} input[j]
@@ -572,7 +577,7 @@ pub proof fn lemma_scan_kernel_correct(
     // i + 1 > 0, so the second ensures gives us the prefix_sum_spec equality
 }
 
-/// Inductive helper: reduce_sum_arrays for scan body matches prefix_sum_spec.
+/// Inductive helper: reduce_sum_arrays for scan body matches partial_sum.
 proof fn lemma_scan_reduce_matches(
     input: Seq<int>, kk: nat, i: nat,
     env: Seq<int>, inputs: Seq<Seq<int>>,
@@ -587,31 +592,21 @@ proof fn lemma_scan_reduce_matches(
         inputs[0] == input,
         *body == ArithExpr::Index(0, Box::new(ArithExpr::Var(1))),
     ensures
-        kk == 0 ==> reduce_sum_arrays(1, kk as int, body, env, inputs) == 0,
-        kk > 0 ==> reduce_sum_arrays(1, kk as int, body, env, inputs)
-            == prefix_sum_spec(input, (kk - 1) as nat),
+        reduce_sum_arrays(1, kk as int, body, env, inputs) == partial_sum(input, kk),
     decreases kk,
 {
     if kk == 0 {
     } else {
+        lemma_scan_reduce_matches(input, (kk - 1) as nat, i, env, inputs, body);
+
         let d = (kk - 1) as nat;
         let ext_env = env_with(env, 1, d as int);
         assert(ext_env[1] == d as int);
         assert(d < input.len());
 
-        // Body eval: Index(0, Var(1)) in ext_env = input[d]
         crate::arith_expr::lemma_eval_with_arrays_index(
             0, &ArithExpr::Var(1), ext_env, inputs, d as int);
-        // Connect: body is Index(0, Box(Var(1))), so eval(body, ext_env) == input[d]
         assert(arith_eval_with_arrays(body, ext_env, inputs) == input[d as int]);
-
-        if kk > 1 {
-            lemma_scan_reduce_matches(input, (kk - 1) as nat, i, env, inputs, body);
-            // IH gives: reduce_sum_arrays(1, kk-1, ...) == prefix_sum_spec(input, kk-2)
-            // reduce_sum(kk) = reduce_sum(kk-1) + input[kk-1]
-            //                = prefix_sum_spec(input, kk-2) + input[kk-1]
-            //                = prefix_sum_spec(input, kk-1) by definition
-        }
     }
 }
 
