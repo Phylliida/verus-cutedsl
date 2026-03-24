@@ -160,37 +160,21 @@ pub proof fn lemma_gemm_kernel_element_correct(
     let inputs = seq![a, b];
     let body = gemm_kernel_body(k_size, n);
 
+    // Help Z3 unfold: k.compute is Reduce(2, Const(K), body)
+    // arith_eval_with_arrays(Reduce(2, Const(K), body), env, inputs)
+    //   = reduce_sum_arrays(2, K, &body, env, inputs)
+    let bound_expr = ArithExpr::Const(k_size as int);
+    assert(arith_eval_with_arrays(&bound_expr, env, inputs) == k_size as int);
+
+    // Connect arith_eval_with_arrays on the Reduce node to reduce_sum_arrays
+    assert(arith_eval_with_arrays(&kern.compute, env, inputs)
+        == reduce_sum_arrays(2, k_size as int, &body, env, inputs));
+
     if k_size == 0 {
         // Both sides are 0
     } else {
-        // IH for k_size - 1
-        // We need the Reduce to split: sum(0..K) = sum(0..K-1) + body(K-1)
-        // This follows from reduce_sum_arrays definition.
-        // The body at k = k_size-1 should equal a[i*K+(K-1)] * b[(K-1)*N+j]
-
-        // The key: env_with([i,j], 2, k_size-1) = [i, j, k_size-1]
-        // Then body evaluates to: inputs[0][i*K+(k_size-1)] * inputs[1][(k_size-1)*N+j]
-        // = a[i*K+(k_size-1)] * b[(k_size-1)*N+j]
-        // which matches gemm_partial_sum_int's last term.
-
-        // For the recursive part, we need the sum over 0..K-1.
-        // But the Reduce node has bound = Const(k_size), not Const(k_size-1).
-        // So we can't directly apply the IH to the Reduce node —
-        // we need to work with reduce_sum_arrays directly.
-
-        // Actually: arith_eval_with_arrays(Reduce(2, Const(K), body), env, inputs)
-        //   = reduce_sum_arrays(2, K, body, env, inputs)
-        //   = reduce_sum_arrays(2, K-1, body, env, inputs) + arith_eval_with_arrays(body, env_with(env, 2, K-1), inputs)
-
-        // And gemm_partial_sum_int(a, b, K, N, i, j, K)
-        //   = gemm_partial_sum_int(a, b, K, N, i, j, K-1) + a[i*K+(K-1)] * b[(K-1)*N+j]
-
-        // So we need:
-        // 1. reduce_sum_arrays(2, K-1, body, env, inputs) == gemm_partial_sum_int(a, b, K, N, i, j, K-1)
-        // 2. arith_eval_with_arrays(body, env_with(env, 2, K-1), inputs) == a[i*K+(K-1)] * b[(K-1)*N+j]
-
-        // For (1): this is exactly the same structure but with k_size-1 iterations.
-        // We prove it by a helper that works on the partial sum directly.
+        assert(a.len() >= (i * k_size + k_size) as int) by (nonlinear_arith)
+            requires i < m, m > 0, a.len() == m * k_size;
         lemma_gemm_reduce_matches_partial_sum(a, b, k_size, n, i, j, k_size);
     }
 }
@@ -218,8 +202,8 @@ proof fn lemma_gemm_reduce_matches_partial_sum(
 )
     requires
         kk <= k_size,
-        a.len() == (i + 1) * k_size,  // at least enough for row i
-        b.len() == k_size * n,
+        a.len() >= (i * k_size + k_size) as int,
+        b.len() >= (k_size * n) as int,
         j < n, n > 0,
     ensures ({
         let body = gemm_kernel_body(k_size, n);
@@ -240,30 +224,45 @@ proof fn lemma_gemm_reduce_matches_partial_sum(
         // IH
         lemma_gemm_reduce_matches_partial_sum(a, b, k_size, n, i, j, (kk - 1) as nat);
 
-        // Now show the kk-1'th term matches:
-        // reduce_sum_arrays adds: arith_eval_with_arrays(body, env_with(env, 2, kk-1), inputs)
-        // gemm_partial_sum_int adds: a[i*K+(kk-1)] * b[(kk-1)*N+j]
-        //
-        // env_with([i, j], 2, kk-1) = [i, j, kk-1]  (extends env to length 3)
-        // body = Mul(Index(0, Add(Mul(Var(0), Const(K)), Var(2))),
-        //            Index(1, Add(Mul(Var(2), Const(N)), Var(1))))
-        // eval(body, [i, j, kk-1], [a, b]):
-        //   left  = a[eval(Add(Mul(Var(0), Const(K)), Var(2)), [i,j,kk-1])] = a[i*K + (kk-1)]
-        //   right = b[eval(Add(Mul(Var(2), Const(N)), Var(1)), [i,j,kk-1])] = b[(kk-1)*N + j]
-        //   result = a[i*K+(kk-1)] * b[(kk-1)*N+j] ✓
-
         let ext_env = env_with(env, 2, (kk - 1) as int);
-        // Help Z3: show env_with produces [i, j, kk-1]
         assert(ext_env.len() == 3);
         assert(ext_env[0] == i as int);
         assert(ext_env[1] == j as int);
         assert(ext_env[2] == (kk - 1) as int);
 
-        // Help Z3: the index computations
-        assert(i * k_size + (kk - 1) < a.len()) by (nonlinear_arith)
-            requires i * k_size < a.len(), kk >= 1, kk <= k_size, a.len() == (i + 1) * k_size;
-        assert((kk - 1) * n + j < b.len()) by (nonlinear_arith)
-            requires kk >= 1, kk <= k_size, j < n, b.len() == k_size * n;
+        // Index bounds
+        assert(0 <= i * k_size + (kk - 1) < a.len()) by (nonlinear_arith)
+            requires kk >= 1, kk <= k_size, a.len() >= i * k_size + k_size;
+        assert(0 <= (kk - 1) * n + j < b.len()) by (nonlinear_arith)
+            requires kk >= 1, kk <= k_size, j < n, n > 0, b.len() >= k_size * n;
+
+        // Use existing Box-unfolding helpers for the linear index pattern
+        // a_idx = Add(Mul(Var(0), Const(K)), Var(2)) = i*K + (kk-1)
+        crate::arith_expr::lemma_eval_with_arrays_linear_index(
+            0, k_size as int, 2, ext_env, inputs);
+        // b_idx = Add(Mul(Var(2), Const(N)), Var(1)) = (kk-1)*N + j
+        crate::arith_expr::lemma_eval_with_arrays_linear_index(
+            2, n as int, 1, ext_env, inputs);
+
+        // Now Z3 knows the index values. Help with the full body via
+        // Index + Mul unfolding.
+        let a_idx_expr = ArithExpr::Add(
+            Box::new(ArithExpr::Mul(Box::new(ArithExpr::Var(0)), Box::new(ArithExpr::Const(k_size as int)))),
+            Box::new(ArithExpr::Var(2)),
+        );
+        let b_idx_expr = ArithExpr::Add(
+            Box::new(ArithExpr::Mul(Box::new(ArithExpr::Var(2)), Box::new(ArithExpr::Const(n as int)))),
+            Box::new(ArithExpr::Var(1)),
+        );
+        let a_idx_val = (i * k_size + (kk - 1)) as int;
+        let b_idx_val = ((kk - 1) * n + j) as int;
+        crate::arith_expr::lemma_eval_with_arrays_index(
+            0, &a_idx_expr, ext_env, inputs, a_idx_val);
+        crate::arith_expr::lemma_eval_with_arrays_index(
+            1, &b_idx_expr, ext_env, inputs, b_idx_val);
+        let idx_a = ArithExpr::Index(0, Box::new(a_idx_expr));
+        let idx_b = ArithExpr::Index(1, Box::new(b_idx_expr));
+        crate::arith_expr::lemma_eval_with_arrays_mul(&idx_a, &idx_b, ext_env, inputs);
     }
 }
 
@@ -308,6 +307,20 @@ pub proof fn lemma_vector_add_kernel_correct(
         let inputs = seq![a, b];
         arith_eval_with_arrays(&k.compute, env, inputs) == a[i as int] + b[i as int]
     }),
-{}
+{
+    let k = vector_add_kernel(n);
+    let env = thread_env_1d(i);
+    let inputs = seq![a, b];
+
+    // Help Z3 unfold through Box wrappers
+    let var0 = ArithExpr::Var(0);
+    let idx_a = ArithExpr::Index(0, Box::new(var0));
+    let idx_b = ArithExpr::Index(1, Box::new(ArithExpr::Var(0)));
+
+    assert(env[0] == i as int);
+    assert(arith_eval_with_arrays(&ArithExpr::Var(0), env, inputs) == i as int);
+    assert(arith_eval_with_arrays(&idx_a, env, inputs) == a[i as int]);
+    assert(arith_eval_with_arrays(&idx_b, env, inputs) == b[i as int]);
+}
 
 } // verus!

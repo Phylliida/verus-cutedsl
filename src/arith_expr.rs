@@ -715,7 +715,7 @@ pub proof fn lemma_gemm_b_index_correct(n: nat, i: int, j: int, k: int)
 }
 
 /// Helper: for a linear index expr (Add(Mul(Var,Const),Var)), eval_with_arrays == arith_eval.
-proof fn lemma_eval_with_arrays_linear_index(v1: nat, c: int, v2: nat, env: Seq<int>, arrays: Seq<Seq<int>>)
+pub proof fn lemma_eval_with_arrays_linear_index(v1: nat, c: int, v2: nat, env: Seq<int>, arrays: Seq<Seq<int>>)
     requires (v1 as int) < env.len(), (v2 as int) < env.len(),
     ensures
         arith_eval_with_arrays(&ArithExpr::Add(
@@ -734,7 +734,7 @@ proof fn lemma_eval_with_arrays_linear_index(v1: nat, c: int, v2: nat, env: Seq<
 }
 
 /// Helper: eval_with_arrays of Index(arr, idx_expr) = arrays[arr][eval_with_arrays(idx_expr)].
-proof fn lemma_eval_with_arrays_index(
+pub proof fn lemma_eval_with_arrays_index(
     arr: nat, idx_expr: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
     expected_idx: int,
 )
@@ -750,7 +750,7 @@ proof fn lemma_eval_with_arrays_index(
 {}
 
 /// Helper: eval_with_arrays of Mul(a, b) = eval(a) * eval(b).
-proof fn lemma_eval_with_arrays_mul(
+pub proof fn lemma_eval_with_arrays_mul(
     a: &ArithExpr, b: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
 )
     ensures
