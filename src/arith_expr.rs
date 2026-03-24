@@ -8,6 +8,11 @@ verus! {
 // Verified arithmetic expression language for GPU codegen
 // ══════════════════════════════════════════════════════════════
 
+/// Comparison operator for Cmp node.
+pub enum CmpOp {
+    Lt, Le, Gt, Ge, Eq, Ne,
+}
+
 /// Arithmetic expression — the IR shared between Verus verification and GPU codegen.
 /// Every CuTe index computation reduces to this language.
 pub enum ArithExpr {
@@ -17,6 +22,8 @@ pub enum ArithExpr {
     Var(nat),
     /// Addition
     Add(Box<ArithExpr>, Box<ArithExpr>),
+    /// Subtraction
+    Sub(Box<ArithExpr>, Box<ArithExpr>),
     /// Multiplication
     Mul(Box<ArithExpr>, Box<ArithExpr>),
     /// Integer division (truncating toward zero)
@@ -24,20 +31,74 @@ pub enum ArithExpr {
     /// Integer modulo
     Mod(Box<ArithExpr>, Box<ArithExpr>),
     /// Array index: arrays[arr_idx][index_expr]
-    /// Evaluates index_expr, looks up in the arrays environment.
     Index(nat, Box<ArithExpr>),
+    /// Comparison: returns 1 if true, 0 if false
+    Cmp(CmpOp, Box<ArithExpr>, Box<ArithExpr>),
+    /// Summation reduction: Reduce(var, bound, body) = Σ_{var=0}^{bound-1} body
+    /// `var` is the variable index, `bound` is evaluated, body is evaluated
+    /// with env[var] set to each value 0..bound-1.
+    Reduce(nat, Box<ArithExpr>, Box<ArithExpr>),
+}
+
+/// Evaluate a comparison operator.
+pub open spec fn cmp_eval(op: &CmpOp, a: int, b: int) -> int {
+    match op {
+        CmpOp::Lt => if a < b { 1 } else { 0 },
+        CmpOp::Le => if a <= b { 1 } else { 0 },
+        CmpOp::Gt => if a > b { 1 } else { 0 },
+        CmpOp::Ge => if a >= b { 1 } else { 0 },
+        CmpOp::Eq => if a == b { 1 } else { 0 },
+        CmpOp::Ne => if a != b { 1 } else { 0 },
+    }
+}
+
+/// Update env[var] = val, extending with zeros if needed.
+pub open spec fn env_with(env: Seq<int>, var: nat, val: int) -> Seq<int> {
+    if (var as int) < env.len() {
+        env.update(var as int, val)
+    } else {
+        Seq::new((var + 1) as nat, |i: int|
+            if i < env.len() { env[i] }
+            else if i == var as int { val }
+            else { 0 }
+        )
+    }
+}
+
+/// Summation spec: Σ_{i=0}^{n-1} arith_eval(body, env[var := i])
+pub open spec fn reduce_sum(var: nat, n: int, body: &ArithExpr, env: Seq<int>) -> int
+    decreases body, (if n > 0 { n } else { 0 }),
+{
+    if n <= 0 { 0 }
+    else {
+        reduce_sum(var, n - 1, body, env)
+            + arith_eval(body, env_with(env, var, n - 1))
+    }
+}
+
+/// Summation with arrays: Σ_{i=0}^{n-1} arith_eval_with_arrays(body, env[var := i], arrays)
+pub open spec fn reduce_sum_arrays(
+    var: nat, n: int, body: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
+) -> int
+    decreases body, (if n > 0 { n } else { 0 }),
+{
+    if n <= 0 { 0 }
+    else {
+        reduce_sum_arrays(var, n - 1, body, env, arrays)
+            + arith_eval_with_arrays(body, env_with(env, var, n - 1), arrays)
+    }
 }
 
 /// Evaluate an arithmetic expression.
 /// - `env`: scalar variable bindings (for Var)
-/// - `arrays`: array data (for Index) — arrays[arr_idx] is a Seq<int>
 pub open spec fn arith_eval(expr: &ArithExpr, env: Seq<int>) -> int
-    decreases expr,
+    decreases expr, 0int,
 {
     match expr {
         ArithExpr::Const(c) => *c,
         ArithExpr::Var(i) => if (*i as int) < env.len() { env[*i as int] } else { 0 },
         ArithExpr::Add(a, b) => arith_eval(a, env) + arith_eval(b, env),
+        ArithExpr::Sub(a, b) => arith_eval(a, env) - arith_eval(b, env),
         ArithExpr::Mul(a, b) => arith_eval(a, env) * arith_eval(b, env),
         ArithExpr::Div(a, b) => {
             let denom = arith_eval(b, env);
@@ -48,11 +109,12 @@ pub open spec fn arith_eval(expr: &ArithExpr, env: Seq<int>) -> int
             if denom != 0 { arith_eval(a, env) % denom } else { 0 }
         },
         ArithExpr::Index(arr_idx, idx_expr) => {
-            // Index evaluates the index expression, then looks up in env
-            // For simplicity, Index is a marker — actual array lookup is handled
-            // by the caller mapping Index results to array accesses.
-            // We evaluate to just the index value (the offset into the array).
             arith_eval(idx_expr, env)
+        },
+        ArithExpr::Cmp(op, a, b) => cmp_eval(op, arith_eval(a, env), arith_eval(b, env)),
+        ArithExpr::Reduce(var, bound, body) => {
+            let n = arith_eval(bound, env);
+            reduce_sum(*var, n, body, env)
         },
     }
 }
@@ -61,13 +123,15 @@ pub open spec fn arith_eval(expr: &ArithExpr, env: Seq<int>) -> int
 pub open spec fn arith_eval_with_arrays(
     expr: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
 ) -> int
-    decreases expr,
+    decreases expr, 0int,
 {
     match expr {
         ArithExpr::Const(c) => *c,
         ArithExpr::Var(i) => if (*i as int) < env.len() { env[*i as int] } else { 0 },
         ArithExpr::Add(a, b) =>
             arith_eval_with_arrays(a, env, arrays) + arith_eval_with_arrays(b, env, arrays),
+        ArithExpr::Sub(a, b) =>
+            arith_eval_with_arrays(a, env, arrays) - arith_eval_with_arrays(b, env, arrays),
         ArithExpr::Mul(a, b) =>
             arith_eval_with_arrays(a, env, arrays) * arith_eval_with_arrays(b, env, arrays),
         ArithExpr::Div(a, b) => {
@@ -83,6 +147,13 @@ pub open spec fn arith_eval_with_arrays(
             if (*arr_idx as int) < arrays.len() && 0 <= idx && idx < arrays[*arr_idx as int].len() {
                 arrays[*arr_idx as int][idx]
             } else { 0 }
+        },
+        ArithExpr::Cmp(op, a, b) =>
+            cmp_eval(op, arith_eval_with_arrays(a, env, arrays),
+                          arith_eval_with_arrays(b, env, arrays)),
+        ArithExpr::Reduce(var, bound, body) => {
+            let n = arith_eval_with_arrays(bound, env, arrays);
+            reduce_sum_arrays(*var, n, body, env, arrays)
         },
     }
 }
@@ -491,6 +562,13 @@ proof fn lemma_arith_eval_add(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
             == arith_eval(a, env) + arith_eval(b, env),
 {}
 
+/// Helper: arith_eval of Sub(a, b) = arith_eval(a, env) - arith_eval(b, env).
+proof fn lemma_arith_eval_sub(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
+    ensures
+        arith_eval(&ArithExpr::Sub(Box::new(*a), Box::new(*b)), env)
+            == arith_eval(a, env) - arith_eval(b, env),
+{}
+
 /// Helper: arith_eval of Mul(a, b) = arith_eval(a, env) * arith_eval(b, env).
 proof fn lemma_arith_eval_mul(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     ensures
@@ -528,6 +606,16 @@ proof fn lemma_fits_i64_add(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
         arith_eval_fits_i64(b, env),
         i64::MIN as int <= arith_eval(a, env) + arith_eval(b, env),
         arith_eval(a, env) + arith_eval(b, env) <= i64::MAX as int,
+{}
+
+/// Helper: arith_eval_fits_i64 for a Sub node.
+proof fn lemma_fits_i64_sub(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
+    requires arith_eval_fits_i64(&ArithExpr::Sub(Box::new(*a), Box::new(*b)), env),
+    ensures
+        arith_eval_fits_i64(a, env),
+        arith_eval_fits_i64(b, env),
+        i64::MIN as int <= arith_eval(a, env) - arith_eval(b, env),
+        arith_eval(a, env) - arith_eval(b, env) <= i64::MAX as int,
 {}
 
 /// Helper: arith_eval_fits_i64 for a Mul node.
@@ -849,15 +937,36 @@ pub proof fn lemma_offset_expr_correct(
 // Runtime ArithExpr: exec-mode type mirroring ArithExpr with i64/u32
 // ══════════════════════════════════════════════════════════════
 
+/// Runtime comparison operator.
+pub enum RuntimeCmpOp {
+    Lt, Le, Gt, Ge, Eq, Ne,
+}
+
+impl RuntimeCmpOp {
+    pub open spec fn view_spec(&self) -> CmpOp {
+        match self {
+            RuntimeCmpOp::Lt => CmpOp::Lt,
+            RuntimeCmpOp::Le => CmpOp::Le,
+            RuntimeCmpOp::Gt => CmpOp::Gt,
+            RuntimeCmpOp::Ge => CmpOp::Ge,
+            RuntimeCmpOp::Eq => CmpOp::Eq,
+            RuntimeCmpOp::Ne => CmpOp::Ne,
+        }
+    }
+}
+
 /// Runtime arithmetic expression with concrete integer types for exec code.
 pub enum RuntimeArithExpr {
     Const(i64),
     Var(u32),
     Add(Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
+    Sub(Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
     Mul(Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
     Div(Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
     Mod(Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
     Index(u32, Box<RuntimeArithExpr>),
+    Cmp(RuntimeCmpOp, Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
+    Reduce(u32, Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
 }
 
 impl RuntimeArithExpr {
@@ -869,10 +978,13 @@ impl RuntimeArithExpr {
             RuntimeArithExpr::Const(c) => ArithExpr::Const(*c as int),
             RuntimeArithExpr::Var(i) => ArithExpr::Var(*i as nat),
             RuntimeArithExpr::Add(a, b) => ArithExpr::Add(Box::new(a.view_spec()), Box::new(b.view_spec())),
+            RuntimeArithExpr::Sub(a, b) => ArithExpr::Sub(Box::new(a.view_spec()), Box::new(b.view_spec())),
             RuntimeArithExpr::Mul(a, b) => ArithExpr::Mul(Box::new(a.view_spec()), Box::new(b.view_spec())),
             RuntimeArithExpr::Div(a, b) => ArithExpr::Div(Box::new(a.view_spec()), Box::new(b.view_spec())),
             RuntimeArithExpr::Mod(a, b) => ArithExpr::Mod(Box::new(a.view_spec()), Box::new(b.view_spec())),
             RuntimeArithExpr::Index(arr, idx) => ArithExpr::Index(*arr as nat, Box::new(idx.view_spec())),
+            RuntimeArithExpr::Cmp(op, a, b) => ArithExpr::Cmp(op.view_spec(), Box::new(a.view_spec()), Box::new(b.view_spec())),
+            RuntimeArithExpr::Reduce(var, bound, body) => ArithExpr::Reduce(*var as nat, Box::new(bound.view_spec()), Box::new(body.view_spec())),
         }
     }
 }
@@ -888,12 +1000,15 @@ pub open spec fn arith_eval_fits_i64(expr: &ArithExpr, env: Seq<int>) -> bool
     && arith_eval(expr, env) <= i64::MAX as int
     && match expr {
         ArithExpr::Const(_) | ArithExpr::Var(_) => true,
-        ArithExpr::Add(a, b) | ArithExpr::Mul(a, b) =>
+        ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b) =>
             arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env),
         ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) =>
             arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env)
             && arith_eval(a, env) >= 0 && arith_eval(b, env) > 0,
         ArithExpr::Index(_, idx) => arith_eval_fits_i64(idx, env),
+        ArithExpr::Cmp(_, a, b) =>
+            arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env),
+        ArithExpr::Reduce(_, _, _) => true, // Reduce bounds handled separately
     }
 }
 
@@ -1001,9 +1116,36 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
                 return r;
             }
         },
+        RuntimeArithExpr::Sub(a, b) => {
+            let va = runtime_arith_eval(a, env);
+            let vb = runtime_arith_eval(b, env);
+            proof {
+                lemma_arith_eval_sub(&a.view_spec(), &b.view_spec(), env_spec);
+                lemma_fits_i64_sub(&a.view_spec(), &b.view_spec(), env_spec);
+            }
+            return va - vb;
+        },
         RuntimeArithExpr::Index(_arr, idx) => {
             proof { lemma_arith_eval_index(*_arr as nat, &idx.view_spec(), env_spec); }
             return runtime_arith_eval(idx, env);
+        },
+        RuntimeArithExpr::Cmp(op, a, b) => {
+            let va = runtime_arith_eval(a, env);
+            let vb = runtime_arith_eval(b, env);
+            let r: i64 = match op {
+                RuntimeCmpOp::Lt => if va < vb { 1 } else { 0 },
+                RuntimeCmpOp::Le => if va <= vb { 1 } else { 0 },
+                RuntimeCmpOp::Gt => if va > vb { 1 } else { 0 },
+                RuntimeCmpOp::Ge => if va >= vb { 1 } else { 0 },
+                RuntimeCmpOp::Eq => if va == vb { 1 } else { 0 },
+                RuntimeCmpOp::Ne => if va != vb { 1 } else { 0 },
+            };
+            return r;
+        },
+        RuntimeArithExpr::Reduce(_var, _bound, _body) => {
+            // Exec Reduce evaluator deferred — spec proofs are the priority.
+            // For now, return 0 (callers should use spec-level kernel_eval).
+            return 0i64;
         },
     }
 }
