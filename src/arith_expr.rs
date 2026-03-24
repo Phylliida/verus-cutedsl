@@ -253,11 +253,9 @@ proof fn lemma_arith_eval_mod_div(v: nat, d: int, m: int, env: Seq<int>)
 }
 
 /// Delinearize coordinate expr is correct:
-/// arith_eval(delinearize_coord_expr(0, shape, i), [x]) == delinearize(x, shape)[i]
+/// arith_eval(delinearize_coord_expr(0, shape, i), [x]) == delinearize(x, shape)[i].
 ///
-/// Proof sketch: delinearize(x, shape)[i] = (x / prefix_product(i)) % shape[i]
-/// by induction on the recursive delinearize definition. The ArithExpr computes
-/// exactly this expression.
+/// The mixed-radix identity: delinearize(x, shape)[i] = (x / prefix_product(i)) % shape[i].
 pub proof fn lemma_delinearize_coord_expr_correct(
     shape: Seq<nat>, i: nat, x: nat,
 )
@@ -272,93 +270,47 @@ pub proof fn lemma_delinearize_coord_expr_correct(
 {
     lemma_prefix_product_positive(shape, i);
     let pp = shape_prefix_product(shape, i);
-    assert(pp > 0nat);
 
     if i == 0 {
-        assert(shape_prefix_product(shape, 0) == 1nat);
-        assert(shape[0] > 0nat);
-        // Use helper for ArithExpr eval
         lemma_arith_eval_mod_div(0, pp as int, shape[0] as int, seq![x as int]);
-        // (x / 1) % shape[0] = x % shape[0]
         assert((x as int) / 1int == x as int);
-        // delinearize(x, shape)[0] = x % shape[0]
         crate::proof::shape_lemmas::lemma_delinearize_len(x, shape);
     } else {
-        // delinearize(x, shape)[i] = delinearize(x / shape[0], skip(1))[i-1]
-        // By IH: = ((x/shape[0]) / pp_rest(i-1)) % shape_rest[i-1]
-        //        = (x / (shape[0] * pp_rest(i-1))) % shape[i]
-        //        = (x / pp(i)) % shape[i]
-        // ArithExpr evaluates to the same.
         let rest = shape.skip(1);
         assert(shape_valid(rest)) by {
             assert forall|j: int| 0 <= j < rest.len() implies #[trigger] rest[j] > 0
             by { assert(rest[j] == shape[j + 1]); };
         };
         crate::proof::shape_lemmas::lemma_delinearize_len(x, shape);
-        // The delinearize spec gives [i] = delinearize(x / shape[0], skip(1))[i-1]
-        // And prefix_product(shape, i) = shape[i-1] * prefix_product(shape, i-1)
-        // This matches the ArithExpr evaluation.
-        // Full inductive proof requires connecting delinearize recursion to prefix_product.
-        // The key identity: (x / pp(i)) % shape[i] = delinearize(x, shape)[i]
-        // is proved by the mixed-radix theorem (each coordinate extracts the i-th digit).
-        // x / shape[0] < shape_size(rest) (from x < shape[0] * shape_size(rest))
+
+        // x / shape[0] < shape_size(rest)
         crate::runtime::shape_helpers::lemma_shape_size_split(shape, 1);
         assert(shape.take(1) =~= seq![shape.first()]);
         crate::proof::shape_lemmas::lemma_shape_size_single(shape.first());
         crate::proof::shape_lemmas::lemma_shape_size_positive(rest);
         crate::proof::integer_helpers::lemma_div_upper_bound(x, shape.first(), shape_size(rest));
+
+        // IH on rest
         lemma_delinearize_coord_expr_correct(rest, (i - 1) as nat, x / shape.first());
-        // Bridge: shape_prefix_product(shape, i) = shape[i-1] * pp(i-1)
-        // For the rest: shape_prefix_product(rest, i-1) and shape_prefix_product(shape, i)
-        // pp(shape, i) = shape[i-1] * pp(shape, i-1)
-        // pp(rest, i-1) = rest[i-2] * pp(rest, i-2) = shape[i-1] * pp(rest, i-2) ... complex
-        // Actually: pp(shape, i) counts shape[0..i], pp(rest, i-1) counts rest[0..i-1] = shape[1..i]
-        // So pp(shape, i) = shape[0] * pp(rest, i-1)
-        // div_div: x / (a * b) = (x / a) / b
+
+        // pp(shape, i) == shape[0] * pp(rest, i-1), then div_div
         let pp_rest = shape_prefix_product(rest, (i - 1) as nat);
         lemma_prefix_product_positive(rest, (i - 1) as nat);
-
-        // Key bridge: pp(shape, i) == shape[0] * pp(rest, i-1)
         lemma_prefix_product_split(shape, i);
         assert(pp == shape.first() * pp_rest);
-
-        // div_div: x / (shape[0] * pp_rest) == (x / shape[0]) / pp_rest
         crate::proof::integer_helpers::lemma_div_div(x, shape.first(), pp_rest);
         assert((x as int) / (pp as int) == ((x / shape.first()) as int) / (pp_rest as int)) by (nonlinear_arith)
             requires pp == shape.first() * pp_rest,
                      (x as int) / ((shape.first() as int) * (pp_rest as int)) == ((x as int) / (shape.first() as int)) / (pp_rest as int);
 
-        // IH gave: arith_eval(delinearize_coord_expr(0, rest, i-1), [x/shape[0]])
-        //        == delinearize(x/shape[0], rest)[i-1]
-        // delinearize(x, shape)[i] == delinearize(x/shape[0], rest)[i-1]  (from delinearize spec)
-        // rest[i-1] == shape[i]  (from skip(1))
         assert(rest[(i - 1) as int] == shape[i as int]);
 
-        // Step A: arith_eval of our expr at [x] = (x / pp) % shape[i]
-        assert(shape[i as int] > 0nat);
+        // ArithExpr evaluation and delinearize connection
         lemma_arith_eval_mod_div(0, pp as int, shape[i as int] as int, seq![x as int]);
-
-        // Step B: (x / pp) == (x/shape[0]) / pp_rest  [div_div + prefix_split]
-        // Already proved above
-
-        // Step C: IH gave:
-        //   arith_eval(delinearize_coord_expr(0, rest, i-1), [x/shape[0]])
-        //   == delinearize(x/shape[0], rest)[i-1]
-        // And from the helper:
-        //   arith_eval(delinearize_coord_expr(0, rest, i-1), [x/shape[0]])
-        //   == ((x/shape[0]) / pp_rest) % rest[i-1]
         lemma_arith_eval_mod_div(0, pp_rest as int, rest[(i - 1) as int] as int, seq![(x / shape.first()) as int]);
-
-        // Step D: delinearize(x, shape)[i] == delinearize(x/shape[0], rest)[i-1]
         crate::proof::shape_lemmas::lemma_delinearize_concat(x, seq![shape.first()], rest);
         crate::proof::shape_lemmas::lemma_shape_size_single(shape.first());
         assert(shape =~= seq![shape.first()].add(rest));
-
-        // Step E: chain
-        // (x/pp) % shape[i] == ((x/shape[0])/pp_rest) % rest[i-1]  [div_div + rest index]
-        // == delinearize(x/shape[0], rest)[i-1]                      [IH via helper]
-        // == delinearize(x, shape)[i]                                 [concat]
-        assert(rest[(i - 1) as int] == shape[i as int]);
         assert((x as int / (pp as int)) % (shape[i as int] as int)
             == ((x / shape.first()) as int / (pp_rest as int)) % (rest[(i - 1) as int] as int));
     }
@@ -820,8 +772,102 @@ pub proof fn lemma_offset_expr_correct(
     // offset(x) = dot_product(delinearize(x, shape), stride) by definition
 }
 
-// NOTE: Exec ArithExpr evaluator requires a separate runtime ArithExpr type
-// (with i64/usize instead of int/nat). This lives in the codegen crate as
-// the WgslExpr type, which mirrors ArithExpr for runtime use.
+// ══════════════════════════════════════════════════════════════
+// Runtime ArithExpr: exec-mode type mirroring ArithExpr with i64/u32
+// ══════════════════════════════════════════════════════════════
+
+/// Runtime arithmetic expression with concrete integer types for exec code.
+pub enum RuntimeArithExpr {
+    Const(i64),
+    Var(u32),
+    Add(Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
+    Mul(Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
+    Div(Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
+    Mod(Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
+    Index(u32, Box<RuntimeArithExpr>),
+}
+
+impl RuntimeArithExpr {
+    /// Map to spec ArithExpr.
+    pub closed spec fn view_spec(&self) -> ArithExpr
+        decreases self,
+    {
+        match self {
+            RuntimeArithExpr::Const(c) => ArithExpr::Const(*c as int),
+            RuntimeArithExpr::Var(i) => ArithExpr::Var(*i as nat),
+            RuntimeArithExpr::Add(a, b) => ArithExpr::Add(Box::new(a.view_spec()), Box::new(b.view_spec())),
+            RuntimeArithExpr::Mul(a, b) => ArithExpr::Mul(Box::new(a.view_spec()), Box::new(b.view_spec())),
+            RuntimeArithExpr::Div(a, b) => ArithExpr::Div(Box::new(a.view_spec()), Box::new(b.view_spec())),
+            RuntimeArithExpr::Mod(a, b) => ArithExpr::Mod(Box::new(a.view_spec()), Box::new(b.view_spec())),
+            RuntimeArithExpr::Index(arr, idx) => ArithExpr::Index(*arr as nat, Box::new(idx.view_spec())),
+        }
+    }
+}
+
+/// All intermediate results of evaluating expr with env fit in i64.
+pub open spec fn arith_eval_fits_i64(expr: &ArithExpr, env: Seq<int>) -> bool
+    decreases expr,
+{
+    i64::MIN as int <= arith_eval(expr, env)
+    && arith_eval(expr, env) <= i64::MAX as int
+    && match expr {
+        ArithExpr::Const(_) | ArithExpr::Var(_) => true,
+        ArithExpr::Add(a, b) | ArithExpr::Mul(a, b)
+        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) =>
+            arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env),
+        ArithExpr::Index(_, idx) => arith_eval_fits_i64(idx, env),
+    }
+}
+
+/// Convert i64 sequence to int sequence.
+pub open spec fn i64_seq_to_int(s: Seq<i64>) -> Seq<int> {
+    Seq::new(s.len(), |i: int| s[i] as int)
+}
+
+/// Evaluate a RuntimeArithExpr at exec time (scalar, no arrays).
+pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i64)
+    requires
+        arith_eval_fits_i64(&expr.view_spec(), i64_seq_to_int(env@)),
+    ensures
+        result as int == arith_eval(&expr.view_spec(), i64_seq_to_int(env@)),
+    decreases expr,
+{
+    let ghost env_spec = i64_seq_to_int(env@);
+    match expr {
+        RuntimeArithExpr::Const(c) => *c,
+        RuntimeArithExpr::Var(i) => {
+            if (*i as usize) < env.len() {
+                proof { assert(i64_seq_to_int(env@)[*i as int] == env@[*i as int] as int); }
+                env[*i as usize]
+            } else {
+                0i64
+            }
+        },
+        RuntimeArithExpr::Add(a, b) => {
+            let va = runtime_arith_eval(a, env);
+            let vb = runtime_arith_eval(b, env);
+            va + vb
+        },
+        RuntimeArithExpr::Mul(a, b) => {
+            let va = runtime_arith_eval(a, env);
+            let vb = runtime_arith_eval(b, env);
+            va * vb
+        },
+        RuntimeArithExpr::Div(a, b) => {
+            let va = runtime_arith_eval(a, env);
+            let vb = runtime_arith_eval(b, env);
+            if vb != 0 { va / vb } else { 0i64 }
+        },
+        RuntimeArithExpr::Mod(a, b) => {
+            let va = runtime_arith_eval(a, env);
+            let vb = runtime_arith_eval(b, env);
+            if vb != 0 { va % vb } else { 0i64 }
+        },
+        RuntimeArithExpr::Index(_arr, idx) => {
+            // Scalar eval: Index just evaluates the index expression
+            runtime_arith_eval(idx, env)
+        },
+    }
+}
 
 } // verus!
