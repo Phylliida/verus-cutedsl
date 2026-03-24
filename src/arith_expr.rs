@@ -893,6 +893,32 @@ pub open spec fn i64_seq_to_int(s: Seq<i64>) -> Seq<int> {
     Seq::new(s.len(), |i: int| s[i] as int)
 }
 
+/// Helper: verified i64 division with spec-level result connection.
+fn checked_i64_div(a: i64, b: i64) -> (result: i64)
+    requires
+        b != 0,
+        i64::MIN as int <= (a as int) / (b as int),
+        (a as int) / (b as int) <= i64::MAX as int,
+    ensures
+        result as int == (a as int) / (b as int),
+{
+    proof {
+        assert((i64::MIN as int) / (-1int) > i64::MAX as int) by (nonlinear_arith);
+    }
+    a / b
+}
+
+/// Helper: verified i64 modulo with spec-level result connection.
+fn checked_i64_mod(a: i64, b: i64) -> (result: i64)
+    requires
+        b != 0,
+        !(a == i64::MIN && b == -1i64),
+    ensures
+        result as int == (a as int) % (b as int),
+{
+    a % b
+}
+
 /// Evaluate a RuntimeArithExpr at exec time (scalar, no arrays).
 pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i64)
     requires
@@ -938,8 +964,6 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
             let va = runtime_arith_eval(a, env);
             let vb = runtime_arith_eval(b, env);
             proof {
-                assert(expr.view_spec() == ArithExpr::Div(
-                    Box::new(a.view_spec()), Box::new(b.view_spec())));
                 lemma_arith_eval_div(&a.view_spec(), &b.view_spec(), env_spec);
             }
             if vb == 0 {
@@ -947,25 +971,18 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
             } else {
                 proof {
                     lemma_fits_i64_div(&a.view_spec(), &b.view_spec(), env_spec);
-                    let div_val = (va as int) / (vb as int);
-                    assert(div_val <= i64::MAX as int);
-                    assert(div_val >= i64::MIN as int);
-                    assert((i64::MIN as int) / (-1int) > i64::MAX as int) by (nonlinear_arith);
-                    // Connect arith_eval on the Div node to va/vb
-                    let div_expr = ArithExpr::Div(
-                        Box::new(a.view_spec()), Box::new(b.view_spec()));
-                    assert(arith_eval(&div_expr, env_spec) == div_val);
-                    assert(arith_eval(&expr.view_spec(), env_spec) == div_val);
                 }
-                return va / vb;
+                let r = checked_i64_div(va, vb);
+                proof {
+                    assert(arith_eval(&expr.view_spec(), env_spec) == (va as int) / (vb as int));
+                }
+                return r;
             }
         },
         RuntimeArithExpr::Mod(a, b) => {
             let va = runtime_arith_eval(a, env);
             let vb = runtime_arith_eval(b, env);
             proof {
-                assert(expr.view_spec() == ArithExpr::Mod(
-                    Box::new(a.view_spec()), Box::new(b.view_spec())));
                 lemma_arith_eval_mod(&a.view_spec(), &b.view_spec(), env_spec);
             }
             if vb == 0 {
@@ -977,12 +994,13 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
                 return 0i64;
             } else {
                 proof {
-                    let mod_expr = ArithExpr::Mod(
-                        Box::new(a.view_spec()), Box::new(b.view_spec()));
-                    assert(arith_eval(&mod_expr, env_spec) == (va as int) % (vb as int));
+                    lemma_fits_i64_mod(&a.view_spec(), &b.view_spec(), env_spec);
+                }
+                let r = checked_i64_mod(va, vb);
+                proof {
                     assert(arith_eval(&expr.view_spec(), env_spec) == (va as int) % (vb as int));
                 }
-                return va % vb;
+                return r;
             }
         },
         RuntimeArithExpr::Index(_arr, idx) => {
