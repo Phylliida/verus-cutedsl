@@ -43,6 +43,55 @@ pub open spec fn eval_output(
 }
 
 // ══════════════════════════════════════════════════════════════
+// Foundational kernel properties
+// ══════════════════════════════════════════════════════════════
+
+/// Scatter injectivity predicate: for a given output,
+/// no two active threads write to the same index.
+pub open spec fn scatter_injective(
+    o: &OutputSpec,
+    guard: &ArithExpr,
+    inputs: Seq<Seq<int>>,
+    env_a: Seq<int>,
+    env_b: Seq<int>,
+) -> bool {
+    (arith_eval_with_arrays(guard, env_a, inputs) != 0
+     && arith_eval_with_arrays(guard, env_b, inputs) != 0
+     && arith_eval_with_arrays(&o.scatter, env_a, inputs)
+        == arith_eval_with_arrays(&o.scatter, env_b, inputs))
+    ==> env_a == env_b
+}
+
+/// If scatter is injective under guard, then the output for any given index
+/// is uniquely determined — at most one thread writes to each output position.
+/// This means kernel evaluation is independent of thread execution order.
+///
+/// Proof: if two threads t1 and t2 both write to index j, then
+/// scatter(t1) == scatter(t2) == j, and both guards are non-zero,
+/// so by injectivity env(t1) == env(t2), meaning t1 == t2.
+/// Therefore each output index is written by at most one thread,
+/// making the result order-independent.
+pub proof fn lemma_injective_scatter_unique_writer(
+    o: &OutputSpec,
+    guard: &ArithExpr,
+    inputs: Seq<Seq<int>>,
+    env_a: Seq<int>,
+    env_b: Seq<int>,
+    j: int,
+)
+    requires
+        scatter_injective(o, guard, inputs, env_a, env_b),
+        arith_eval_with_arrays(guard, env_a, inputs) != 0,
+        arith_eval_with_arrays(guard, env_b, inputs) != 0,
+        arith_eval_with_arrays(&o.scatter, env_a, inputs) == j,
+        arith_eval_with_arrays(&o.scatter, env_b, inputs) == j,
+    ensures
+        env_a == env_b,
+        arith_eval_with_arrays(&o.compute, env_a, inputs)
+            == arith_eval_with_arrays(&o.compute, env_b, inputs),
+{}
+
+// ══════════════════════════════════════════════════════════════
 // Helper: single-output kernel constructor
 // ══════════════════════════════════════════════════════════════
 

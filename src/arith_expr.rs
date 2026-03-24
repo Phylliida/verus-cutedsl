@@ -941,6 +941,174 @@ pub proof fn lemma_offset_expr_correct(
 }
 
 // ══════════════════════════════════════════════════════════════
+// Foundational properties of ArithExpr evaluation
+// ══════════════════════════════════════════════════════════════
+
+// --- env_with properties ---
+
+/// env_with sets the target variable.
+pub proof fn lemma_env_with_at(env: Seq<int>, var: nat, val: int)
+    ensures env_with(env, var, val)[var as int] == val,
+{
+    if (var as int) < env.len() {
+        assert(env.update(var as int, val)[var as int] == val);
+    } else {
+        let ext = Seq::new((var + 1) as nat, |i: int|
+            if i < env.len() { env[i] }
+            else if i == var as int { val }
+            else { 0 }
+        );
+        assert(ext[var as int] == val);
+    }
+}
+
+/// env_with preserves other variables (within original env length).
+pub proof fn lemma_env_with_other(env: Seq<int>, var: nat, val: int, other: nat)
+    requires other != var, (other as int) < env.len(),
+    ensures env_with(env, var, val)[other as int] == env[other as int],
+{
+    if (var as int) < env.len() {
+        assert(env.update(var as int, val)[other as int] == env[other as int]);
+    } else {
+        let ext = Seq::new((var + 1) as nat, |i: int|
+            if i < env.len() { env[i] }
+            else if i == var as int { val }
+            else { 0 }
+        );
+        assert(ext[other as int] == env[other as int]);
+    }
+}
+
+/// env_with length is at least var + 1.
+pub proof fn lemma_env_with_len(env: Seq<int>, var: nat, val: int)
+    ensures env_with(env, var, val).len() >= var + 1,
+         env_with(env, var, val).len() >= env.len(),
+{}
+
+// --- cmp_eval properties ---
+
+/// Cmp always returns exactly 0 or 1.
+pub proof fn lemma_cmp_returns_01(op: &CmpOp, a: int, b: int)
+    ensures cmp_eval(op, a, b) == 0 || cmp_eval(op, a, b) == 1,
+{}
+
+/// Mul(Cmp, Cmp) is boolean AND: result is 1 iff both comparisons are true.
+pub proof fn lemma_cmp_mul_is_and(
+    op1: &CmpOp, a1: int, b1: int,
+    op2: &CmpOp, a2: int, b2: int,
+)
+    ensures ({
+        let c1 = cmp_eval(op1, a1, b1);
+        let c2 = cmp_eval(op2, a2, b2);
+        c1 * c2 == 1 <==> (c1 == 1 && c2 == 1)
+    }),
+{
+    lemma_cmp_returns_01(op1, a1, b1);
+    lemma_cmp_returns_01(op2, a2, b2);
+}
+
+// --- reduce_sum base cases ---
+
+/// Reduce with bound 0 is 0.
+pub proof fn lemma_reduce_sum_zero(var: nat, body: &ArithExpr, env: Seq<int>)
+    ensures reduce_sum(var, 0, body, env) == 0,
+{}
+
+/// Reduce with bound 0 is 0 (arrays version).
+pub proof fn lemma_reduce_sum_arrays_zero(
+    var: nat, body: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
+)
+    ensures reduce_sum_arrays(var, 0, body, env, arrays) == 0,
+{}
+
+/// Reduce with bound 1 is a single evaluation.
+pub proof fn lemma_reduce_sum_one(var: nat, body: &ArithExpr, env: Seq<int>)
+    ensures reduce_sum(var, 1, body, env)
+        == arith_eval(body, env_with(env, var, 0)),
+{
+    assert(reduce_sum(var, 0, body, env) == 0int);
+}
+
+/// Reduce with bound 1 is a single evaluation (arrays version).
+pub proof fn lemma_reduce_sum_arrays_one(
+    var: nat, body: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
+)
+    ensures reduce_sum_arrays(var, 1, body, env, arrays)
+        == arith_eval_with_arrays(body, env_with(env, var, 0), arrays),
+{
+    assert(reduce_sum_arrays(var, 0, body, env, arrays) == 0int);
+}
+
+// --- reduce_sum splitting (THE key lemma for tiled schedules) ---
+
+/// Reduce splitting: Σ_{i=0}^{a+b-1} f(i) == Σ_{i=0}^{a-1} f(i) + Σ_{i=0}^{b-1} f(a+i)
+///
+/// This is the foundational lemma for all tiled schedule transformations.
+/// Tiling = splitting a sum into blocks, each computed in shared memory or by a workgroup.
+pub proof fn lemma_reduce_sum_split(
+    var: nat, a: nat, b: nat, body: &ArithExpr, env: Seq<int>,
+)
+    ensures
+        reduce_sum(var, (a + b) as int, body, env)
+            == reduce_sum(var, a as int, body, env)
+                + reduce_sum_shifted(var, a, b as int, body, env),
+    decreases b,
+{
+    if b == 0 {
+    } else {
+        // reduce_sum(var, a+b, body, env)
+        //   = reduce_sum(var, a+b-1, body, env) + eval(body, env[var := a+b-1])
+        //   = (by IH with b-1) reduce_sum(var, a, body, env) + reduce_sum_shifted(var, a, b-1, body, env)
+        //     + eval(body, env[var := a+b-1])
+        //   = reduce_sum(var, a, body, env) + reduce_sum_shifted(var, a, b, body, env)
+        //     (because reduce_sum_shifted(var, a, b) = reduce_sum_shifted(var, a, b-1) + eval(body, env[var := a+b-1]))
+        lemma_reduce_sum_split(var, a, (b - 1) as nat, body, env);
+    }
+}
+
+/// Shifted summation: Σ_{i=0}^{n-1} f(offset + i)
+pub open spec fn reduce_sum_shifted(
+    var: nat, offset: nat, n: int, body: &ArithExpr, env: Seq<int>,
+) -> int
+    decreases (if n > 0 { n } else { 0 }),
+{
+    if n <= 0 { 0 }
+    else {
+        reduce_sum_shifted(var, offset, n - 1, body, env)
+            + arith_eval(body, env_with(env, var, (offset as int) + n - 1))
+    }
+}
+
+/// Reduce splitting (arrays version).
+pub proof fn lemma_reduce_sum_arrays_split(
+    var: nat, a: nat, b: nat, body: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
+)
+    ensures
+        reduce_sum_arrays(var, (a + b) as int, body, env, arrays)
+            == reduce_sum_arrays(var, a as int, body, env, arrays)
+                + reduce_sum_arrays_shifted(var, a, b as int, body, env, arrays),
+    decreases b,
+{
+    if b == 0 {
+    } else {
+        lemma_reduce_sum_arrays_split(var, a, (b - 1) as nat, body, env, arrays);
+    }
+}
+
+/// Shifted summation (arrays version).
+pub open spec fn reduce_sum_arrays_shifted(
+    var: nat, offset: nat, n: int, body: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
+) -> int
+    decreases body, (if n > 0 { n } else { 0 }),
+{
+    if n <= 0 { 0 }
+    else {
+        reduce_sum_arrays_shifted(var, offset, n - 1, body, env, arrays)
+            + arith_eval_with_arrays(body, env_with(env, var, (offset as int) + n - 1), arrays)
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
 // Runtime ArithExpr: exec-mode type mirroring ArithExpr with i64/u32
 // ══════════════════════════════════════════════════════════════
 
