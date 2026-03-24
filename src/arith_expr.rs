@@ -491,6 +491,75 @@ proof fn lemma_arith_eval_add(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
             == arith_eval(a, env) + arith_eval(b, env),
 {}
 
+/// Helper: arith_eval of Mul(a, b) = arith_eval(a, env) * arith_eval(b, env).
+proof fn lemma_arith_eval_mul(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
+    ensures
+        arith_eval(&ArithExpr::Mul(Box::new(*a), Box::new(*b)), env)
+            == arith_eval(a, env) * arith_eval(b, env),
+{}
+
+/// Helper: arith_eval of Index(arr, idx) = arith_eval(idx, env).
+proof fn lemma_arith_eval_index(arr: nat, idx: &ArithExpr, env: Seq<int>)
+    ensures
+        arith_eval(&ArithExpr::Index(arr, Box::new(*idx)), env) == arith_eval(idx, env),
+{}
+
+/// Helper: arith_eval of Div(a, b) — handles both zero and nonzero denom.
+proof fn lemma_arith_eval_div(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
+    ensures
+        arith_eval(b, env) != 0 ==> arith_eval(&ArithExpr::Div(Box::new(*a), Box::new(*b)), env)
+            == arith_eval(a, env) / arith_eval(b, env),
+        arith_eval(b, env) == 0 ==> arith_eval(&ArithExpr::Div(Box::new(*a), Box::new(*b)), env) == 0,
+{}
+
+/// Helper: arith_eval of Mod(a, b) — handles both zero and nonzero denom.
+proof fn lemma_arith_eval_mod(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
+    ensures
+        arith_eval(b, env) != 0 ==> arith_eval(&ArithExpr::Mod(Box::new(*a), Box::new(*b)), env)
+            == arith_eval(a, env) % arith_eval(b, env),
+        arith_eval(b, env) == 0 ==> arith_eval(&ArithExpr::Mod(Box::new(*a), Box::new(*b)), env) == 0,
+{}
+
+/// Helper: arith_eval_fits_i64 for an Add node.
+proof fn lemma_fits_i64_add(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
+    requires arith_eval_fits_i64(&ArithExpr::Add(Box::new(*a), Box::new(*b)), env),
+    ensures
+        arith_eval_fits_i64(a, env),
+        arith_eval_fits_i64(b, env),
+        i64::MIN as int <= arith_eval(a, env) + arith_eval(b, env),
+        arith_eval(a, env) + arith_eval(b, env) <= i64::MAX as int,
+{}
+
+/// Helper: arith_eval_fits_i64 for a Mul node.
+proof fn lemma_fits_i64_mul(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
+    requires arith_eval_fits_i64(&ArithExpr::Mul(Box::new(*a), Box::new(*b)), env),
+    ensures
+        arith_eval_fits_i64(a, env),
+        arith_eval_fits_i64(b, env),
+        i64::MIN as int <= arith_eval(a, env) * arith_eval(b, env),
+        arith_eval(a, env) * arith_eval(b, env) <= i64::MAX as int,
+{}
+
+/// Helper: arith_eval_fits_i64 for a Div node.
+proof fn lemma_fits_i64_div(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
+    requires arith_eval_fits_i64(&ArithExpr::Div(Box::new(*a), Box::new(*b)), env),
+    ensures
+        arith_eval_fits_i64(a, env),
+        arith_eval_fits_i64(b, env),
+        i64::MIN as int <= arith_eval(&ArithExpr::Div(Box::new(*a), Box::new(*b)), env),
+        arith_eval(&ArithExpr::Div(Box::new(*a), Box::new(*b)), env) <= i64::MAX as int,
+{}
+
+/// Helper: arith_eval_fits_i64 for a Mod node.
+proof fn lemma_fits_i64_mod(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
+    requires arith_eval_fits_i64(&ArithExpr::Mod(Box::new(*a), Box::new(*b)), env),
+    ensures
+        arith_eval_fits_i64(a, env),
+        arith_eval_fits_i64(b, env),
+        i64::MIN as int <= arith_eval(&ArithExpr::Mod(Box::new(*a), Box::new(*b)), env),
+        arith_eval(&ArithExpr::Mod(Box::new(*a), Box::new(*b)), env) <= i64::MAX as int,
+{}
+
 // ══════════════════════════════════════════════════════════════
 // GEMM index expression correctness
 // ══════════════════════════════════════════════════════════════
@@ -834,63 +903,80 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
 {
     let ghost env_spec = i64_seq_to_int(env@);
     match expr {
-        RuntimeArithExpr::Const(c) => *c,
+        RuntimeArithExpr::Const(c) => {
+            return *c;
+        },
         RuntimeArithExpr::Var(i) => {
             if (*i as usize) < env.len() {
-                proof { assert(i64_seq_to_int(env@)[*i as int] == env@[*i as int] as int); }
-                env[*i as usize]
+                proof {
+                    assert(i64_seq_to_int(env@)[*i as int] == env@[*i as int] as int);
+                }
+                return env[*i as usize];
             } else {
-                0i64
+                return 0i64;
             }
         },
         RuntimeArithExpr::Add(a, b) => {
             let va = runtime_arith_eval(a, env);
             let vb = runtime_arith_eval(b, env);
-            va + vb
+            proof {
+                lemma_arith_eval_add(&a.view_spec(), &b.view_spec(), env_spec);
+                lemma_fits_i64_add(&a.view_spec(), &b.view_spec(), env_spec);
+            }
+            return va + vb;
         },
         RuntimeArithExpr::Mul(a, b) => {
             let va = runtime_arith_eval(a, env);
             let vb = runtime_arith_eval(b, env);
-            va * vb
+            proof {
+                lemma_arith_eval_mul(&a.view_spec(), &b.view_spec(), env_spec);
+                lemma_fits_i64_mul(&a.view_spec(), &b.view_spec(), env_spec);
+            }
+            return va * vb;
         },
         RuntimeArithExpr::Div(a, b) => {
             let va = runtime_arith_eval(a, env);
             let vb = runtime_arith_eval(b, env);
+            proof {
+                assert(expr.view_spec() == ArithExpr::Div(
+                    Box::new(a.view_spec()), Box::new(b.view_spec())));
+                lemma_arith_eval_div(&a.view_spec(), &b.view_spec(), env_spec);
+            }
             if vb == 0 {
-                0i64
-            } else if va == i64::MIN && vb == -1i64 {
-                // Unreachable: arith_eval_fits_i64 forbids this.
-                // i64::MIN / -1 = i64::MAX + 1, violating the i64 bound.
-                proof {
-                    assert(arith_eval(&a.view_spec(), env_spec) == va as int);
-                    assert(arith_eval(&b.view_spec(), env_spec) == vb as int);
-                    assert((va as int) / (vb as int) > i64::MAX as int) by (nonlinear_arith)
-                        requires va as int == i64::MIN as int, vb as int == -1int;
-                }
-                unreachable!()
+                return 0i64;
             } else {
-                va / vb
+                proof {
+                    lemma_fits_i64_div(&a.view_spec(), &b.view_spec(), env_spec);
+                    let div_val = (va as int) / (vb as int);
+                    assert(div_val <= i64::MAX as int);
+                    assert(div_val >= i64::MIN as int);
+                    assert((i64::MIN as int) / (-1int) > i64::MAX as int) by (nonlinear_arith);
+                }
+                return va / vb;
             }
         },
         RuntimeArithExpr::Mod(a, b) => {
             let va = runtime_arith_eval(a, env);
             let vb = runtime_arith_eval(b, env);
+            proof {
+                assert(expr.view_spec() == ArithExpr::Mod(
+                    Box::new(a.view_spec()), Box::new(b.view_spec())));
+                lemma_arith_eval_mod(&a.view_spec(), &b.view_spec(), env_spec);
+            }
             if vb == 0 {
-                0i64
+                return 0i64;
             } else if va == i64::MIN && vb == -1i64 {
-                // i64::MIN % -1 == 0 mathematically, but panics on hardware
                 proof {
-                    assert(arith_eval(&a.view_spec(), env_spec) == va as int);
-                    assert(arith_eval(&b.view_spec(), env_spec) == vb as int);
+                    assert((i64::MIN as int) % (-1int) == 0int) by (nonlinear_arith);
                 }
-                0i64
+                return 0i64;
             } else {
-                va % vb
+                return va % vb;
             }
         },
         RuntimeArithExpr::Index(_arr, idx) => {
-            // Scalar eval: Index just evaluates the index expression
-            runtime_arith_eval(idx, env)
+            proof { lemma_arith_eval_index(*_arr as nat, &idx.view_spec(), env_spec); }
+            return runtime_arith_eval(idx, env);
         },
     }
 }
