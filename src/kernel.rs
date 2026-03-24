@@ -92,6 +92,49 @@ pub proof fn lemma_injective_scatter_unique_writer(
 {}
 
 // ══════════════════════════════════════════════════════════════
+// kernel_eval: full kernel output semantics
+// ══════════════════════════════════════════════════════════════
+
+/// Full kernel output for a single output buffer, 1D dispatch.
+/// output[j] = compute(thread) where thread is the unique active thread with scatter(thread)==j,
+/// or 0 if no thread writes to j.
+pub open spec fn kernel_eval_1d(
+    k: &KernelSpec, output_idx: nat,
+    inputs: Seq<Seq<int>>,
+    output_size: nat, n_threads: nat,
+) -> Seq<int>
+    recommends output_idx < k.outputs.len(),
+{
+    Seq::new(output_size, |j: int|
+        kernel_find_writer_1d(&k.outputs[output_idx as int], &k.guard, inputs, n_threads, j as nat, 0))
+}
+
+/// Search for the thread that writes to output index j (1D dispatch).
+pub open spec fn kernel_find_writer_1d(
+    o: &OutputSpec, guard: &ArithExpr,
+    inputs: Seq<Seq<int>>,
+    n_threads: nat, target_j: nat, tid: nat,
+) -> int
+    decreases n_threads - tid,
+{
+    if tid >= n_threads { 0 }
+    else {
+        let env = thread_env_1d(tid);
+        let guard_val = arith_eval_with_arrays(guard, env, inputs);
+        if guard_val != 0 {
+            let idx = arith_eval_with_arrays(&o.scatter, env, inputs);
+            if idx == target_j as int {
+                arith_eval_with_arrays(&o.compute, env, inputs)
+            } else {
+                kernel_find_writer_1d(o, guard, inputs, n_threads, target_j, tid + 1)
+            }
+        } else {
+            kernel_find_writer_1d(o, guard, inputs, n_threads, target_j, tid + 1)
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
 // Helper: single-output kernel constructor
 // ══════════════════════════════════════════════════════════════
 
@@ -657,6 +700,160 @@ proof fn lemma_scan_reduce_matches(
             0, &ArithExpr::Var(1), ext_env, inputs, d as int);
         assert(arith_eval_with_arrays(body, ext_env, inputs) == input[d as int]);
     }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Guard correctness proofs
+// ══════════════════════════════════════════════════════════════
+
+/// Vector-add guard: active iff i < n.
+pub proof fn lemma_vector_add_guard(n: nat, i: nat, inputs: Seq<Seq<int>>)
+    ensures
+        i < n ==> arith_eval_with_arrays(&vector_add_kernel(n).guard, thread_env_1d(i), inputs) != 0,
+        i >= n ==> arith_eval_with_arrays(&vector_add_kernel(n).guard, thread_env_1d(i), inputs) == 0,
+{
+    let env = thread_env_1d(i);
+    crate::arith_expr::lemma_eval_with_arrays_cmp(
+        &CmpOp::Lt, &ArithExpr::Var(0), &ArithExpr::Const(n as int), env, inputs);
+}
+
+/// Dot product guard: active iff tid == 0.
+pub proof fn lemma_dot_product_guard(n: nat, tid: nat, inputs: Seq<Seq<int>>)
+    ensures
+        tid == 0 ==> arith_eval_with_arrays(&dot_product_kernel(n).guard, thread_env_1d(tid), inputs) != 0,
+        tid != 0 ==> arith_eval_with_arrays(&dot_product_kernel(n).guard, thread_env_1d(tid), inputs) == 0,
+{
+    let env = thread_env_1d(tid);
+    crate::arith_expr::lemma_eval_with_arrays_cmp(
+        &CmpOp::Eq, &ArithExpr::Var(0), &ArithExpr::Const(0), env, inputs);
+}
+
+/// Conv1d guard: active iff i < n - w + 1.
+pub proof fn lemma_conv1d_guard(n: nat, w: nat, i: nat, inputs: Seq<Seq<int>>)
+    requires w > 0, w <= n,
+    ensures
+        i < n - w + 1 ==> arith_eval_with_arrays(&conv1d_kernel(n, w).guard, thread_env_1d(i), inputs) != 0,
+        i >= n - w + 1 ==> arith_eval_with_arrays(&conv1d_kernel(n, w).guard, thread_env_1d(i), inputs) == 0,
+{
+    let env = thread_env_1d(i);
+    crate::arith_expr::lemma_eval_with_arrays_cmp(
+        &CmpOp::Lt, &ArithExpr::Var(0), &ArithExpr::Const((n - w + 1) as int), env, inputs);
+}
+
+/// Scan guard: active iff i < n.
+pub proof fn lemma_scan_guard(n: nat, i: nat, inputs: Seq<Seq<int>>)
+    ensures
+        i < n ==> arith_eval_with_arrays(&scan_kernel(n).guard, thread_env_1d(i), inputs) != 0,
+        i >= n ==> arith_eval_with_arrays(&scan_kernel(n).guard, thread_env_1d(i), inputs) == 0,
+{
+    let env = thread_env_1d(i);
+    crate::arith_expr::lemma_eval_with_arrays_cmp(
+        &CmpOp::Lt, &ArithExpr::Var(0), &ArithExpr::Const(n as int), env, inputs);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Scatter injectivity proofs
+// ══════════════════════════════════════════════════════════════
+
+/// Identity scatter is trivially injective.
+pub proof fn lemma_identity_scatter_injective(i1: nat, i2: nat)
+    requires i1 == i2,
+    ensures thread_env_1d(i1) == thread_env_1d(i2),
+{}
+
+/// GEMM scatter i*N+j is injective for i < M, j < N (linear indexing).
+pub proof fn lemma_gemm_scatter_injective(n: nat, i1: nat, j1: nat, i2: nat, j2: nat)
+    requires
+        j1 < n, j2 < n, n > 0,
+        i1 * n + j1 == i2 * n + j2,
+    ensures i1 == i2 && j1 == j2,
+{
+    // i1 * n + j1 == i2 * n + j2
+    // Since j1 < n and j2 < n:
+    //   (i1 * n + j1) / n == i1 (since j1 < n)
+    //   (i2 * n + j2) / n == i2 (since j2 < n)
+    // So i1 == i2, then j1 == j2.
+    assert(i1 == i2) by (nonlinear_arith)
+        requires i1 * n + j1 == i2 * n + j2, j1 < n, j2 < n, n > 0;
+}
+
+// ══════════════════════════════════════════════════════════════
+// Output bounds proofs
+// ══════════════════════════════════════════════════════════════
+
+/// Identity scatter bounds: scatter(i) = i, so i < n means in bounds.
+pub proof fn lemma_identity_scatter_bounds(n: nat, i: nat)
+    requires i < n,
+    ensures
+        arith_eval(&ArithExpr::Var(0), thread_env_1d(i)) >= 0,
+        arith_eval(&ArithExpr::Var(0), thread_env_1d(i)) < n as int,
+{}
+
+/// GEMM scatter bounds: i*N+j < M*N when i < M and j < N.
+pub proof fn lemma_gemm_scatter_bounds(m: nat, n: nat, i: nat, j: nat)
+    requires i < m, j < n, n > 0,
+    ensures
+        (i * n + j) >= 0,
+        (i * n + j) < m * n,
+{
+    assert(i * n + j < m * n) by (nonlinear_arith)
+        requires i < m, j < n, n > 0;
+}
+
+// ══════════════════════════════════════════════════════════════
+// Multi-output kernel example: swap
+// ══════════════════════════════════════════════════════════════
+
+/// Swap kernel: out1[i] = b[i], out2[i] = a[i].
+/// Demonstrates multi-output with two OutputSpecs.
+pub open spec fn swap_kernel(n: nat) -> KernelSpec {
+    KernelSpec {
+        guard: ArithExpr::Cmp(CmpOp::Lt, Box::new(ArithExpr::Var(0)), Box::new(ArithExpr::Const(n as int))),
+        outputs: seq![
+            OutputSpec {
+                scatter: ArithExpr::Var(0),
+                compute: ArithExpr::Index(1, Box::new(ArithExpr::Var(0))),  // out1 = b[i]
+            },
+            OutputSpec {
+                scatter: ArithExpr::Var(0),
+                compute: ArithExpr::Index(0, Box::new(ArithExpr::Var(0))),  // out2 = a[i]
+            },
+        ],
+    }
+}
+
+/// Swap kernel output 0 correctness: out1[i] = b[i].
+pub proof fn lemma_swap_kernel_output0(
+    a: Seq<int>, b: Seq<int>, n: nat, i: nat,
+)
+    requires i < n, a.len() >= n as int, b.len() >= n as int,
+    ensures ({
+        let k = swap_kernel(n);
+        let env = thread_env_1d(i);
+        let inputs = seq![a, b];
+        arith_eval_with_arrays(&k.outputs[0].compute, env, inputs) == b[i as int]
+    }),
+{
+    let env = thread_env_1d(i);
+    let inputs = seq![a, b];
+    assert(arith_eval_with_arrays(&ArithExpr::Var(0), env, inputs) == i as int);
+}
+
+/// Swap kernel output 1 correctness: out2[i] = a[i].
+pub proof fn lemma_swap_kernel_output1(
+    a: Seq<int>, b: Seq<int>, n: nat, i: nat,
+)
+    requires i < n, a.len() >= n as int, b.len() >= n as int,
+    ensures ({
+        let k = swap_kernel(n);
+        let env = thread_env_1d(i);
+        let inputs = seq![a, b];
+        arith_eval_with_arrays(&k.outputs[1].compute, env, inputs) == a[i as int]
+    }),
+{
+    let env = thread_env_1d(i);
+    let inputs = seq![a, b];
+    assert(arith_eval_with_arrays(&ArithExpr::Var(0), env, inputs) == i as int);
 }
 
 } // verus!

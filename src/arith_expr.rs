@@ -605,6 +605,32 @@ pub proof fn lemma_arith_eval_reduce(var: nat, bound: &ArithExpr, body: &ArithEx
             == reduce_sum(var, arith_eval(bound, env), body, env),
 {}
 
+/// Helper: arith_eval of Cmp(op, a, b).
+pub proof fn lemma_arith_eval_cmp(op: &CmpOp, a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
+    ensures
+        arith_eval(&ArithExpr::Cmp(*op, Box::new(*a), Box::new(*b)), env)
+            == cmp_eval(op, arith_eval(a, env), arith_eval(b, env)),
+{}
+
+/// Helper: arith_eval_with_arrays of Cmp(op, a, b).
+pub proof fn lemma_eval_with_arrays_cmp(
+    op: &CmpOp, a: &ArithExpr, b: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
+)
+    ensures
+        arith_eval_with_arrays(&ArithExpr::Cmp(*op, Box::new(*a), Box::new(*b)), env, arrays)
+            == cmp_eval(op, arith_eval_with_arrays(a, env, arrays),
+                             arith_eval_with_arrays(b, env, arrays)),
+{}
+
+/// Helper: arith_eval_with_arrays of Sub(a, b).
+pub proof fn lemma_eval_with_arrays_sub(
+    a: &ArithExpr, b: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
+)
+    ensures
+        arith_eval_with_arrays(&ArithExpr::Sub(Box::new(*a), Box::new(*b)), env, arrays)
+            == arith_eval_with_arrays(a, env, arrays) - arith_eval_with_arrays(b, env, arrays),
+{}
+
 /// Helper: arith_eval of Div(a, b) — handles both zero and nonzero denom.
 proof fn lemma_arith_eval_div(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     ensures
@@ -1192,6 +1218,69 @@ pub proof fn lemma_reduce_sum_scalar(
     }
 }
 
+// --- index_free and eval equivalence ---
+
+/// Predicate: expression contains no Index nodes.
+/// When true, arith_eval and arith_eval_with_arrays agree.
+pub open spec fn index_free(expr: &ArithExpr) -> bool
+    decreases expr,
+{
+    match expr {
+        ArithExpr::Const(_) | ArithExpr::Var(_) => true,
+        ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b)
+        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) =>
+            index_free(a) && index_free(b),
+        ArithExpr::Cmp(_, a, b) => index_free(a) && index_free(b),
+        ArithExpr::Index(_, _) => false,
+        ArithExpr::Reduce(_, bound, body) => index_free(bound) && index_free(body),
+    }
+}
+
+/// arith_eval == arith_eval_with_arrays for index-free expressions.
+pub proof fn lemma_eval_equiv_no_index(
+    expr: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
+)
+    requires index_free(expr),
+    ensures arith_eval(expr, env) == arith_eval_with_arrays(expr, env, arrays),
+    decreases expr, 0int,
+{
+    match expr {
+        ArithExpr::Const(_) | ArithExpr::Var(_) => {},
+        ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b)
+        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) => {
+            lemma_eval_equiv_no_index(a, env, arrays);
+            lemma_eval_equiv_no_index(b, env, arrays);
+        },
+        ArithExpr::Cmp(_, a, b) => {
+            lemma_eval_equiv_no_index(a, env, arrays);
+            lemma_eval_equiv_no_index(b, env, arrays);
+        },
+        ArithExpr::Index(_, _) => {}, // unreachable: index_free is false
+        ArithExpr::Reduce(var, bound, body) => {
+            lemma_eval_equiv_no_index(bound, env, arrays);
+            let n = arith_eval(bound, env);
+            lemma_reduce_equiv_no_index(*var, n, body, env, arrays);
+        },
+    }
+}
+
+/// Helper: reduce_sum == reduce_sum_arrays for index-free body.
+proof fn lemma_reduce_equiv_no_index(
+    var: nat, n: int, body: &ArithExpr,
+    env: Seq<int>, arrays: Seq<Seq<int>>,
+)
+    requires index_free(body),
+    ensures reduce_sum(var, n, body, env) == reduce_sum_arrays(var, n, body, env, arrays),
+    decreases body, (if n > 0 { n } else { 0 }),
+{
+    if n <= 0 {
+    } else {
+        lemma_reduce_equiv_no_index(var, n - 1, body, env, arrays);
+        let ext = env_with(env, var, n - 1);
+        lemma_eval_equiv_no_index(body, ext, arrays);
+    }
+}
+
 // --- free variables and evaluation independence ---
 
 /// Predicate: expression does not reference Var(k).
@@ -1569,7 +1658,11 @@ pub open spec fn arith_eval_fits_i64(expr: &ArithExpr, env: Seq<int>) -> bool
         ArithExpr::Index(_, idx) => arith_eval_fits_i64(idx, env),
         ArithExpr::Cmp(_, a, b) =>
             arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env),
-        ArithExpr::Reduce(_, _, _) => true, // Reduce bounds handled separately
+        // Reduce: check the bound expression fits. Body bounds are data-dependent
+        // (sum of n terms can grow arbitrarily) so they must be checked by the
+        // caller for the specific kernel. The top-level result bound is still
+        // checked by the enclosing i64::MIN <= arith_eval(...) <= i64::MAX.
+        ArithExpr::Reduce(_, bound, _) => arith_eval_fits_i64(bound, env),
     }
 }
 
