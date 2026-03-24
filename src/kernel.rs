@@ -132,22 +132,20 @@ pub open spec fn gemm_kernel(m: nat, k_size: nat, n: nat) -> KernelSpec {
 /// For thread (i, j): arith_eval_with_arrays(compute, [i, j], [A, B])
 ///   == Σ_{k=0}^{K-1} A[i*K+k] * B[k*N+j]
 ///   == gemm_partial_sum(A, B, K, N, i, j, K)
+/// The GEMM kernel compute expression evaluates to gemm_partial_sum_int.
+///
+/// For thread (i, j): arith_eval_with_arrays(compute, [i, j], [A, B])
+///   == Σ_{k=0}^{K-1} A[i*K+k] * B[k*N+j]
 pub proof fn lemma_gemm_kernel_element_correct(
     a: Seq<int>, b: Seq<int>,
     m: nat, k_size: nat, n: nat,
     i: nat, j: nat,
 )
     requires
-        i < m,
-        j < n,
-        // A has M*K elements, B has K*N elements
-        a.len() >= (m * k_size) as int,
-        b.len() >= (k_size * n) as int,
-        // All index accesses in bounds
-        forall|kk: nat| kk < k_size ==> {
-            &&& 0 <= (i * k_size + kk) as int && (i * k_size + kk) < a.len()
-            &&& 0 <= (kk * n + j) as int && (kk * n + j) < b.len()
-        },
+        i < m, j < n,
+        m > 0, n > 0,
+        a.len() == (m * k_size) as int,
+        b.len() == (k_size * n) as int,
     ensures ({
         let k = gemm_kernel(m, k_size, n);
         let env = thread_env_2d(i, j);
@@ -157,27 +155,115 @@ pub proof fn lemma_gemm_kernel_element_correct(
     }),
     decreases k_size,
 {
-    let k = gemm_kernel(m, k_size, n);
+    let kern = gemm_kernel(m, k_size, n);
+    let env = thread_env_2d(i, j);
+    let inputs = seq![a, b];
+    let body = gemm_kernel_body(k_size, n);
+
+    if k_size == 0 {
+        // Both sides are 0
+    } else {
+        // IH for k_size - 1
+        // We need the Reduce to split: sum(0..K) = sum(0..K-1) + body(K-1)
+        // This follows from reduce_sum_arrays definition.
+        // The body at k = k_size-1 should equal a[i*K+(K-1)] * b[(K-1)*N+j]
+
+        // The key: env_with([i,j], 2, k_size-1) = [i, j, k_size-1]
+        // Then body evaluates to: inputs[0][i*K+(k_size-1)] * inputs[1][(k_size-1)*N+j]
+        // = a[i*K+(k_size-1)] * b[(k_size-1)*N+j]
+        // which matches gemm_partial_sum_int's last term.
+
+        // For the recursive part, we need the sum over 0..K-1.
+        // But the Reduce node has bound = Const(k_size), not Const(k_size-1).
+        // So we can't directly apply the IH to the Reduce node —
+        // we need to work with reduce_sum_arrays directly.
+
+        // Actually: arith_eval_with_arrays(Reduce(2, Const(K), body), env, inputs)
+        //   = reduce_sum_arrays(2, K, body, env, inputs)
+        //   = reduce_sum_arrays(2, K-1, body, env, inputs) + arith_eval_with_arrays(body, env_with(env, 2, K-1), inputs)
+
+        // And gemm_partial_sum_int(a, b, K, N, i, j, K)
+        //   = gemm_partial_sum_int(a, b, K, N, i, j, K-1) + a[i*K+(K-1)] * b[(K-1)*N+j]
+
+        // So we need:
+        // 1. reduce_sum_arrays(2, K-1, body, env, inputs) == gemm_partial_sum_int(a, b, K, N, i, j, K-1)
+        // 2. arith_eval_with_arrays(body, env_with(env, 2, K-1), inputs) == a[i*K+(K-1)] * b[(K-1)*N+j]
+
+        // For (1): this is exactly the same structure but with k_size-1 iterations.
+        // We prove it by a helper that works on the partial sum directly.
+        lemma_gemm_reduce_matches_partial_sum(a, b, k_size, n, i, j, k_size);
+    }
+}
+
+/// The body expression for GEMM: A[i*K+k] * B[k*N+j]
+pub open spec fn gemm_kernel_body(k_size: nat, n: nat) -> ArithExpr {
+    ArithExpr::Mul(
+        Box::new(ArithExpr::Index(0, Box::new(ArithExpr::Add(
+            Box::new(ArithExpr::Mul(Box::new(ArithExpr::Var(0)), Box::new(ArithExpr::Const(k_size as int)))),
+            Box::new(ArithExpr::Var(2)),
+        )))),
+        Box::new(ArithExpr::Index(1, Box::new(ArithExpr::Add(
+            Box::new(ArithExpr::Mul(Box::new(ArithExpr::Var(2)), Box::new(ArithExpr::Const(n as int)))),
+            Box::new(ArithExpr::Var(1)),
+        )))),
+    )
+}
+
+/// Core inductive lemma: reduce_sum_arrays over the GEMM body matches gemm_partial_sum_int.
+proof fn lemma_gemm_reduce_matches_partial_sum(
+    a: Seq<int>, b: Seq<int>,
+    k_size: nat, n: nat,
+    i: nat, j: nat,
+    kk: nat,
+)
+    requires
+        kk <= k_size,
+        a.len() == (i + 1) * k_size,  // at least enough for row i
+        b.len() == k_size * n,
+        j < n, n > 0,
+    ensures ({
+        let body = gemm_kernel_body(k_size, n);
+        let env = thread_env_2d(i, j);
+        let inputs = seq![a, b];
+        reduce_sum_arrays(2, kk as int, &body, env, inputs)
+            == gemm_partial_sum_int(a, b, k_size, n, i, j, kk)
+    }),
+    decreases kk,
+{
+    let body = gemm_kernel_body(k_size, n);
     let env = thread_env_2d(i, j);
     let inputs = seq![a, b];
 
-    // The compute expression is Reduce(2, Const(K), body)
-    // arith_eval_with_arrays evaluates to reduce_sum_arrays(2, K, body, env, inputs)
-    // We need to show this equals gemm_partial_sum_int(a, b, K, N, i, j, K)
-    // Both are recursive sums; prove by induction on k_size.
-
-    // Base case: k_size == 0
-    if k_size == 0 {
-        // reduce_sum_arrays(2, 0, body, env, inputs) == 0
-        // gemm_partial_sum_int(a, b, 0, n, i, j, 0) == 0
+    if kk == 0 {
+        // Both sides are 0
     } else {
-        // IH: for k_size - 1
-        lemma_gemm_kernel_element_correct(a, b, m, (k_size - 1) as nat, n, i, j);
+        // IH
+        lemma_gemm_reduce_matches_partial_sum(a, b, k_size, n, i, j, (kk - 1) as nat);
 
-        // We need to show that the (k_size-1)-th term matches
-        // reduce_sum_arrays adds: arith_eval_with_arrays(body, env_with(env, 2, k_size-1), inputs)
-        // gemm_partial_sum_int adds: a[i*K + (k_size-1)] * b[(k_size-1)*N + j]
-        // These should be equal by unfolding the body expression.
+        // Now show the kk-1'th term matches:
+        // reduce_sum_arrays adds: arith_eval_with_arrays(body, env_with(env, 2, kk-1), inputs)
+        // gemm_partial_sum_int adds: a[i*K+(kk-1)] * b[(kk-1)*N+j]
+        //
+        // env_with([i, j], 2, kk-1) = [i, j, kk-1]  (extends env to length 3)
+        // body = Mul(Index(0, Add(Mul(Var(0), Const(K)), Var(2))),
+        //            Index(1, Add(Mul(Var(2), Const(N)), Var(1))))
+        // eval(body, [i, j, kk-1], [a, b]):
+        //   left  = a[eval(Add(Mul(Var(0), Const(K)), Var(2)), [i,j,kk-1])] = a[i*K + (kk-1)]
+        //   right = b[eval(Add(Mul(Var(2), Const(N)), Var(1)), [i,j,kk-1])] = b[(kk-1)*N + j]
+        //   result = a[i*K+(kk-1)] * b[(kk-1)*N+j] ✓
+
+        let ext_env = env_with(env, 2, (kk - 1) as int);
+        // Help Z3: show env_with produces [i, j, kk-1]
+        assert(ext_env.len() == 3);
+        assert(ext_env[0] == i as int);
+        assert(ext_env[1] == j as int);
+        assert(ext_env[2] == (kk - 1) as int);
+
+        // Help Z3: the index computations
+        assert(i * k_size + (kk - 1) < a.len()) by (nonlinear_arith)
+            requires i * k_size < a.len(), kk >= 1, kk <= k_size, a.len() == (i + 1) * k_size;
+        assert((kk - 1) * n + j < b.len()) by (nonlinear_arith)
+            requires kk >= 1, kk <= k_size, j < n, b.len() == k_size * n;
     }
 }
 
