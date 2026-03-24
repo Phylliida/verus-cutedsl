@@ -71,6 +71,9 @@ pub mod scan_segmented;
 pub mod arith_expr;
 
 #[cfg(verus_keep_ghost)]
+pub mod kernel;
+
+#[cfg(verus_keep_ghost)]
 pub mod proof;
 
 #[cfg(verus_keep_ghost)]

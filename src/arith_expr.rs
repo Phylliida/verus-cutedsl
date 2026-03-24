@@ -1042,9 +1042,25 @@ fn nonneg_i64_mod(a: i64, b: i64) -> (result: i64)
 }
 
 /// Evaluate a RuntimeArithExpr at exec time (scalar, no arrays).
+/// Predicate: expression contains no Reduce nodes (exec evaluator doesn't support them yet).
+pub open spec fn no_reduce(expr: &ArithExpr) -> bool
+    decreases expr,
+{
+    match expr {
+        ArithExpr::Reduce(_, _, _) => false,
+        ArithExpr::Const(_) | ArithExpr::Var(_) => true,
+        ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b)
+        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) =>
+            no_reduce(a) && no_reduce(b),
+        ArithExpr::Cmp(_, a, b) => no_reduce(a) && no_reduce(b),
+        ArithExpr::Index(_, idx) => no_reduce(idx),
+    }
+}
+
 pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i64)
     requires
         arith_eval_fits_i64(&expr.view_spec(), i64_seq_to_int(env@)),
+        no_reduce(&expr.view_spec()),
     ensures
         result as int == arith_eval(&expr.view_spec(), i64_seq_to_int(env@)),
     decreases expr,
@@ -1143,8 +1159,8 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
             return r;
         },
         RuntimeArithExpr::Reduce(_var, _bound, _body) => {
-            // Exec Reduce evaluator deferred — spec proofs are the priority.
-            // For now, return 0 (callers should use spec-level kernel_eval).
+            // Unreachable: no_reduce precondition excludes Reduce nodes.
+            proof { assert(false); }
             return 0i64;
         },
     }
