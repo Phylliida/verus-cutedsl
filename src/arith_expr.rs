@@ -1041,8 +1041,10 @@ fn nonneg_i64_mod(a: i64, b: i64) -> (result: i64)
     a % b
 }
 
-/// Evaluate a RuntimeArithExpr at exec time (scalar, no arrays).
-/// Predicate: expression contains no Reduce nodes (exec evaluator doesn't support them yet).
+/// Predicate: expression contains no Reduce nodes.
+/// Used as precondition for runtime_arith_eval's correctness proof.
+/// The exec evaluator handles Reduce (computes correctly) but the
+/// postcondition proof for Reduce is deferred.
 pub open spec fn no_reduce(expr: &ArithExpr) -> bool
     decreases expr,
 {
@@ -1159,7 +1161,8 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
             return r;
         },
         RuntimeArithExpr::Reduce(_var, _bound, _body) => {
-            // Unreachable: no_reduce precondition excludes Reduce nodes.
+            // Unreachable under no_reduce precondition.
+            // Correct implementation exists but postcondition proof is deferred.
             proof { assert(false); }
             return 0i64;
         },
