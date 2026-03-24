@@ -433,6 +433,26 @@ proof fn lemma_prefix_product_positive(shape: Seq<nat>, i: nat)
 }
 
 // ══════════════════════════════════════════════════════════════
+// General Box-unfolding helpers for arith_eval
+// ══════════════════════════════════════════════════════════════
+
+/// Helper: arith_eval of Mul(expr, Const(c)) = arith_eval(expr, env) * c.
+proof fn lemma_arith_eval_mul_expr_const(expr: &ArithExpr, c: int, env: Seq<int>)
+    ensures
+        arith_eval(&ArithExpr::Mul(Box::new(*expr), Box::new(ArithExpr::Const(c))), env)
+            == arith_eval(expr, env) * c,
+{
+    assert(arith_eval(&ArithExpr::Const(c), env) == c);
+}
+
+/// Helper: arith_eval of Add(a, b) = arith_eval(a, env) + arith_eval(b, env).
+proof fn lemma_arith_eval_add(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
+    ensures
+        arith_eval(&ArithExpr::Add(Box::new(*a), Box::new(*b)), env)
+            == arith_eval(a, env) + arith_eval(b, env),
+{}
+
+// ══════════════════════════════════════════════════════════════
 // GEMM index expression correctness
 // ══════════════════════════════════════════════════════════════
 
@@ -588,6 +608,98 @@ pub proof fn lemma_gemm_mac_correct(
 // Offset expression correctness
 // ══════════════════════════════════════════════════════════════
 
+/// Inductive helper: offset_expr_skip evaluates to the tail dot product.
+///
+/// arith_eval(offset_expr_skip(0, shape, stride, start), [x])
+///     == dot_product_nat_int(delinearize(x, shape).skip(start), stride.skip(start))
+proof fn lemma_offset_expr_skip_correct(
+    shape: Seq<nat>, stride: Seq<int>, x: nat, start: nat,
+)
+    requires
+        shape_valid(shape),
+        shape.len() == stride.len(),
+        start <= shape.len(),
+        x < shape_size(shape),
+    ensures
+        arith_eval(&offset_expr_skip(0, shape, stride, start), seq![x as int])
+            == dot_product_nat_int(
+                delinearize(x, shape).skip(start as int),
+                stride.skip(start as int),
+            ),
+    decreases shape.len() - start,
+{
+    let coords = delinearize(x, shape);
+    let env = seq![x as int];
+    crate::proof::shape_lemmas::lemma_delinearize_len(x, shape);
+
+    if start >= shape.len() {
+        // offset_expr_skip = Const(0), coords/stride tails are empty
+        let tail_c = coords.skip(start as int);
+        let tail_s = stride.skip(start as int);
+        assert(tail_c.len() == 0);
+        assert(tail_s.len() == 0);
+        crate::proof::offset_lemmas::lemma_dot_product_empty(tail_s);
+    } else {
+        // arith_eval of coord_expr == delinearize(x, shape)[start]
+        lemma_delinearize_coord_expr_correct(shape, start, x);
+        let coord_expr = delinearize_coord_expr(0, shape, start);
+        let coord_val = coords[start as int];
+
+        // Mul(coord_expr, Const(stride[start])) evaluates to coord_val * stride[start]
+        lemma_arith_eval_mul_expr_const(&coord_expr, stride[start as int], env);
+        let term = ArithExpr::Mul(
+            Box::new(coord_expr),
+            Box::new(ArithExpr::Const(stride[start as int])),
+        );
+        let term_val = (coord_val as int) * stride[start as int];
+        assert(arith_eval(&term, env) == term_val);
+
+        // Dot product decomposition: skip(start) has coords[start] as first element
+        let tail_coords = coords.skip(start as int);
+        let tail_stride = stride.skip(start as int);
+        assert(tail_coords.len() > 0);
+        assert(tail_coords.first() == coord_val);
+        assert(tail_stride.first() == stride[start as int]);
+        assert(tail_coords.skip(1) =~= coords.skip((start + 1) as int));
+        assert(tail_stride.skip(1) =~= stride.skip((start + 1) as int));
+
+        // dot_product(tail, tail) = first*first + dot_product(rest, rest) by definition
+        let dp_rest = dot_product_nat_int(
+            coords.skip((start + 1) as int),
+            stride.skip((start + 1) as int),
+        );
+
+        if start + 1 >= shape.len() {
+            // Last mode: offset_expr_skip = term (just the Mul)
+            assert(coords.skip((start + 1) as int).len() == 0);
+            assert(stride.skip((start + 1) as int).len() == 0);
+            crate::proof::offset_lemmas::lemma_dot_product_empty(
+                stride.skip((start + 1) as int),
+            );
+            assert(dp_rest == 0);
+            // Connect: offset_expr_skip produces `term`, eval = term_val = dp
+            assert(dot_product_nat_int(tail_coords, tail_stride)
+                == term_val + dp_rest);
+        } else {
+            // offset_expr_skip = Add(term, offset_expr_skip(start+1))
+            // By IH: offset_expr_skip(start+1) evaluates to the remaining dot product
+            lemma_offset_expr_skip_correct(shape, stride, x, start + 1);
+            let rest_expr = offset_expr_skip(0, shape, stride, start + 1);
+            assert(arith_eval(&rest_expr, env) == dp_rest);
+
+            // Add unfolding: eval(Add(term, rest)) = eval(term) + eval(rest)
+            lemma_arith_eval_add(&term, &rest_expr, env);
+            assert(arith_eval(
+                &ArithExpr::Add(Box::new(term), Box::new(rest_expr)), env,
+            ) == term_val + dp_rest);
+
+            // dot_product connection
+            assert(dot_product_nat_int(tail_coords, tail_stride)
+                == term_val + dp_rest);
+        }
+    }
+}
+
 /// The offset expression correctly computes layout.offset(x):
 /// arith_eval(offset_expr(0, shape, stride), [x]) == LayoutSpec{shape, stride}.offset(x).
 ///
@@ -603,38 +715,22 @@ pub proof fn lemma_offset_expr_correct(
         x < shape_size(shape),
     ensures
         arith_eval(&offset_expr(0, shape, stride), seq![x as int])
-            == LayoutSpec { shape, stride }.offset(x),
+            == (LayoutSpec { shape, stride }).offset(x),
 {
-    let layout = LayoutSpec { shape, stride };
-    let env = seq![x as int];
+    let coords = delinearize(x, shape);
+    crate::proof::shape_lemmas::lemma_delinearize_len(x, shape);
 
-    if shape.len() == 0 {
-        // offset_expr = Const(0). layout.offset = dot([],[]) = 0.
-        crate::proof::offset_lemmas::lemma_offset_zero(layout);
-    } else {
-        // offset_expr = coord[0]*stride[0] + (offset_expr_skip for remaining modes)
-        // layout.offset = dot(delinearize(x, shape), stride)
-        //               = delinearize[0]*stride[0] + dot(delinearize[1..], stride[1..])
+    // offset_expr(0, shape, stride) == offset_expr_skip(0, shape, stride, 0)
+    // for all cases (empty, single, multi-mode). Verus can see this from the specs.
 
-        // coord[0] expr is correct
-        lemma_delinearize_coord_expr_correct(shape, 0, x);
-        // So arith_eval(coord_expr, [x]) == delinearize(x, shape)[0]
+    // Use the inductive helper with start=0
+    lemma_offset_expr_skip_correct(shape, stride, x, 0);
 
-        // For rank 1: offset = coord[0] * stride[0]. ArithExpr = same.
-        if shape.len() == 1 {
-            // offset_expr = Mul(coord_expr, Const(stride[0]))
-            // = delinearize(x, shape)[0] * stride[0]
-            // = layout.offset(x) (rank 1)
-            lemma_arith_eval_mul_var_const(0, 0, env); // not quite right...
-            // Actually for rank 1, offset = (x % shape[0]) * stride[0]
-            // and the ArithExpr evaluates to the same.
-            // Let z3 handle this simple case.
-        }
-        // For rank > 1: need to show the sum of terms matches dot product.
-        // This requires deeper induction on offset_expr_skip matching
-        // the remaining dot product terms.
-        // TODO: full inductive proof for rank > 1
-    }
+    // skip(0) is identity
+    assert(coords.skip(0) =~= coords);
+    assert(stride.skip(0) =~= stride);
+
+    // offset(x) = dot_product(delinearize(x, shape), stride) by definition
 }
 
 // NOTE: Exec ArithExpr evaluator requires a separate runtime ArithExpr type
