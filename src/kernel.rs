@@ -703,6 +703,49 @@ proof fn lemma_scan_reduce_matches(
 }
 
 // ══════════════════════════════════════════════════════════════
+// Bridge: gemm_partial_sum_int ↔ gemm_partial_sum (i64 version)
+// Connects kernel framework to existing verified exec GEMM.
+// ══════════════════════════════════════════════════════════════
+
+/// Bridge: kernel's gemm_partial_sum_int (Seq<int>) equals contraction's
+/// gemm_partial_sum (Seq<i64>) when the sequences have matching values.
+/// This connects the verified Kernel framework to the verified exec GEMM.
+pub proof fn lemma_gemm_partial_sum_bridge(
+    a_i64: Seq<i64>, b_i64: Seq<i64>,
+    a_int: Seq<int>, b_int: Seq<int>,
+    k_size: nat, n: nat, i: nat, j: nat, kk: nat,
+)
+    requires
+        kk <= k_size,
+        j < n, n > 0,
+        a_int.len() == a_i64.len(),
+        b_int.len() == b_i64.len(),
+        a_int.len() >= (i * k_size + k_size) as int,
+        b_int.len() >= (k_size * n) as int,
+        forall|idx: int| 0 <= idx < a_int.len() ==> #[trigger] a_int[idx] == a_i64[idx] as int,
+        forall|idx: int| 0 <= idx < b_int.len() ==> #[trigger] b_int[idx] == b_i64[idx] as int,
+    ensures
+        gemm_partial_sum_int(a_int, b_int, k_size, n, i, j, kk)
+            == crate::runtime::contraction::gemm_partial_sum(a_i64, b_i64, k_size, n, i, j, kk),
+    decreases kk,
+{
+    if kk == 0 {
+    } else {
+        lemma_gemm_partial_sum_bridge(a_i64, b_i64, a_int, b_int, k_size, n, i, j, (kk - 1) as nat);
+        // Term: a_int[i*K + kk-1] * b_int[(kk-1)*N + j]
+        //     == (a_i64[i*K + kk-1] as int) * (b_i64[(kk-1)*N + j] as int)
+        let a_off = i * k_size + (kk - 1);
+        let b_off = (kk - 1) * n + j;
+        assert(a_off < i * k_size + k_size);
+        assert((kk - 1) * n <= (k_size - 1) * n) by (nonlinear_arith)
+            requires kk >= 1, kk <= k_size, n > 0;
+        assert(b_off < k_size * n) by (nonlinear_arith)
+            requires b_off == (kk - 1) * n + j, (kk - 1) * n <= (k_size - 1) * n,
+                     j < n, n > 0, k_size >= 1;
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
 // Guard correctness proofs
 // ══════════════════════════════════════════════════════════════
 
