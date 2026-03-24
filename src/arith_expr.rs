@@ -447,21 +447,26 @@ pub proof fn lemma_prefix_product_eq_shape_size(shape: Seq<nat>, i: nat)
     decreases i,
 {
     if i == 0 {
-        assert(shape.take(0).len() == 0);
+        assert(shape.take(0) =~= Seq::<nat>::empty());
     } else {
         lemma_prefix_product_eq_shape_size(shape, (i - 1) as nat);
-        // IH: pp(shape, i-1) == shape_size(shape.take(i-1))
-        // pp(shape, i) == shape[i-1] * pp(shape, i-1) == shape[i-1] * shape_size(shape.take(i-1))
-        // shape.take(i) == shape.take(i-1).push(shape[i-1])
-        assert(shape.take(i as int) =~= shape.take((i - 1) as int).push(shape[(i - 1) as int]));
-        // shape.take(i) == shape.take(i-1) ++ [shape[i-1]]
-        assert(shape.take((i - 1) as int).push(shape[(i - 1) as int])
-            =~= shape.take((i - 1) as int).add(seq![shape[(i - 1) as int]]));
+        assert(shape.take(i as int) =~= shape.take((i - 1) as int).add(seq![shape[(i - 1) as int]]));
         crate::proof::product_lemmas::lemma_shape_size_append(
             shape.take((i - 1) as int),
             seq![shape[(i - 1) as int]],
         );
         crate::proof::shape_lemmas::lemma_shape_size_single(shape[(i - 1) as int]);
+        // pp(shape, i) = shape[i-1] * pp(shape, i-1)
+        // shape_size(take(i)) = shape_size(take(i-1)) * shape[i-1]
+        // = pp(shape, i-1) * shape[i-1] (by IH)
+        // Commutativity: a * b == b * a
+        assert(shape_prefix_product(shape, i) == shape_size(shape.take(i as int)))
+            by (nonlinear_arith)
+            requires
+                shape_prefix_product(shape, i) == shape[(i - 1) as int] * shape_prefix_product(shape, (i - 1) as nat),
+                shape_prefix_product(shape, (i - 1) as nat) == shape_size(shape.take((i - 1) as int)),
+                shape_size(shape.take(i as int)) == shape_size(shape.take((i - 1) as int)) * shape_size(seq![shape[(i - 1) as int]]),
+                shape_size(seq![shape[(i - 1) as int]]) == shape[(i - 1) as int];
     }
 }
 
