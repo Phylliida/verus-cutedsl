@@ -323,4 +323,154 @@ pub proof fn lemma_vector_add_kernel_correct(
     assert(arith_eval_with_arrays(&idx_b, env, inputs) == b[i as int]);
 }
 
+// ══════════════════════════════════════════════════════════════
+// Layout offset kernel — connects CuTe algebra to Kernel framework
+// ══════════════════════════════════════════════════════════════
+
+/// Build a layout-offset kernel: out[x] = layout.offset(x)
+/// Uses the verified offset_expr from arith_expr.rs.
+pub open spec fn offset_kernel(shape: Seq<nat>, stride: Seq<int>) -> KernelSpec
+    recommends shape.len() == stride.len(),
+{
+    KernelSpec {
+        guard: ArithExpr::Cmp(
+            CmpOp::Lt,
+            Box::new(ArithExpr::Var(0)),
+            Box::new(ArithExpr::Const(crate::shape::shape_size(shape) as int)),
+        ),
+        scatter: ArithExpr::Var(0),
+        compute: crate::arith_expr::offset_expr(0, shape, stride),
+    }
+}
+
+/// Offset kernel correctness: compute(x) == layout.offset(x).
+/// This connects the Kernel framework to the CuTe layout algebra.
+pub proof fn lemma_offset_kernel_correct(
+    shape: Seq<nat>, stride: Seq<int>, x: nat,
+)
+    requires
+        crate::shape::shape_valid(shape),
+        shape.len() == stride.len(),
+        x < crate::shape::shape_size(shape),
+    ensures ({
+        let k = offset_kernel(shape, stride);
+        let env = thread_env_1d(x);
+        arith_eval(&k.compute, env)
+            == (crate::layout::LayoutSpec { shape, stride }).offset(x)
+    }),
+{
+    // offset_kernel.compute IS offset_expr — use the existing proof directly
+    crate::arith_expr::lemma_offset_expr_correct(shape, stride, x);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Dot product / reduction kernel
+// ══════════════════════════════════════════════════════════════
+
+/// Dot product spec: Σ_{i=0}^{n-1} a[i] * b[i]
+pub open spec fn dot_product_spec(a: Seq<int>, b: Seq<int>, n: nat) -> int
+    decreases n,
+{
+    if n == 0 { 0 }
+    else { dot_product_spec(a, b, (n - 1) as nat) + a[(n - 1) as int] * b[(n - 1) as int] }
+}
+
+/// Build a dot-product kernel (single-thread spec):
+///   out[0] = Σ_{k=0}^{n-1} a[k] * b[k]
+pub open spec fn dot_product_kernel(n: nat) -> KernelSpec {
+    KernelSpec {
+        guard: ArithExpr::Cmp(CmpOp::Eq, Box::new(ArithExpr::Var(0)), Box::new(ArithExpr::Const(0))),
+        scatter: ArithExpr::Const(0),
+        compute: ArithExpr::Reduce(
+            1,  // reduction variable (Var(1) = k)
+            Box::new(ArithExpr::Const(n as int)),
+            Box::new(ArithExpr::Mul(
+                Box::new(ArithExpr::Index(0, Box::new(ArithExpr::Var(1)))),
+                Box::new(ArithExpr::Index(1, Box::new(ArithExpr::Var(1)))),
+            )),
+        ),
+    }
+}
+
+/// Dot product kernel correctness: compute(0) == Σ a[k]*b[k].
+pub proof fn lemma_dot_product_kernel_correct(
+    a: Seq<int>, b: Seq<int>, n: nat,
+)
+    requires
+        a.len() >= n as int,
+        b.len() >= n as int,
+    ensures ({
+        let k = dot_product_kernel(n);
+        let env = thread_env_1d(0);
+        let inputs = seq![a, b];
+        arith_eval_with_arrays(&k.compute, env, inputs)
+            == dot_product_spec(a, b, n)
+    }),
+{
+    let k = dot_product_kernel(n);
+    let env = thread_env_1d(0);
+    let inputs = seq![a, b];
+
+    // compute = Reduce(1, Const(n), body)
+    // arith_eval_with_arrays unfolds to reduce_sum_arrays(1, n, body, [0], [a, b])
+    // We prove this equals dot_product_spec by induction.
+    let body = ArithExpr::Mul(
+        Box::new(ArithExpr::Index(0, Box::new(ArithExpr::Var(1)))),
+        Box::new(ArithExpr::Index(1, Box::new(ArithExpr::Var(1)))),
+    );
+    let bound_expr = ArithExpr::Const(n as int);
+    assert(arith_eval_with_arrays(&bound_expr, env, inputs) == n as int);
+
+    lemma_dot_reduce_matches(a, b, n, env, inputs, &body);
+}
+
+/// Inductive helper: reduce_sum_arrays for dot product body matches dot_product_spec.
+proof fn lemma_dot_reduce_matches(
+    a: Seq<int>, b: Seq<int>, kk: nat,
+    env: Seq<int>, inputs: Seq<Seq<int>>,
+    body: &ArithExpr,
+)
+    requires
+        a.len() >= kk as int,
+        b.len() >= kk as int,
+        env.len() >= 1,
+        inputs.len() == 2,
+        inputs[0] == a,
+        inputs[1] == b,
+        *body == ArithExpr::Mul(
+            Box::new(ArithExpr::Index(0, Box::new(ArithExpr::Var(1)))),
+            Box::new(ArithExpr::Index(1, Box::new(ArithExpr::Var(1)))),
+        ),
+    ensures
+        reduce_sum_arrays(1, kk as int, body, env, inputs)
+            == dot_product_spec(a, b, kk),
+    decreases kk,
+{
+    if kk == 0 {
+    } else {
+        lemma_dot_reduce_matches(a, b, (kk - 1) as nat, env, inputs, body);
+
+        // Show the kk-1'th term matches: a[kk-1] * b[kk-1]
+        let ext_env = env_with(env, 1, (kk - 1) as int);
+        assert(ext_env.len() >= 2);
+        assert(ext_env[1] == (kk - 1) as int);
+
+        // Help Z3 unfold body through Box wrappers
+        let idx = (kk - 1) as nat;
+        let var1 = ArithExpr::Var(1);
+        assert(arith_eval_with_arrays(&var1, ext_env, inputs) == idx as int);
+
+        // Index(0, Var(1)) = a[kk-1], Index(1, Var(1)) = b[kk-1]
+        crate::arith_expr::lemma_eval_with_arrays_index(
+            0, &var1, ext_env, inputs, idx as int);
+        crate::arith_expr::lemma_eval_with_arrays_index(
+            1, &var1, ext_env, inputs, idx as int);
+
+        // Mul(Index(0,...), Index(1,...)) = a[kk-1] * b[kk-1]
+        let idx_a = ArithExpr::Index(0, Box::new(ArithExpr::Var(1)));
+        let idx_b = ArithExpr::Index(1, Box::new(ArithExpr::Var(1)));
+        crate::arith_expr::lemma_eval_with_arrays_mul(&idx_a, &idx_b, ext_env, inputs);
+    }
+}
+
 } // verus!
