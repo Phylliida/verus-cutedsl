@@ -546,6 +546,15 @@ pub proof fn lemma_prefix_product_eq_cm_stride(shape: Seq<nat>, i: nat)
 // General Box-unfolding helpers for arith_eval
 // ══════════════════════════════════════════════════════════════
 
+/// Helper: arith_eval of Mul(Const(c), expr) = c * arith_eval(expr, env).
+pub proof fn lemma_arith_eval_const_mul_expr(c: int, expr: &ArithExpr, env: Seq<int>)
+    ensures
+        arith_eval(&ArithExpr::Mul(Box::new(ArithExpr::Const(c)), Box::new(*expr)), env)
+            == c * arith_eval(expr, env),
+{
+    assert(arith_eval(&ArithExpr::Const(c), env) == c);
+}
+
 /// Helper: arith_eval of Mul(expr, Const(c)) = arith_eval(expr, env) * c.
 proof fn lemma_arith_eval_mul_expr_const(expr: &ArithExpr, c: int, env: Seq<int>)
     ensures
@@ -587,6 +596,13 @@ proof fn lemma_arith_eval_mul(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
 proof fn lemma_arith_eval_index(arr: nat, idx: &ArithExpr, env: Seq<int>)
     ensures
         arith_eval(&ArithExpr::Index(arr, Box::new(*idx)), env) == arith_eval(idx, env),
+{}
+
+/// Helper: arith_eval of Reduce(var, bound, body).
+pub proof fn lemma_arith_eval_reduce(var: nat, bound: &ArithExpr, body: &ArithExpr, env: Seq<int>)
+    ensures
+        arith_eval(&ArithExpr::Reduce(var, Box::new(*bound), Box::new(*body)), env)
+            == reduce_sum(var, arith_eval(bound, env), body, env),
 {}
 
 /// Helper: arith_eval of Div(a, b) — handles both zero and nonzero denom.
@@ -1105,6 +1121,376 @@ pub open spec fn reduce_sum_arrays_shifted(
     else {
         reduce_sum_arrays_shifted(var, offset, n - 1, body, env, arrays)
             + arith_eval_with_arrays(body, env_with(env, var, (offset as int) + n - 1), arrays)
+    }
+}
+
+// --- reduce algebraic properties ---
+
+/// Reduce over constant: Σ_{i=0}^{n-1} c == n * c.
+pub proof fn lemma_reduce_sum_const(var: nat, n: nat, c: int, env: Seq<int>)
+    ensures reduce_sum(var, n as int, &ArithExpr::Const(c), env) == (n as int) * c,
+    decreases n,
+{
+    if n == 0 {
+        assert(reduce_sum(var, n as int, &ArithExpr::Const(c), env) == 0int);
+        assert((n as int) * c == 0int) by (nonlinear_arith)
+            requires n == 0nat;
+        return;
+    }
+    lemma_reduce_sum_const(var, (n - 1) as nat, c, env);
+    // Step term: arith_eval(Const(c), env_with(...)) == c
+    let ext = env_with(env, var, (n - 1) as int);
+    assert(arith_eval(&ArithExpr::Const(c), ext) == c);
+    assert(((n - 1) as int) * c + c == (n as int) * c) by (nonlinear_arith);
+}
+
+/// Reduce linearity: Σ (f(i) + g(i)) == Σ f(i) + Σ g(i).
+pub proof fn lemma_reduce_sum_linear(
+    var: nat, n: nat,
+    f: &ArithExpr, g: &ArithExpr, env: Seq<int>,
+)
+    ensures
+        reduce_sum(var, n as int,
+            &ArithExpr::Add(Box::new(*f), Box::new(*g)), env)
+        == reduce_sum(var, n as int, f, env)
+            + reduce_sum(var, n as int, g, env),
+    decreases n,
+{
+    if n == 0 {
+    } else {
+        lemma_reduce_sum_linear(var, (n - 1) as nat, f, g, env);
+        let ext = env_with(env, var, (n - 1) as int);
+        lemma_arith_eval_add(f, g, ext);
+    }
+}
+
+/// Reduce scalar factor: Σ c * f(i) == c * Σ f(i).
+pub proof fn lemma_reduce_sum_scalar(
+    var: nat, n: nat,
+    c: int, f: &ArithExpr, env: Seq<int>,
+)
+    ensures
+        reduce_sum(var, n as int,
+            &ArithExpr::Mul(Box::new(ArithExpr::Const(c)), Box::new(*f)), env)
+        == c * reduce_sum(var, n as int, f, env),
+    decreases n,
+{
+    if n == 0 {
+        assert(reduce_sum(var, n as int, &ArithExpr::Mul(Box::new(ArithExpr::Const(c)), Box::new(*f)), env) == 0int);
+        assert(reduce_sum(var, n as int, f, env) == 0int);
+        assert(c * 0int == 0int) by (nonlinear_arith);
+        return;
+    }
+    {
+        lemma_reduce_sum_scalar(var, (n - 1) as nat, c, f, env);
+        let ext = env_with(env, var, (n - 1) as int);
+        // Step term: Mul(Const(c), f) at ext = c * f(ext)
+        lemma_arith_eval_const_mul_expr(c, f, ext);
+        assert(c * reduce_sum(var, (n - 1) as int, f, env) + c * arith_eval(f, ext)
+            == c * (reduce_sum(var, (n - 1) as int, f, env) + arith_eval(f, ext)))
+            by (nonlinear_arith);
+    }
+}
+
+// --- free variables and evaluation independence ---
+
+/// Predicate: expression does not reference Var(k).
+pub open spec fn free_of_var(expr: &ArithExpr, k: nat) -> bool
+    decreases expr,
+{
+    match expr {
+        ArithExpr::Const(_) => true,
+        ArithExpr::Var(i) => *i != k,
+        ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b)
+        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) =>
+            free_of_var(a, k) && free_of_var(b, k),
+        ArithExpr::Cmp(_, a, b) => free_of_var(a, k) && free_of_var(b, k),
+        ArithExpr::Index(_, idx) => free_of_var(idx, k),
+        ArithExpr::Reduce(var, bound, body) =>
+            free_of_var(bound, k) && (*var == k || free_of_var(body, k)),
+    }
+}
+
+/// If expr is free of Var(k), changing env[k] doesn't affect evaluation.
+pub proof fn lemma_eval_independent_of_unused_var(
+    expr: &ArithExpr, env1: Seq<int>, env2: Seq<int>, k: nat,
+)
+    requires
+        free_of_var(expr, k),
+        env1.len() == env2.len(),
+        forall|j: int| 0 <= j < env1.len() && j != k as int
+            ==> env1[j] == env2[j],
+    ensures
+        arith_eval(expr, env1) == arith_eval(expr, env2),
+    decreases expr, 0int,
+{
+    match expr {
+        ArithExpr::Const(_) => {},
+        ArithExpr::Var(i) => {
+            if (*i as int) < env1.len() {
+                assert(env1[*i as int] == env2[*i as int]);
+            }
+        },
+        ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b)
+        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) => {
+            lemma_eval_independent_of_unused_var(a, env1, env2, k);
+            lemma_eval_independent_of_unused_var(b, env1, env2, k);
+        },
+        ArithExpr::Cmp(_, a, b) => {
+            lemma_eval_independent_of_unused_var(a, env1, env2, k);
+            lemma_eval_independent_of_unused_var(b, env1, env2, k);
+        },
+        ArithExpr::Index(_, idx) => {
+            lemma_eval_independent_of_unused_var(idx, env1, env2, k);
+        },
+        ArithExpr::Reduce(var, bound, body) => {
+            lemma_eval_independent_of_unused_var(bound, env1, env2, k);
+            let n = arith_eval(bound, env1);
+            lemma_reduce_independent_helper(*var, n, body, env1, env2, k);
+        },
+    }
+}
+
+/// Helper: reduce_sum independent of unused var.
+proof fn lemma_reduce_independent_helper(
+    var: nat, n: int, body: &ArithExpr,
+    env1: Seq<int>, env2: Seq<int>, k: nat,
+)
+    requires
+        env1.len() == env2.len(),
+        forall|j: int| 0 <= j < env1.len() && j != k as int
+            ==> env1[j] == env2[j],
+        var == k || free_of_var(body, k),
+    ensures
+        reduce_sum(var, n, body, env1) == reduce_sum(var, n, body, env2),
+    decreases body, (if n > 0 { n } else { 0 }),
+{
+    if n <= 0 {
+    } else {
+        lemma_reduce_independent_helper(var, n - 1, body, env1, env2, k);
+        let ext1 = env_with(env1, var, n - 1);
+        let ext2 = env_with(env2, var, n - 1);
+        if var == k {
+            // Both envs set var=k to n-1, agree on everything else.
+            assert(ext1 =~= ext2);
+        } else {
+            // free_of_var(body, k). ext1 and ext2 still differ only at k.
+            // Need: ext1 and ext2 agree on all j != k, have same length.
+            lemma_env_with_len(env1, var, n - 1);
+            lemma_env_with_len(env2, var, n - 1);
+            assert(ext1.len() == ext2.len()) by {
+                if (var as int) < env1.len() {
+                    assert(ext1.len() == env1.len());
+                    assert(ext2.len() == env2.len());
+                }
+            };
+            assert forall|j: int| 0 <= j < ext1.len() && j != k as int
+                implies ext1[j] == ext2[j]
+            by {
+                if j == var as int {
+                    lemma_env_with_at(env1, var, n - 1);
+                    lemma_env_with_at(env2, var, n - 1);
+                } else if j < env1.len() {
+                    lemma_env_with_other(env1, var, n - 1, j as nat);
+                    lemma_env_with_other(env2, var, n - 1, j as nat);
+                }
+            };
+            lemma_eval_independent_of_unused_var(body, ext1, ext2, k);
+        }
+    }
+}
+
+// --- nested reduce interchange ---
+
+/// Helper: if every term is zero, the sum is zero.
+proof fn lemma_reduce_all_zero_terms(
+    var: nat, n: nat,
+    inner: &ArithExpr, env: Seq<int>,
+    inner_var: nat, body: &ArithExpr,
+)
+    requires
+        *inner == ArithExpr::Reduce(inner_var, Box::new(ArithExpr::Const(0int)), Box::new(*body)),
+    ensures
+        reduce_sum(var, n as int, inner, env) == 0,
+    decreases n,
+{
+    if n == 0 {
+    } else {
+        lemma_reduce_all_zero_terms(var, (n - 1) as nat, inner, env, inner_var, body);
+        let ext = env_with(env, var, (n - 1) as int);
+        lemma_arith_eval_reduce(inner_var, &ArithExpr::Const(0int), body, ext);
+    }
+}
+
+/// Helper: peel the last term from the inner reduce and move it outside.
+/// Σ_{j=0}^{n-1} (Σ_{i=0}^{m} body) == Σ_{j=0}^{n-1} (Σ_{i=0}^{m-1} body) + Σ_{j=0}^{n-1} body(m-1, j)
+///
+/// This is reduce linearity applied to the outer sum, where the inner sum
+/// is split as: Σ_{i=0}^{m} = Σ_{i=0}^{m-1} + term(m-1).
+proof fn lemma_peel_inner_last(
+    var_i: nat, var_j: nat,
+    m: nat, n: nat,
+    body: &ArithExpr, env: Seq<int>,
+)
+    requires
+        var_i != var_j,
+        m > 0,
+    ensures ({
+        let inner_m = ArithExpr::Reduce(var_i, Box::new(ArithExpr::Const(m as int)), Box::new(*body));
+        let inner_m1 = ArithExpr::Reduce(var_i, Box::new(ArithExpr::Const((m - 1) as int)), Box::new(*body));
+        reduce_sum(var_j, n as int, &inner_m, env)
+        == reduce_sum(var_j, n as int, &inner_m1, env)
+            + reduce_sum_peeled(var_j, var_i, n, (m - 1) as nat, body, env)
+    }),
+    decreases n,
+{
+    let inner_m = ArithExpr::Reduce(var_i, Box::new(ArithExpr::Const(m as int)), Box::new(*body));
+    let inner_m1 = ArithExpr::Reduce(var_i, Box::new(ArithExpr::Const((m - 1) as int)), Box::new(*body));
+
+    if n == 0 {
+    } else {
+        lemma_peel_inner_last(var_i, var_j, m, (n - 1) as nat, body, env);
+        // For the n-1'th term:
+        // arith_eval(inner_m, env_with(env, var_j, n-1))
+        //   = reduce_sum(var_i, m, body, env_with(env, var_j, n-1))
+        //   = reduce_sum(var_i, m-1, body, ...) + arith_eval(body, env_with(..., var_i, m-1))
+        let ext_j = env_with(env, var_j, (n - 1) as int);
+        lemma_arith_eval_reduce(var_i, &ArithExpr::Const(m as int), body, ext_j);
+        lemma_arith_eval_reduce(var_i, &ArithExpr::Const((m - 1) as int), body, ext_j);
+        // reduce_sum(var_i, m, body, ext_j) = reduce_sum(var_i, m-1, body, ext_j) + arith_eval(body, env_with(ext_j, var_i, m-1))
+    }
+}
+
+/// Helper spec: the "peeled" term — Σ_{j=0}^{n-1} body(m_val, j)
+/// where var_i is set to m_val in the body's env.
+pub open spec fn reduce_sum_peeled(
+    var_j: nat, var_i: nat,
+    n: nat, m_val: nat,
+    body: &ArithExpr, env: Seq<int>,
+) -> int
+    decreases n,
+{
+    if n == 0 { 0 }
+    else {
+        reduce_sum_peeled(var_j, var_i, (n - 1) as nat, m_val, body, env)
+            + arith_eval(body, env_with(env_with(env, var_j, (n - 1) as int), var_i, m_val as int))
+    }
+}
+
+/// The peeled term equals the inner sum with swapped variable binding order.
+/// Σ_{j=0}^{n-1} body(m_val, j) where we set var_j then var_i
+/// == reduce_sum(var_j, n, body_with_i_fixed, env)
+/// This connects the peeled term to a standard reduce_sum.
+proof fn lemma_peeled_eq_reduce(
+    var_j: nat, var_i: nat,
+    n: nat, m_val: nat,
+    body: &ArithExpr, env: Seq<int>,
+)
+    requires var_i != var_j,
+    ensures
+        reduce_sum_peeled(var_j, var_i, n, m_val, body, env)
+        == reduce_sum(var_j, n as int, body, env_with(env, var_i, m_val as int)),
+    decreases n,
+{
+    if n == 0 {
+    } else {
+        lemma_peeled_eq_reduce(var_j, var_i, (n - 1) as nat, m_val, body, env);
+        // Term: arith_eval(body, env_with(env_with(env, var_j, n-1), var_i, m_val))
+        // == arith_eval(body, env_with(env_with(env, var_i, m_val), var_j, n-1))
+        // These are equal if env_with commutes for distinct vars.
+        let ext_ji = env_with(env_with(env, var_j, (n - 1) as int), var_i, m_val as int);
+        let ext_ij = env_with(env_with(env, var_i, m_val as int), var_j, (n - 1) as int);
+        lemma_env_with_commutes(env, var_i, m_val as int, var_j, (n - 1) as int);
+        assert(ext_ji =~= ext_ij);
+    }
+}
+
+/// env_with commutes for distinct variables.
+pub proof fn lemma_env_with_commutes(
+    env: Seq<int>, var1: nat, val1: int, var2: nat, val2: int,
+)
+    requires var1 != var2,
+    ensures
+        env_with(env_with(env, var1, val1), var2, val2)
+        =~= env_with(env_with(env, var2, val2), var1, val1),
+{
+    let e12 = env_with(env_with(env, var1, val1), var2, val2);
+    let e21 = env_with(env_with(env, var2, val2), var1, val1);
+    // Both produce a seq of the same length with the same values at each index.
+    // var1 -> val1, var2 -> val2, other -> env[other].
+    let max_len = if var1 > var2 { var1 + 1 } else { var2 + 1 };
+    let base_len = if env.len() > max_len as int { env.len() as nat } else { max_len };
+
+    assert forall|j: int| 0 <= j < e12.len() implies e12[j] == e21[j]
+    by {
+        lemma_env_with_at(env_with(env, var1, val1), var2, val2);
+        lemma_env_with_at(env_with(env, var2, val2), var1, val1);
+        if j == var2 as int {
+            lemma_env_with_at(env_with(env, var1, val1), var2, val2);
+            // e12[var2] = val2
+            // e21[var2]: env_with(env_with(env, var2, val2), var1, val1)[var2]
+            //   var1 != var2, so this is env_with(env, var2, val2)[var2] = val2
+            lemma_env_with_len(env, var2, val2);
+            if (var2 as int) < env_with(env, var2, val2).len() {
+                lemma_env_with_other(env_with(env, var2, val2), var1, val1, var2);
+                lemma_env_with_at(env, var2, val2);
+            }
+        } else if j == var1 as int {
+            lemma_env_with_at(env_with(env, var2, val2), var1, val1);
+            lemma_env_with_len(env, var1, val1);
+            if (var1 as int) < env_with(env, var1, val1).len() {
+                lemma_env_with_other(env_with(env, var1, val1), var2, val2, var1);
+                lemma_env_with_at(env, var1, val1);
+            }
+        } else {
+            // j != var1, j != var2: both return env[j] (or 0 if extended)
+        }
+    };
+}
+
+/// Nested reduce interchange: Σ_i Σ_j f(i,j) == Σ_j Σ_i f(i,j).
+/// Fundamental for loop reordering schedule transformations.
+pub proof fn lemma_reduce_sum_interchange(
+    var_i: nat, var_j: nat,
+    m: nat, n: nat,
+    body: &ArithExpr,
+    env: Seq<int>,
+)
+    requires var_i != var_j,
+    ensures
+        reduce_sum(var_i, m as int,
+            &ArithExpr::Reduce(var_j, Box::new(ArithExpr::Const(n as int)), Box::new(*body)),
+            env)
+        ==
+        reduce_sum(var_j, n as int,
+            &ArithExpr::Reduce(var_i, Box::new(ArithExpr::Const(m as int)), Box::new(*body)),
+            env),
+    decreases m,
+{
+    let inner_j = ArithExpr::Reduce(var_j, Box::new(ArithExpr::Const(n as int)), Box::new(*body));
+    let inner_i = ArithExpr::Reduce(var_i, Box::new(ArithExpr::Const(m as int)), Box::new(*body));
+
+    if m == 0 {
+        // LHS = 0. RHS: each inner reduce has bound 0, so also 0.
+        lemma_reduce_all_zero_terms(var_j, n, &inner_i, env, var_i, body);
+    } else {
+        // IH
+        lemma_reduce_sum_interchange(var_i, var_j, (m - 1) as nat, n, body, env);
+
+        // Peel: Σ_j Σ_{i=0}^{m-1} body = Σ_j Σ_{i=0}^{m-2} body + Σ_j body(m-1, j)
+        lemma_peel_inner_last(var_i, var_j, m, n, body, env);
+
+        // The peeled term: Σ_j body(m-1, j) = reduce_sum(var_j, n, body, env_with(env, var_i, m-1))
+        lemma_peeled_eq_reduce(var_j, var_i, n, (m - 1) as nat, body, env);
+
+        // LHS = reduce_sum(var_i, m-1, inner_j, env) + arith_eval(inner_j, env_with(env, var_i, m-1))
+        //      = (by IH) reduce_sum(var_j, n, inner_i_m1, env) + reduce_sum(var_j, n, body, env_with(env, var_i, m-1))
+        // And reduce_sum(var_j, n, body, env_with(env, var_i, m-1)) = peeled term
+        // RHS = reduce_sum(var_j, n, inner_i_m, env)
+        //     = (by peel) reduce_sum(var_j, n, inner_i_m1, env) + peeled term
+        // So LHS = RHS. ✓
+        let ext_i = env_with(env, var_i, (m - 1) as int);
+        lemma_arith_eval_reduce(var_j, &ArithExpr::Const(n as int), body, ext_i);
     }
 }
 
