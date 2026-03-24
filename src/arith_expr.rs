@@ -562,6 +562,13 @@ proof fn lemma_arith_eval_add(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
             == arith_eval(a, env) + arith_eval(b, env),
 {}
 
+/// Helper: arith_eval_with_arrays of Add(a, b).
+pub proof fn lemma_eval_with_arrays_add(a: &ArithExpr, b: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>)
+    ensures
+        arith_eval_with_arrays(&ArithExpr::Add(Box::new(*a), Box::new(*b)), env, arrays)
+            == arith_eval_with_arrays(a, env, arrays) + arith_eval_with_arrays(b, env, arrays),
+{}
+
 /// Helper: arith_eval of Sub(a, b) = arith_eval(a, env) - arith_eval(b, env).
 proof fn lemma_arith_eval_sub(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     ensures
