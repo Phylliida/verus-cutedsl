@@ -789,7 +789,7 @@ pub enum RuntimeArithExpr {
 
 impl RuntimeArithExpr {
     /// Map to spec ArithExpr.
-    pub closed spec fn view_spec(&self) -> ArithExpr
+    pub open spec fn view_spec(&self) -> ArithExpr
         decreases self,
     {
         match self {
@@ -856,12 +856,37 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
         RuntimeArithExpr::Div(a, b) => {
             let va = runtime_arith_eval(a, env);
             let vb = runtime_arith_eval(b, env);
-            if vb != 0 { va / vb } else { 0i64 }
+            if vb == 0 {
+                0i64
+            } else if va == i64::MIN && vb == -1i64 {
+                // Unreachable: arith_eval_fits_i64 forbids this.
+                // i64::MIN / -1 = i64::MAX + 1, violating the i64 bound.
+                proof {
+                    assert(arith_eval(&a.view_spec(), env_spec) == va as int);
+                    assert(arith_eval(&b.view_spec(), env_spec) == vb as int);
+                    assert((va as int) / (vb as int) > i64::MAX as int) by (nonlinear_arith)
+                        requires va as int == i64::MIN as int, vb as int == -1int;
+                }
+                unreachable!()
+            } else {
+                va / vb
+            }
         },
         RuntimeArithExpr::Mod(a, b) => {
             let va = runtime_arith_eval(a, env);
             let vb = runtime_arith_eval(b, env);
-            if vb != 0 { va % vb } else { 0i64 }
+            if vb == 0 {
+                0i64
+            } else if va == i64::MIN && vb == -1i64 {
+                // i64::MIN % -1 == 0 mathematically, but panics on hardware
+                proof {
+                    assert(arith_eval(&a.view_spec(), env_spec) == va as int);
+                    assert(arith_eval(&b.view_spec(), env_spec) == vb as int);
+                }
+                0i64
+            } else {
+                va % vb
+            }
         },
         RuntimeArithExpr::Index(_arr, idx) => {
             // Scalar eval: Index just evaluates the index expression
