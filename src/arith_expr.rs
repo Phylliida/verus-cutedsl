@@ -433,6 +433,88 @@ proof fn lemma_prefix_product_positive(shape: Seq<nat>, i: nat)
 }
 
 // ══════════════════════════════════════════════════════════════
+// Bridge: shape_prefix_product ↔ shape_size ↔ shape_prefix_products ↔ column_major_strides
+// ══════════════════════════════════════════════════════════════
+
+/// shape_prefix_product(shape, i) == shape_size(shape.take(i)).
+/// This is the fundamental identity connecting prefix products to shape_size.
+pub proof fn lemma_prefix_product_eq_shape_size(shape: Seq<nat>, i: nat)
+    requires
+        shape_valid(shape),
+        i <= shape.len(),
+    ensures
+        shape_prefix_product(shape, i) == shape_size(shape.take(i as int)),
+    decreases i,
+{
+    if i == 0 {
+        assert(shape.take(0).len() == 0);
+    } else {
+        lemma_prefix_product_eq_shape_size(shape, (i - 1) as nat);
+        // IH: pp(shape, i-1) == shape_size(shape.take(i-1))
+        // pp(shape, i) == shape[i-1] * pp(shape, i-1) == shape[i-1] * shape_size(shape.take(i-1))
+        // shape.take(i) == shape.take(i-1).push(shape[i-1])
+        assert(shape.take(i as int) =~= shape.take((i - 1) as int).push(shape[(i - 1) as int]));
+        // shape.take(i) == shape.take(i-1) ++ [shape[i-1]]
+        assert(shape.take((i - 1) as int).push(shape[(i - 1) as int])
+            =~= shape.take((i - 1) as int).add(seq![shape[(i - 1) as int]]));
+        crate::proof::product_lemmas::lemma_shape_size_append(
+            shape.take((i - 1) as int),
+            seq![shape[(i - 1) as int]],
+        );
+        crate::proof::shape_lemmas::lemma_shape_size_single(shape[(i - 1) as int]);
+    }
+}
+
+/// shape_prefix_product(shape, i) == shape_prefix_products(shape)[i].
+pub proof fn lemma_prefix_product_eq_prefix_products(shape: Seq<nat>, i: nat)
+    requires
+        shape_valid(shape),
+        i <= shape.len(),
+    ensures
+        shape_prefix_product(shape, i) == crate::inverse::shape_prefix_products(shape)[i as int],
+{
+    lemma_prefix_product_eq_shape_size(shape, i);
+    crate::proof::inverse_lemmas::lemma_prefix_products_value(shape, i);
+}
+
+/// shape_prefix_product(shape, i) as int == column_major_strides(shape)[i] for i < shape.len().
+pub proof fn lemma_prefix_product_eq_cm_stride(shape: Seq<nat>, i: nat)
+    requires
+        shape_valid(shape),
+        i < shape.len(),
+    ensures
+        shape_prefix_product(shape, i) as int == column_major_strides(shape)[i as int],
+    decreases i,
+{
+    crate::proof::injectivity_lemmas::lemma_column_major_strides_len(shape);
+    if i == 0 {
+        crate::proof::inverse_lemmas::lemma_column_major_strides_first(shape);
+    } else {
+        // cm(shape)[i] = shape[0] * cm(shape.skip(1))[i-1]  (from cm recursive def + scale)
+        // pp(shape, i) = shape[i-1] * pp(shape, i-1)
+        // By IH on shape.skip(1) with index i-1:
+        //   pp(skip(1), i-1) as int == cm(skip(1))[i-1]
+        // pp_split: pp(shape, i) == shape[0] * pp(skip(1), i-1)
+        let rest = shape.skip(1);
+        assert(shape_valid(rest)) by {
+            assert forall|j: int| 0 <= j < rest.len() implies #[trigger] rest[j] > 0
+            by { assert(rest[j] == shape[j + 1]); };
+        };
+        lemma_prefix_product_split(shape, i);
+        // pp(shape, i) == shape[0] * pp(rest, i-1)
+        lemma_prefix_product_eq_cm_stride(rest, (i - 1) as nat);
+        // pp(rest, i-1) as int == cm(rest)[i-1]
+        // So pp(shape, i) as int == shape[0] * cm(rest)[i-1] (as int)
+        // Need: cm(shape)[i] == shape[0] * cm(rest)[i-1]
+        // This follows from the cm definition: cm(shape) = [1] ++ scale(cm(rest), shape[0])
+        // cm(shape)[i] = scale(cm(rest), shape[0])[i-1] = shape[0] * cm(rest)[i-1]
+        crate::proof::injectivity_lemmas::lemma_column_major_strides_len(rest);
+        assert(column_major_strides(shape)[i as int]
+            == (shape.first() as int) * column_major_strides(rest)[(i - 1) as int]);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
 // General Box-unfolding helpers for arith_eval
 // ══════════════════════════════════════════════════════════════
 
