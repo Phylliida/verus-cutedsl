@@ -546,6 +546,8 @@ proof fn lemma_fits_i64_div(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     ensures
         arith_eval_fits_i64(a, env),
         arith_eval_fits_i64(b, env),
+        arith_eval(a, env) >= 0,
+        arith_eval(b, env) > 0,
         i64::MIN as int <= arith_eval(&ArithExpr::Div(Box::new(*a), Box::new(*b)), env),
         arith_eval(&ArithExpr::Div(Box::new(*a), Box::new(*b)), env) <= i64::MAX as int,
 {}
@@ -556,6 +558,8 @@ proof fn lemma_fits_i64_mod(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     ensures
         arith_eval_fits_i64(a, env),
         arith_eval_fits_i64(b, env),
+        arith_eval(a, env) >= 0,
+        arith_eval(b, env) > 0,
         i64::MIN as int <= arith_eval(&ArithExpr::Mod(Box::new(*a), Box::new(*b)), env),
         arith_eval(&ArithExpr::Mod(Box::new(*a), Box::new(*b)), env) <= i64::MAX as int,
 {}
@@ -874,6 +878,9 @@ impl RuntimeArithExpr {
 }
 
 /// All intermediate results of evaluating expr with env fit in i64.
+/// For Div/Mod: requires non-negative dividend and positive divisor,
+/// matching GPU/shader truncating division semantics (which agrees with
+/// Verus Euclidean int division for non-negative operands).
 pub open spec fn arith_eval_fits_i64(expr: &ArithExpr, env: Seq<int>) -> bool
     decreases expr,
 {
@@ -881,9 +888,11 @@ pub open spec fn arith_eval_fits_i64(expr: &ArithExpr, env: Seq<int>) -> bool
     && arith_eval(expr, env) <= i64::MAX as int
     && match expr {
         ArithExpr::Const(_) | ArithExpr::Var(_) => true,
-        ArithExpr::Add(a, b) | ArithExpr::Mul(a, b)
-        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) =>
+        ArithExpr::Add(a, b) | ArithExpr::Mul(a, b) =>
             arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env),
+        ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) =>
+            arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env)
+            && arith_eval(a, env) >= 0 && arith_eval(b, env) > 0,
         ArithExpr::Index(_, idx) => arith_eval_fits_i64(idx, env),
     }
 }
@@ -893,26 +902,24 @@ pub open spec fn i64_seq_to_int(s: Seq<i64>) -> Seq<int> {
     Seq::new(s.len(), |i: int| s[i] as int)
 }
 
-/// Helper: verified i64 division with spec-level result connection.
-fn checked_i64_div(a: i64, b: i64) -> (result: i64)
+/// Helper: verified i64 division for non-negative operands.
+/// Non-negative inputs ensure Euclidean (Verus int) and truncating (Rust i64) agree.
+fn nonneg_i64_div(a: i64, b: i64) -> (result: i64)
     requires
-        b != 0,
-        i64::MIN as int <= (a as int) / (b as int),
+        a >= 0,
+        b > 0,
         (a as int) / (b as int) <= i64::MAX as int,
     ensures
         result as int == (a as int) / (b as int),
 {
-    proof {
-        assert((i64::MIN as int) / (-1int) > i64::MAX as int) by (nonlinear_arith);
-    }
     a / b
 }
 
-/// Helper: verified i64 modulo with spec-level result connection.
-fn checked_i64_mod(a: i64, b: i64) -> (result: i64)
+/// Helper: verified i64 modulo for non-negative operands.
+fn nonneg_i64_mod(a: i64, b: i64) -> (result: i64)
     requires
-        b != 0,
-        !(a == i64::MIN && b == -1i64),
+        a >= 0,
+        b > 0,
     ensures
         result as int == (a as int) % (b as int),
 {
@@ -965,14 +972,12 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
             let vb = runtime_arith_eval(b, env);
             proof {
                 lemma_arith_eval_div(&a.view_spec(), &b.view_spec(), env_spec);
+                lemma_fits_i64_div(&a.view_spec(), &b.view_spec(), env_spec);
             }
             if vb == 0 {
                 return 0i64;
             } else {
-                proof {
-                    lemma_fits_i64_div(&a.view_spec(), &b.view_spec(), env_spec);
-                }
-                let r = checked_i64_div(va, vb);
+                let r = nonneg_i64_div(va, vb);
                 proof {
                     assert(arith_eval(&expr.view_spec(), env_spec) == (va as int) / (vb as int));
                 }
@@ -984,19 +989,12 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
             let vb = runtime_arith_eval(b, env);
             proof {
                 lemma_arith_eval_mod(&a.view_spec(), &b.view_spec(), env_spec);
+                lemma_fits_i64_mod(&a.view_spec(), &b.view_spec(), env_spec);
             }
             if vb == 0 {
                 return 0i64;
-            } else if va == i64::MIN && vb == -1i64 {
-                proof {
-                    assert((i64::MIN as int) % (-1int) == 0int) by (nonlinear_arith);
-                }
-                return 0i64;
             } else {
-                proof {
-                    lemma_fits_i64_mod(&a.view_spec(), &b.view_spec(), env_spec);
-                }
-                let r = checked_i64_mod(va, vb);
+                let r = nonneg_i64_mod(va, vb);
                 proof {
                     assert(arith_eval(&expr.view_spec(), env_spec) == (va as int) % (vb as int));
                 }
