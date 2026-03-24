@@ -951,6 +951,11 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
                     assert(div_val <= i64::MAX as int);
                     assert(div_val >= i64::MIN as int);
                     assert((i64::MIN as int) / (-1int) > i64::MAX as int) by (nonlinear_arith);
+                    // Connect arith_eval on the Div node to va/vb
+                    let div_expr = ArithExpr::Div(
+                        Box::new(a.view_spec()), Box::new(b.view_spec()));
+                    assert(arith_eval(&div_expr, env_spec) == div_val);
+                    assert(arith_eval(&expr.view_spec(), env_spec) == div_val);
                 }
                 return va / vb;
             }
@@ -971,6 +976,12 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
                 }
                 return 0i64;
             } else {
+                proof {
+                    let mod_expr = ArithExpr::Mod(
+                        Box::new(a.view_spec()), Box::new(b.view_spec()));
+                    assert(arith_eval(&mod_expr, env_spec) == (va as int) % (vb as int));
+                    assert(arith_eval(&expr.view_spec(), env_spec) == (va as int) % (vb as int));
+                }
                 return va % vb;
             }
         },
