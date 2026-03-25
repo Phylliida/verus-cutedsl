@@ -1876,15 +1876,17 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
                     return -1i64;
                 }
             } else {
-                // 0 < vb < 64: use hardware arithmetic right shift
-                // va >> vb computes va / 2^vb (arithmetic shift = Euclidean div for positive divisor)
-                let result = va >> (vb as u32);
+                // 0 < vb < 64: compute via i128 division
+                let divisor: i128 = 1i128 << (vb as u32);
                 proof {
-                    // Verus >> on i64 gives: result as int == (va as int) / pow2(vb as nat)
-                    // shr_spec(va, vb) = (va as int) / pow2(vb as nat) as int
-                    // These are equal.
+                    assert(divisor > 0i128);
                 }
-                return result;
+                let wide_result: i128 = (va as i128) / divisor;
+                proof {
+                    // The result fits in i64 (from arith_eval_fits_i64 top-level check)
+                    assert(i64::MIN as int <= wide_result <= i64::MAX as int);
+                }
+                return wide_result as i64;
             }
         },
         RuntimeArithExpr::Index(_arr, idx) => {
