@@ -1839,10 +1839,22 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
                 // shr_spec(a, b) = a when b <= 0
                 return va;
             } else if vb >= 64 {
-                // pow2(vb) > i64::MAX, so result is 0 (non-negative) or -1 (negative)
+                // pow2(vb) >= pow2(64) > i64::MAX >= |va|
+                proof {
+                    crate::proof::swizzle_lemmas::lemma_pow2_monotone(64, vb as nat);
+                    crate::proof::swizzle_lemmas::lemma_pow2_positive(vb as nat);
+                    assert(crate::swizzle::pow2(64) == 0x10000000000000000int) by (compute_only);
+                    assert(crate::swizzle::pow2(vb as nat) >= 0x10000000000000000int);
+                    // i64::MAX = 2^63 - 1 < 2^64 <= pow2(vb)
+                    // i64::MIN = -2^63 > -2^64 >= -pow2(vb)
+                }
                 if va >= 0 {
+                    // 0 <= va <= i64::MAX < pow2(vb), so va / pow2(vb) == 0
                     return 0i64;
                 } else {
+                    // i64::MIN <= va < 0 and pow2(vb) >= 2^64 > |va|
+                    // Euclidean: va / pow2(vb) == -1
+                    // (va = pow2(vb) * (-1) + (pow2(vb) + va), 0 <= pow2(vb)+va < pow2(vb))
                     return -1i64;
                 }
             } else {
