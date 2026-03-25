@@ -1682,9 +1682,13 @@ pub open spec fn arith_eval_fits_i64(expr: &ArithExpr, env: Seq<int>) -> bool
     && arith_eval(expr, env) <= i64::MAX as int
     && match expr {
         ArithExpr::Const(_) | ArithExpr::Var(_) => true,
-        ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b)
-        | ArithExpr::Shr(a, b) =>
+        ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b) =>
             arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env),
+        // Shr: non-negative operands (matches GPU fixed-point semantics;
+        // Euclidean and truncating division agree for non-negative values)
+        ArithExpr::Shr(a, b) =>
+            arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env)
+            && arith_eval(a, env) >= 0 && arith_eval(b, env) >= 0,
         ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) =>
             arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env)
             && arith_eval(a, env) >= 0 && arith_eval(b, env) > 0,
@@ -1858,57 +1862,33 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
                 lemma_fits_i64_shr(&a.view_spec(), &b.view_spec(), env_spec);
             }
             if vb <= 0 {
-                // shr_spec(a, b) = a when b <= 0
                 return va;
-            } else if vb >= 64 {
-                // pow2(vb) >= pow2(64) > i64::MAX >= |va|
+            } else if vb >= 63 {
+                // va >= 0, pow2(vb) >= pow2(63) > i64::MAX >= va
+                // So va / pow2(vb) == 0
                 proof {
-                    crate::proof::swizzle_lemmas::lemma_pow2_monotone(64, vb as nat);
-                    crate::proof::swizzle_lemmas::lemma_pow2_positive(vb as nat);
-                    assert(crate::swizzle::pow2(64) == 0x10000000000000000int) by (compute_only);
-                    assert(crate::swizzle::pow2(vb as nat) >= 0x10000000000000000int);
-                    // i64::MAX = 2^63 - 1 < 2^64 <= pow2(vb)
-                    // i64::MIN = -2^63 > -2^64 >= -pow2(vb)
+                    crate::proof::swizzle_lemmas::lemma_pow2_monotone(63, vb as nat);
+                    assert(crate::swizzle::pow2(63) == 0x8000000000000000int) by (compute_only);
+                    let vi = va as int;
+                    let pv = crate::swizzle::pow2(vb as nat) as int;
+                    assert(vi >= 0);
+                    assert(vi < pv) by (nonlinear_arith)
+                        requires vi >= 0, vi <= i64::MAX as int, pv >= 0x8000000000000000int;
+                    assert(vi / pv == 0int) by (nonlinear_arith)
+                        requires 0 <= vi, vi < pv, pv > 0;
                 }
-                let ghost pv = crate::swizzle::pow2(vb as nat) as int;
-                if va >= 0 {
-                    proof {
-                        let vi = va as int;
-                        assert(0 <= vi);
-                        assert(vi < pv);
-                        assert(vi / pv == 0int) by (nonlinear_arith)
-                            requires 0 <= vi, vi < pv, pv > 0;
-                    }
-                    return 0i64;
-                } else {
-                    // i64::MIN = -2^63. pow2(vb) >= 2^64.
-                    // -pow2(vb) <= -2^64 < -2^63 <= va < 0
-                    // So -pv < va < 0, meaning va / pv == -1 (Euclidean)
-                    proof {
-                        let vi = va as int;
-                        assert(vi < 0);
-                        assert(vi >= i64::MIN as int);
-                        assert(pv >= 0x10000000000000000int);
-                        assert(-(pv) < vi) by (nonlinear_arith)
-                            requires pv >= 0x10000000000000000int,
-                                     vi >= -0x8000000000000000int;
-                        assert(vi / pv == -1int) by (nonlinear_arith)
-                            requires vi < 0, -(pv) < vi, pv > 0;
-                    }
-                    return -1i64;
-                }
+                return 0i64;
             } else {
-                // 0 < vb < 64: compute pow2(vb) via i128, then divide in i128
-                let divisor = exec_pow2_i128(vb as u32);
-                let wide_result = (va as i128) / divisor;
+                // 0 < vb < 63, va >= 0: use nonneg_i64_div with exec pow2
+                let divisor_i128 = exec_pow2_i128(vb as u32);
+                // pow2(vb) < pow2(63) = 2^63, fits in i64
                 proof {
-                    // divisor == pow2(vb) as int, so wide_result == va / pow2(vb)
-                    // which equals shr_spec(va, vb) by definition
-                    // Result fits in i64 from arith_eval_fits_i64 top-level check
-                    assert(wide_result as int == shr_spec(va as int, vb as int));
-                    assert(i64::MIN as int <= wide_result <= i64::MAX as int);
+                    crate::proof::swizzle_lemmas::lemma_pow2_monotone(vb as nat, 62);
+                    assert(crate::swizzle::pow2(62) == 0x4000000000000000int) by (compute_only);
                 }
-                return wide_result as i64;
+                let divisor = divisor_i128 as i64;
+                let r = nonneg_i64_div(va, divisor);
+                return r;
             }
         },
         RuntimeArithExpr::Index(_arr, idx) => {
