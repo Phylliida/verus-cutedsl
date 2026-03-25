@@ -34,6 +34,9 @@ pub enum ArithExpr {
     Index(nat, Box<ArithExpr>),
     /// Comparison: returns 1 if true, 0 if false
     Cmp(CmpOp, Box<ArithExpr>, Box<ArithExpr>),
+    /// Arithmetic right shift: a >> b (for fixed-point: (a * b) >> N).
+    /// Non-negative operands: equivalent to a / 2^b.
+    Shr(Box<ArithExpr>, Box<ArithExpr>),
     /// Summation reduction: Reduce(var, bound, body) = Σ_{var=0}^{bound-1} body
     /// `var` is the variable index, `bound` is evaluated, body is evaluated
     /// with env[var] set to each value 0..bound-1.
@@ -89,6 +92,12 @@ pub open spec fn reduce_sum_arrays(
     }
 }
 
+/// Arithmetic right shift spec: a >> b = a / 2^b for non-negative b, 0 for negative b.
+pub open spec fn shr_spec(a: int, b: int) -> int {
+    if b <= 0 { a }
+    else { a / crate::swizzle::pow2(b as nat) as int }
+}
+
 /// Evaluate an arithmetic expression.
 /// - `env`: scalar variable bindings (for Var)
 pub open spec fn arith_eval(expr: &ArithExpr, env: Seq<int>) -> int
@@ -111,6 +120,7 @@ pub open spec fn arith_eval(expr: &ArithExpr, env: Seq<int>) -> int
         ArithExpr::Index(arr_idx, idx_expr) => {
             arith_eval(idx_expr, env)
         },
+        ArithExpr::Shr(a, b) => shr_spec(arith_eval(a, env), arith_eval(b, env)),
         ArithExpr::Cmp(op, a, b) => cmp_eval(op, arith_eval(a, env), arith_eval(b, env)),
         ArithExpr::Reduce(var, bound, body) => {
             let n = arith_eval(bound, env);
@@ -148,6 +158,9 @@ pub open spec fn arith_eval_with_arrays(
                 arrays[*arr_idx as int][idx]
             } else { 0 }
         },
+        ArithExpr::Shr(a, b) =>
+            shr_spec(arith_eval_with_arrays(a, env, arrays),
+                     arith_eval_with_arrays(b, env, arrays)),
         ArithExpr::Cmp(op, a, b) =>
             cmp_eval(op, arith_eval_with_arrays(a, env, arrays),
                           arith_eval_with_arrays(b, env, arrays)),
@@ -1228,7 +1241,7 @@ pub open spec fn index_free(expr: &ArithExpr) -> bool
     match expr {
         ArithExpr::Const(_) | ArithExpr::Var(_) => true,
         ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b)
-        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) =>
+        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) | ArithExpr::Shr(a, b) =>
             index_free(a) && index_free(b),
         ArithExpr::Cmp(_, a, b) => index_free(a) && index_free(b),
         ArithExpr::Index(_, _) => false,
@@ -1291,7 +1304,7 @@ pub open spec fn free_of_var(expr: &ArithExpr, k: nat) -> bool
         ArithExpr::Const(_) => true,
         ArithExpr::Var(i) => *i != k,
         ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b)
-        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) =>
+        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) | ArithExpr::Shr(a, b) =>
             free_of_var(a, k) && free_of_var(b, k),
         ArithExpr::Cmp(_, a, b) => free_of_var(a, k) && free_of_var(b, k),
         ArithExpr::Index(_, idx) => free_of_var(idx, k),
@@ -1321,7 +1334,7 @@ pub proof fn lemma_eval_independent_of_unused_var(
             }
         },
         ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b)
-        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) => {
+        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) | ArithExpr::Shr(a, b) => {
             lemma_eval_independent_of_unused_var(a, env1, env2, k);
             lemma_eval_independent_of_unused_var(b, env1, env2, k);
         },
@@ -1615,6 +1628,7 @@ pub enum RuntimeArithExpr {
     Div(Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
     Mod(Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
     Index(u32, Box<RuntimeArithExpr>),
+    Shr(Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
     Cmp(RuntimeCmpOp, Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
     Reduce(u32, Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
 }
@@ -1633,6 +1647,7 @@ impl RuntimeArithExpr {
             RuntimeArithExpr::Div(a, b) => ArithExpr::Div(Box::new(a.view_spec()), Box::new(b.view_spec())),
             RuntimeArithExpr::Mod(a, b) => ArithExpr::Mod(Box::new(a.view_spec()), Box::new(b.view_spec())),
             RuntimeArithExpr::Index(arr, idx) => ArithExpr::Index(*arr as nat, Box::new(idx.view_spec())),
+            RuntimeArithExpr::Shr(a, b) => ArithExpr::Shr(Box::new(a.view_spec()), Box::new(b.view_spec())),
             RuntimeArithExpr::Cmp(op, a, b) => ArithExpr::Cmp(op.view_spec(), Box::new(a.view_spec()), Box::new(b.view_spec())),
             RuntimeArithExpr::Reduce(var, bound, body) => ArithExpr::Reduce(*var as nat, Box::new(bound.view_spec()), Box::new(body.view_spec())),
         }
@@ -1650,7 +1665,8 @@ pub open spec fn arith_eval_fits_i64(expr: &ArithExpr, env: Seq<int>) -> bool
     && arith_eval(expr, env) <= i64::MAX as int
     && match expr {
         ArithExpr::Const(_) | ArithExpr::Var(_) => true,
-        ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b) =>
+        ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b)
+        | ArithExpr::Shr(a, b) =>
             arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env),
         ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) =>
             arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env)
@@ -1706,7 +1722,7 @@ pub open spec fn no_reduce(expr: &ArithExpr) -> bool
         ArithExpr::Reduce(_, _, _) => false,
         ArithExpr::Const(_) | ArithExpr::Var(_) => true,
         ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b)
-        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) =>
+        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) | ArithExpr::Shr(a, b) =>
             no_reduce(a) && no_reduce(b),
         ArithExpr::Cmp(_, a, b) => no_reduce(a) && no_reduce(b),
         ArithExpr::Index(_, idx) => no_reduce(idx),
@@ -1796,6 +1812,17 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
                 lemma_fits_i64_sub(&a.view_spec(), &b.view_spec(), env_spec);
             }
             return va - vb;
+        },
+        RuntimeArithExpr::Shr(a, b) => {
+            let va = runtime_arith_eval(a, env);
+            let vb = runtime_arith_eval(b, env);
+            if vb <= 0 {
+                return va;
+            } else {
+                // a >> b for non-negative b: va / 2^vb
+                // For i64: va >> vb (when vb < 64)
+                return va >> (vb as u32);
+            }
         },
         RuntimeArithExpr::Index(_arr, idx) => {
             proof { lemma_arith_eval_index(*_arr as nat, &idx.view_spec(), env_spec); }
