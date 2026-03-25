@@ -1744,6 +1744,28 @@ pub open spec fn no_reduce(expr: &ArithExpr) -> bool
     }
 }
 
+/// Compute 2^n as i128, for 0 < n < 64.
+fn exec_pow2_i128(n: u32) -> (result: i128)
+    requires 0 < n < 64,
+    ensures result == crate::swizzle::pow2(n as nat) as int, result > 0,
+    decreases n,
+{
+    if n == 1 {
+        proof { assert(crate::swizzle::pow2(1) == 2) by (compute_only); }
+        return 2i128;
+    }
+    let half = exec_pow2_i128(n - 1);
+    proof {
+        crate::proof::swizzle_lemmas::lemma_pow2_positive((n - 1) as nat);
+        assert(crate::swizzle::pow2(n as nat) == 2 * crate::swizzle::pow2((n - 1) as nat));
+        // half = pow2(n-1) <= pow2(62) < 2^63 << i128::MAX/2
+        crate::proof::swizzle_lemmas::lemma_pow2_monotone((n - 1) as nat, 62);
+        assert(crate::swizzle::pow2(62) == 0x4000000000000000int) by (compute_only);
+        assert(half <= 0x4000000000000000i128);
+    }
+    return half * 2;
+}
+
 pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i64)
     requires
         arith_eval_fits_i64(&expr.view_spec(), i64_seq_to_int(env@)),
@@ -1876,14 +1898,14 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
                     return -1i64;
                 }
             } else {
-                // 0 < vb < 64: compute via i128 division
-                let divisor: i128 = 1i128 << (vb as u32);
+                // 0 < vb < 64: compute pow2(vb) via i128, then divide in i128
+                let divisor = exec_pow2_i128(vb as u32);
+                let wide_result = (va as i128) / divisor;
                 proof {
-                    assert(divisor > 0i128);
-                }
-                let wide_result: i128 = (va as i128) / divisor;
-                proof {
-                    // The result fits in i64 (from arith_eval_fits_i64 top-level check)
+                    // divisor == pow2(vb) as int, so wide_result == va / pow2(vb)
+                    // which equals shr_spec(va, vb) by definition
+                    // Result fits in i64 from arith_eval_fits_i64 top-level check
+                    assert(wide_result as int == shr_spec(va as int, vb as int));
                     assert(i64::MIN as int <= wide_result <= i64::MAX as int);
                 }
                 return wide_result as i64;
