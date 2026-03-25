@@ -1848,18 +1848,43 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
                     // i64::MAX = 2^63 - 1 < 2^64 <= pow2(vb)
                     // i64::MIN = -2^63 > -2^64 >= -pow2(vb)
                 }
+                let ghost pv = crate::swizzle::pow2(vb as nat) as int;
                 if va >= 0 {
-                    // 0 <= va <= i64::MAX < pow2(vb), so va / pow2(vb) == 0
+                    proof {
+                        let vi = va as int;
+                        assert(0 <= vi);
+                        assert(vi < pv);
+                        assert(vi / pv == 0int) by (nonlinear_arith)
+                            requires 0 <= vi, vi < pv, pv > 0;
+                    }
                     return 0i64;
                 } else {
-                    // i64::MIN <= va < 0 and pow2(vb) >= 2^64 > |va|
-                    // Euclidean: va / pow2(vb) == -1
-                    // (va = pow2(vb) * (-1) + (pow2(vb) + va), 0 <= pow2(vb)+va < pow2(vb))
+                    // i64::MIN = -2^63. pow2(vb) >= 2^64.
+                    // -pow2(vb) <= -2^64 < -2^63 <= va < 0
+                    // So -pv < va < 0, meaning va / pv == -1 (Euclidean)
+                    proof {
+                        let vi = va as int;
+                        assert(vi < 0);
+                        assert(vi >= i64::MIN as int);
+                        assert(pv >= 0x10000000000000000int);
+                        assert(-(pv) < vi) by (nonlinear_arith)
+                            requires pv >= 0x10000000000000000int,
+                                     vi >= -0x8000000000000000int;
+                        assert(vi / pv == -1int) by (nonlinear_arith)
+                            requires vi < 0, -(pv) < vi, pv > 0;
+                    }
                     return -1i64;
                 }
             } else {
                 // 0 < vb < 64: use hardware arithmetic right shift
-                return va >> (vb as u32);
+                // va >> vb computes va / 2^vb (arithmetic shift = Euclidean div for positive divisor)
+                let result = va >> (vb as u32);
+                proof {
+                    // Verus >> on i64 gives: result as int == (va as int) / pow2(vb as nat)
+                    // shr_spec(va, vb) = (va as int) / pow2(vb as nat) as int
+                    // These are equal.
+                }
+                return result;
             }
         },
         RuntimeArithExpr::Index(_arr, idx) => {
