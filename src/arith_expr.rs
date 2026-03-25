@@ -618,6 +618,23 @@ pub proof fn lemma_arith_eval_reduce(var: nat, bound: &ArithExpr, body: &ArithEx
             == reduce_sum(var, arith_eval(bound, env), body, env),
 {}
 
+/// Helper: arith_eval of Shr(a, b).
+pub proof fn lemma_arith_eval_shr(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
+    ensures
+        arith_eval(&ArithExpr::Shr(Box::new(*a), Box::new(*b)), env)
+            == shr_spec(arith_eval(a, env), arith_eval(b, env)),
+{}
+
+/// Helper: arith_eval_fits_i64 for a Shr node.
+proof fn lemma_fits_i64_shr(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
+    requires arith_eval_fits_i64(&ArithExpr::Shr(Box::new(*a), Box::new(*b)), env),
+    ensures
+        arith_eval_fits_i64(a, env),
+        arith_eval_fits_i64(b, env),
+        i64::MIN as int <= shr_spec(arith_eval(a, env), arith_eval(b, env)),
+        shr_spec(arith_eval(a, env), arith_eval(b, env)) <= i64::MAX as int,
+{}
+
 /// Helper: arith_eval of Cmp(op, a, b).
 pub proof fn lemma_arith_eval_cmp(op: &CmpOp, a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     ensures
@@ -1260,7 +1277,7 @@ pub proof fn lemma_eval_equiv_no_index(
     match expr {
         ArithExpr::Const(_) | ArithExpr::Var(_) => {},
         ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b)
-        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) => {
+        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) | ArithExpr::Shr(a, b) => {
             lemma_eval_equiv_no_index(a, env, arrays);
             lemma_eval_equiv_no_index(b, env, arrays);
         },
@@ -1713,8 +1730,6 @@ fn nonneg_i64_mod(a: i64, b: i64) -> (result: i64)
 
 /// Predicate: expression contains no Reduce nodes.
 /// Used as precondition for runtime_arith_eval's correctness proof.
-/// The exec evaluator handles Reduce (computes correctly) but the
-/// postcondition proof for Reduce is deferred.
 pub open spec fn no_reduce(expr: &ArithExpr) -> bool
     decreases expr,
 {
@@ -1816,11 +1831,22 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
         RuntimeArithExpr::Shr(a, b) => {
             let va = runtime_arith_eval(a, env);
             let vb = runtime_arith_eval(b, env);
+            proof {
+                lemma_arith_eval_shr(&a.view_spec(), &b.view_spec(), env_spec);
+                lemma_fits_i64_shr(&a.view_spec(), &b.view_spec(), env_spec);
+            }
             if vb <= 0 {
+                // shr_spec(a, b) = a when b <= 0
                 return va;
+            } else if vb >= 64 {
+                // pow2(vb) > i64::MAX, so result is 0 (non-negative) or -1 (negative)
+                if va >= 0 {
+                    return 0i64;
+                } else {
+                    return -1i64;
+                }
             } else {
-                // a >> b for non-negative b: va / 2^vb
-                // For i64: va >> vb (when vb < 64)
+                // 0 < vb < 64: use hardware arithmetic right shift
                 return va >> (vb as u32);
             }
         },
