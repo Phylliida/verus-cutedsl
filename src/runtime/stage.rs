@@ -72,11 +72,12 @@ impl RuntimeSharedState {
             result as int == self@.read(buf as nat, idx as nat),
     {
         let off = self.offsets[buf];
+        let len = self.lengths[buf];
         proof {
-            let off_s = self.offsets@[buf as int] as nat;
-            let len_s = self.lengths@[buf as int] as nat;
-            assert(off_s + len_s <= self.data@.len());
+            assert(off as nat + len as nat <= self.data@.len());
+            assert(idx < len);
         }
+        assert(off + idx < self.data.len());
         self.data[off + idx]
     }
 
@@ -90,11 +91,12 @@ impl RuntimeSharedState {
             self@ == old(self)@.write(buf as nat, idx as nat, val as int),
     {
         let off = self.offsets[buf];
+        let len = self.lengths[buf];
         proof {
-            let off_s = old(self).offsets@[buf as int] as nat;
-            let len_s = old(self).lengths@[buf as int] as nat;
-            assert(off_s + len_s <= old(self).data@.len());
+            assert(off as nat + len as nat <= old(self).data@.len());
+            assert(idx < len);
         }
+        assert(off + idx < self.data.len());
         self.data.set(off + idx, val);
         self.model = Ghost(old(self)@.write(buf as nat, idx as nat, val as int));
         proof {
@@ -186,7 +188,10 @@ impl RuntimeSharedState {
             decreases n - i,
         {
             offsets.push(total);
-            proof { lemma_partial_sum_monotone(buffer_sizes@, i as nat); }
+            proof {
+                lemma_partial_sum_step(buffer_sizes@, i as nat);
+                lemma_partial_sum_monotone(buffer_sizes@, (i + 1) as nat);
+            }
             total = total + buffer_sizes[i];
             i = i + 1;
         }
@@ -230,8 +235,16 @@ impl RuntimeSharedState {
                     result.data@[result.offsets@[b] as int + j] as int == result@.buffers[b][j]
             } by {
                 // offset[b] = partial_sum(b), length[b] = sizes[b]
-                // offset[b] + length[b] = partial_sum(b+1) <= total
+                // offset[b] + length[b] = partial_sum(b+1) <= total = data.len()
                 lemma_partial_sum_step(buffer_sizes@, b as nat);
+                lemma_partial_sum_monotone(buffer_sizes@, (b + 1) as nat);
+                // Values: data is all 0, spec buffers are all 0
+                assert forall|j: int| 0 <= j < result.lengths@[b] as int implies
+                    result.data@[result.offsets@[b] as int + j] as int == result@.buffers[b][j]
+                by {
+                    // data[off + j] == 0i64, spec_buffers[b][j] == 0int
+                    assert(result.data@[result.offsets@[b] as int + j] == 0i64);
+                }
             }
 
             // Ordered non-overlapping
