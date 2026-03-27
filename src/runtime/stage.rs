@@ -1,12 +1,8 @@
 /// Runtime (exec) shared state for CPU-side Stage evaluation.
 ///
-/// Follows the RuntimeLayout pattern: concrete Vec<Vec<i64>> buffers
-/// with a Ghost<SharedState> model. The `wf_spec()` predicate bridges
-/// concrete i64 values to spec-level int values.
-///
-/// Used for:
-/// 1. CPU cross-validation against GPU output
-/// 2. Exec-level proofs that connect runtime to staged_eval spec
+/// Uses a FLAT buffer layout (single Vec<i64> with offsets) matching how
+/// GPU shared memory actually works. Each logical buffer is a contiguous
+/// region at a known offset.
 
 use vstd::prelude::*;
 use crate::stage::*;
@@ -14,26 +10,17 @@ use crate::stage::*;
 verus! {
 
 // ══════════════════════════════════════════════════════════════
-// Spec helpers for bridging i64 ↔ int buffers
+// RuntimeSharedState — flat buffer layout
 // ══════════════════════════════════════════════════════════════
 
-/// Convert a Vec<i64> to Seq<int> for spec reasoning.
-pub open spec fn i64_vec_to_int_seq(v: Seq<i64>) -> Seq<int> {
-    Seq::new(v.len(), |i: int| v[i] as int)
-}
-
-/// Convert Vec<Vec<i64>> to Seq<Seq<int>> for spec reasoning.
-pub open spec fn buffers_to_spec(bufs: Seq<Seq<i64>>) -> Seq<Seq<int>> {
-    Seq::new(bufs.len(), |i: int| i64_vec_to_int_seq(bufs[i]))
-}
-
-// ══════════════════════════════════════════════════════════════
-// RuntimeSharedState
-// ══════════════════════════════════════════════════════════════
-
-/// Exec-level shared state: concrete i64 buffers + ghost spec model.
+/// Exec-level shared state: flat i64 buffer + metadata + ghost spec model.
+///
+/// Logical buffer `b` occupies `data[offsets[b] .. offsets[b] + lengths[b]]`.
+/// This matches GPU shared memory (one contiguous block with manual offsets).
 pub struct RuntimeSharedState {
-    pub buffers: Vec<Vec<i64>>,
+    pub data: Vec<i64>,
+    pub offsets: Vec<usize>,    // start offset of each logical buffer
+    pub lengths: Vec<usize>,    // length of each logical buffer
     pub workgroup_size: u32,
     pub model: Ghost<SharedState>,
 }
@@ -46,37 +33,52 @@ impl View for RuntimeSharedState {
 }
 
 impl RuntimeSharedState {
-    /// Well-formedness: concrete matches ghost, all values representable.
+    /// Well-formedness: flat layout matches ghost model.
     pub open spec fn wf_spec(&self) -> bool {
         // Buffer counts match
-        &&& self.buffers@.len() == self@.buffers.len()
+        &&& self.offsets@.len() == self@.buffers.len()
+        &&& self.lengths@.len() == self@.buffers.len()
         // Workgroup size matches
         &&& self.workgroup_size as nat == self@.workgroup_size
         // Each buffer: length matches, values match
-        &&& forall|i: int| 0 <= i < self.buffers@.len() ==> {
-            &&& (#[trigger] self.buffers@[i]).len() == self@.buffers[i].len()
-            &&& forall|j: int| 0 <= j < self.buffers@[i].len() ==>
-                self.buffers@[i][j] as int == (#[trigger] self@.buffers[i])[j]
+        &&& forall|b: int| 0 <= b < self@.buffers.len() ==> {
+            let off = #[trigger] self.offsets@[b] as nat;
+            let len = self.lengths@[b] as nat;
+            // Length matches spec
+            &&& len == self@.buffers[b].len()
+            // Region fits in data
+            &&& off + len <= self.data@.len()
+            // Values match spec
+            &&& forall|j: int| 0 <= j < len as int ==>
+                self.data@[(off + j) as int] as int == self@.buffers[b][j]
         }
+        // Non-overlapping buffers (each region is disjoint)
+        &&& forall|b1: int, b2: int|
+            0 <= b1 < self@.buffers.len() && 0 <= b2 < self@.buffers.len() && b1 != b2
+            ==>
+                (#[trigger] self.offsets@[b1]) as nat + self.lengths@[b1] as nat
+                    <= (#[trigger] self.offsets@[b2]) as nat
+                || self.offsets@[b2] as nat + self.lengths@[b2] as nat
+                    <= self.offsets@[b1] as nat
     }
 
-    /// Number of buffers.
+    /// Number of logical buffers.
     pub fn num_buffers(&self) -> (result: usize)
         requires self.wf_spec(),
         ensures result as nat == self@.num_buffers(),
     {
-        self.buffers.len()
+        self.offsets.len()
     }
 
-    /// Length of a specific buffer.
+    /// Length of a specific logical buffer.
     pub fn buffer_len(&self, buf: usize) -> (result: usize)
         requires self.wf_spec(), buf < self@.num_buffers(),
         ensures result as nat == self@.buffer_len(buf as nat),
     {
-        self.buffers[buf].len()
+        self.lengths[buf]
     }
 
-    /// Read a value from a buffer.
+    /// Read a value from a logical buffer. O(1).
     pub fn read(&self, buf: usize, idx: usize) -> (result: i64)
         requires
             self.wf_spec(),
@@ -85,11 +87,11 @@ impl RuntimeSharedState {
         ensures
             result as int == self@.read(buf as nat, idx as nat),
     {
-        self.buffers[buf][idx]
+        let off = self.offsets[buf];
+        self.data[off + idx]
     }
 
-    /// Write a value to a buffer.
-    /// Rebuilds the inner Vec to avoid nested &mut indexing (unsupported by Verus).
+    /// Write a value to a logical buffer. O(1).
     pub fn write(&mut self, buf: usize, idx: usize, val: i64)
         requires
             old(self).wf_spec(),
@@ -99,41 +101,17 @@ impl RuntimeSharedState {
             self.wf_spec(),
             self@ == old(self)@.write(buf as nat, idx as nat, val as int),
     {
-        // Build a new inner vec: copy all elements, replacing [idx] with val
-        let len = self.buffers[buf].len();
-        let mut new_inner: Vec<i64> = Vec::new();
-        let mut k: usize = 0;
-        while k < len
-            invariant
-                0 <= k <= len,
-                len == old(self).buffers@[buf as int].len(),
-                new_inner@.len() == k,
-                // self.buffers unchanged during loop
-                self.buffers@ == old(self).buffers@,
-                self.workgroup_size == old(self).workgroup_size,
-                self.model == old(self).model,
-                buf < self.buffers@.len(),
-                forall|i: int| 0 <= i < k as int ==>
-                    new_inner@[i] == if i == idx as int { val }
-                        else { self.buffers@[buf as int][i] },
-            decreases len - k,
-        {
-            if k == idx {
-                new_inner.push(val);
-            } else {
-                new_inner.push(self.buffers[buf][k]);
-            }
-            k = k + 1;
-        }
-        // Replace the buffer at the outer level
-        self.buffers.set(buf, new_inner);
-        // Update ghost model
+        let off = self.offsets[buf];
+        self.data.set(off + idx, val);
         self.model = Ghost(old(self)@.write(buf as nat, idx as nat, val as int));
     }
 
-    /// Create a RuntimeSharedState with given buffer sizes, initialized to zero.
+    /// Create a RuntimeSharedState with given buffer sizes, all zeroed.
     pub fn new_zeroed(buffer_sizes: &Vec<usize>, workgroup_size: u32) -> (result: RuntimeSharedState)
-        requires buffer_sizes@.len() > 0,
+        requires
+            buffer_sizes@.len() > 0,
+            // Total size fits in usize
+            spec_total_size(buffer_sizes@) <= usize::MAX as nat,
         ensures
             result.wf_spec(),
             result@.workgroup_size == workgroup_size as nat,
@@ -144,42 +122,88 @@ impl RuntimeSharedState {
                 && 0 <= j < buffer_sizes@[i] as int
                 ==> result@.buffers[i][j] == 0,
     {
-        let mut buffers: Vec<Vec<i64>> = Vec::new();
         let n = buffer_sizes.len();
+
+        // Compute total size and offsets
+        let mut total: usize = 0;
+        let mut offsets: Vec<usize> = Vec::new();
         let mut i: usize = 0;
         while i < n
             invariant
                 0 <= i <= n,
                 n == buffer_sizes@.len(),
-                buffers@.len() == i,
-                forall|k: int| 0 <= k < i as int ==> {
-                    &&& (#[trigger] buffers@[k]).len() == buffer_sizes@[k] as nat
-                    &&& forall|j: int| 0 <= j < buffers@[k].len() ==> buffers@[k][j] == 0i64
-                },
+                offsets@.len() == i,
+                total == spec_partial_sum(buffer_sizes@, i as nat),
+                total <= usize::MAX as nat,
+                forall|k: int| 0 <= k < i as int ==>
+                    offsets@[k] as nat == spec_offset(buffer_sizes@, k as nat),
             decreases n - i,
         {
-            let size = buffer_sizes[i];
-            let buf: Vec<i64> = vec_i64_zeroed(size);
-            buffers.push(buf);
+            offsets.push(total);
+            total = total + buffer_sizes[i];
             i = i + 1;
         }
 
+        // Allocate flat zeroed data
+        let data = vec_i64_zeroed(total);
+
+        // Copy lengths
+        let mut lengths: Vec<usize> = Vec::new();
+        let mut j: usize = 0;
+        while j < n
+            invariant
+                0 <= j <= n,
+                n == buffer_sizes@.len(),
+                lengths@.len() == j,
+                forall|k: int| 0 <= k < j as int ==>
+                    lengths@[k] == buffer_sizes@[k],
+            decreases n - j,
+        {
+            lengths.push(buffer_sizes[j]);
+            j = j + 1;
+        }
+
+        // Build ghost model
         let ghost spec_buffers = Seq::new(n as nat, |i: int|
-            Seq::new(buffer_sizes@[i] as nat, |j: int| 0int));
+            Seq::new(buffer_sizes@[i] as nat, |_j: int| 0int));
         let ghost model = SharedState {
             buffers: spec_buffers,
             workgroup_size: workgroup_size as nat,
         };
 
         RuntimeSharedState {
-            buffers,
+            data,
+            offsets,
+            lengths,
             workgroup_size,
             model: Ghost(model),
         }
     }
 }
 
-/// Create a zero-filled Vec<i64> of a given size.
+// ══════════════════════════════════════════════════════════════
+// Spec helpers for flat layout
+// ══════════════════════════════════════════════════════════════
+
+/// Sum of buffer_sizes[0..k).
+pub open spec fn spec_partial_sum(sizes: Seq<usize>, k: nat) -> nat
+    decreases k,
+{
+    if k == 0 { 0 }
+    else { spec_partial_sum(sizes, (k - 1) as nat) + sizes[(k - 1) as int] as nat }
+}
+
+/// Total size = sum of all buffer sizes.
+pub open spec fn spec_total_size(sizes: Seq<usize>) -> nat {
+    spec_partial_sum(sizes, sizes.len())
+}
+
+/// Offset of buffer b = sum of sizes[0..b).
+pub open spec fn spec_offset(sizes: Seq<usize>, b: nat) -> nat {
+    spec_partial_sum(sizes, b)
+}
+
+/// Create a zero-filled Vec<i64>.
 fn vec_i64_zeroed(n: usize) -> (result: Vec<i64>)
     ensures
         result@.len() == n,
