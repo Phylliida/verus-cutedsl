@@ -191,6 +191,9 @@ impl RuntimeSharedState {
             proof {
                 lemma_partial_sum_step(buffer_sizes@, i as nat);
                 lemma_partial_sum_monotone(buffer_sizes@, (i + 1) as nat);
+                // partial_sum(i+1) = partial_sum(i) + sizes[i] = total + sizes[i]
+                // partial_sum(i+1) <= total_size <= usize::MAX
+                assert(total as nat + buffer_sizes@[i as int] as nat <= usize::MAX as nat);
             }
             total = total + buffer_sizes[i];
             i = i + 1;
