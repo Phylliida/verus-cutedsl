@@ -12,6 +12,9 @@ use vstd::prelude::*;
 use crate::stage::*;
 use crate::kernel::*;
 use crate::arith_expr::*;
+use crate::scan::*;
+use verus_algebra::summation::*;
+use verus_algebra::traits::int_ring;
 
 verus! {
 
@@ -406,6 +409,51 @@ pub proof fn lemma_sum_range_single(data: Seq<int>, i: int)
 }
 
 // ══════════════════════════════════════════════════════════════
+// Scan bridge: sum_range ↔ verus-algebra sum ↔ inclusive_scan
+// ══════════════════════════════════════════════════════════════
+
+/// sum_range equals verus-algebra's sum::<int> over the same range.
+/// Both compute the same thing — sum_range peels from the right,
+/// sum::<int> peels from the left, but lemma_sum_peel_last bridges them.
+pub proof fn lemma_sum_range_equals_sum(data: Seq<int>, lo: int, hi: int)
+    requires 0 <= lo, lo <= hi, hi <= data.len(),
+    ensures sum_range(data, lo, hi) == sum::<int>(|j: int| data[j], lo, hi),
+    decreases hi - lo,
+{
+    if lo == hi {
+        // Both are 0
+    } else {
+        // IH: sum_range(data, lo, hi-1) == sum::<int>(f, lo, hi-1)
+        lemma_sum_range_equals_sum(data, lo, hi - 1);
+        // sum_range(data, lo, hi) = sum_range(data, lo, hi-1) + data[hi-1]  (by def)
+        // sum::<int>(f, lo, hi) ≡ sum::<int>(f, lo, hi-1) + f(hi-1)        (by peel_last)
+        // For int, eqv is ==, so this is exact equality.
+        lemma_sum_peel_last::<int>(|j: int| data[j], lo, hi);
+        // Now: sum(f, lo, hi) == sum(f, lo, hi-1) + data[hi-1]
+        //                     == sum_range(data, lo, hi-1) + data[hi-1]  (by IH)
+        //                     == sum_range(data, lo, hi)                 (by def)
+    }
+}
+
+/// eval_scan result at position i equals inclusive_scan::<int>(data)[i].
+/// This bridges the Stage-level scan spec to the existing verified scan infrastructure.
+pub proof fn lemma_eval_scan_matches_inclusive_scan(
+    buffer: nat, state: SharedState, i: int,
+)
+    requires
+        buffer < state.num_buffers(),
+        0 <= i < state.buffer_len(buffer) as int,
+    ensures
+        eval_scan(buffer, state).read(buffer, i as nat)
+            == inclusive_scan::<int>(state.buffers[buffer as int])[i],
+{
+    let data = state.buffers[buffer as int];
+    // eval_scan produces sum_range(data, 0, i+1) at position i
+    // inclusive_scan::<int>(data)[i] = sum::<int>(|j| data[j], 0, i+1) by definition
+    lemma_sum_range_equals_sum(data, 0, i + 1);
+}
+
+// ══════════════════════════════════════════════════════════════
 // Map determinism — declarative spec
 // ══════════════════════════════════════════════════════════════
 
@@ -438,10 +486,106 @@ pub open spec fn map_output_declarative(
     )
 }
 
-// NOTE: The theorem that eval_map_threads matches map_output_declarative
-// (under scatter injectivity) is the map determinism proof.
-// It requires induction on workgroup_size with careful reasoning about
-// unique writers. This is a meaningful proof that should be done properly
-// in a dedicated session — not stubbed with assume(false).
+// ══════════════════════════════════════════════════════════════
+// Map determinism proof helpers
+// ══════════════════════════════════════════════════════════════
+
+/// Thread t is active and scatters to position j for output out_idx.
+pub open spec fn thread_writes_to(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    out_idx: nat,
+    t: nat,
+    j: int,
+) -> bool {
+    arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
+    && arith_eval_with_arrays(&spec.outputs[out_idx as int].scatter,
+        thread_env_1d(t), inputs) == j
+}
+
+/// No thread in [tid, workgroup_size) writes to position j.
+pub open spec fn no_writer_in_range(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    out_idx: nat,
+    j: int,
+    tid: nat,
+    workgroup_size: nat,
+) -> bool {
+    forall|t: nat| tid <= t < workgroup_size ==>
+        !#[trigger] thread_writes_to(spec, inputs, out_idx, t, j)
+}
+
+/// All active threads scatter to valid buffer positions.
+pub open spec fn scatter_in_bounds(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    out_idx: nat,
+    buf_len: nat,
+    workgroup_size: nat,
+) -> bool {
+    forall|t: nat| t < workgroup_size
+        && arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
+        ==> {
+            let idx = arith_eval_with_arrays(
+                &spec.outputs[out_idx as int].scatter, thread_env_1d(t), inputs);
+            0 <= idx && idx < buf_len as int
+        }
+}
+
+/// If no thread in [tid, workgroup_size) writes to position j,
+/// then eval_map_threads leaves buffer[j] unchanged.
+pub proof fn lemma_eval_map_threads_preserves_non_target(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    out_buf: nat,
+    out_idx: nat,
+    state: SharedState,
+    tid: nat,
+    j: nat,
+)
+    requires
+        out_buf < state.num_buffers(),
+        j < state.buffer_len(out_buf),
+        out_idx < spec.outputs.len(),
+        no_writer_in_range(spec, inputs, out_idx, j as int, tid, state.workgroup_size),
+        scatter_in_bounds(spec, inputs, out_idx, state.buffer_len(out_buf), state.workgroup_size),
+    ensures
+        eval_map_threads(spec, inputs, out_buf, out_idx, state, tid).read(out_buf, j)
+            == state.read(out_buf, j),
+    decreases state.workgroup_size - tid,
+{
+    if tid >= state.workgroup_size {
+        // Base: no threads, state unchanged
+    } else {
+        let env = thread_env_1d(tid);
+        let guard_val = arith_eval_with_arrays(&spec.guard, env, inputs);
+        // Thread tid does NOT write to j (by no_writer_in_range)
+        assert(!thread_writes_to(spec, inputs, out_idx, tid, j as int));
+
+        if guard_val != 0 {
+            let (scatter_idx, compute_val) = eval_output(
+                &spec.outputs[out_idx as int], env, inputs,
+            );
+            // scatter_idx is in bounds (from scatter_in_bounds precondition)
+            assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
+            // scatter_idx != j (since tid doesn't write to j)
+            assert(scatter_idx != j as int);
+            let si = scatter_idx as nat;
+            let new_state = state.write(out_buf, si, compute_val);
+            // Writing to scatter_idx doesn't affect position j
+            lemma_write_other_index(state, out_buf, si, compute_val, j);
+            // IH: remaining threads also don't write to j
+            lemma_eval_map_threads_preserves_non_target(
+                spec, inputs, out_buf, out_idx, new_state, tid + 1, j,
+            );
+        } else {
+            // Guard is 0 — no write, just recurse
+            lemma_eval_map_threads_preserves_non_target(
+                spec, inputs, out_buf, out_idx, state, tid + 1, j,
+            );
+        }
+    }
+}
 
 } // verus!
