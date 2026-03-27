@@ -1021,29 +1021,90 @@ pub proof fn lemma_dim2d_env(t: nat, width: nat, height: nat)
 // Loop fusion: two consecutive loops = one loop with summed bounds
 // ══════════════════════════════════════════════════════════════
 
-/// Two consecutive eval_loops with the same body fuse into one.
-/// eval_loop(body, eval_loop(body, state, a, 0), b, 0)
-///   == eval_loop(body, state, a + b, 0)
+/// Simplified loop: apply body n times. No iter parameter.
+pub open spec fn loop_n(body: &Stage, state: SharedState, n: nat) -> SharedState
+    decreases n,
+{
+    if n == 0 { state }
+    else { loop_n(body, staged_eval(body, state), (n - 1) as nat) }
+}
+
+/// eval_loop(body, state, bound, 0) == loop_n(body, state, bound).
+pub proof fn lemma_eval_loop_is_loop_n(
+    body: &Stage, state: SharedState, bound: nat,
+)
+    ensures eval_loop(body, state, bound, 0) == loop_n(body, state, bound),
+    decreases bound,
+{
+    if bound == 0 {
+        assert(eval_loop(body, state, 0, 0) == state);
+        assert(loop_n(body, state, 0) == state);
+    } else {
+        let mid = staged_eval(body, state);
+        // eval_loop(body, state, bound, 0) = eval_loop(body, mid, bound, 1)
+        // loop_n(body, state, bound) = loop_n(body, mid, bound-1)
+        // IH: eval_loop(body, mid, bound-1, 0) == loop_n(body, mid, bound-1)
+        lemma_eval_loop_is_loop_n(body, mid, (bound - 1) as nat);
+        lemma_eval_loop_shift(body, mid, (bound - 1) as nat, 1);
+        assert((bound - 1) as nat + 1 == bound);
+    }
+}
+
+/// General loop shift: eval_loop(body, state, a+b, b) == eval_loop(body, state, a, 0).
+/// Both execute exactly `a` iterations of body starting from state.
+proof fn lemma_eval_loop_shift(body: &Stage, state: SharedState, a: nat, b: nat)
+    ensures eval_loop(body, state, a + b, b) == eval_loop(body, state, a, 0),
+    decreases a,
+{
+    if a == 0 {
+        // eval_loop(body, state, b, b) == state (iter >= bound)
+        // eval_loop(body, state, 0, 0) == state
+    } else {
+        let mid = staged_eval(body, state);
+        // LHS: eval_loop(body, state, a+b, b) = eval_loop(body, mid, a+b, b+1) [since b < a+b]
+        // Apply IH on mid with (a-1, b+1):
+        lemma_eval_loop_shift(body, mid, (a - 1) as nat, b + 1);
+        // IH gives: eval_loop(body, mid, (a-1)+(b+1), b+1) == eval_loop(body, mid, a-1, 0)
+        assert((a - 1) + (b + 1) == a + b);
+        // So: eval_loop(body, mid, a+b, b+1) == eval_loop(body, mid, a-1, 0)
+
+        // RHS: eval_loop(body, state, a, 0) = eval_loop(body, mid, a, 1) [since 0 < a]
+        // Apply IH on mid with (a-1, 1):
+        lemma_eval_loop_shift(body, mid, (a - 1) as nat, 1);
+        // IH gives: eval_loop(body, mid, (a-1)+1, 1) == eval_loop(body, mid, a-1, 0)
+        assert((a - 1) as nat + 1 == a);
+        // So: eval_loop(body, mid, a, 1) == eval_loop(body, mid, a-1, 0)
+
+        // Both sides == eval_loop(body, mid, a-1, 0)
+    }
+}
+
+/// Loop fusion: loop_n(body, loop_n(body, s, a), b) == loop_n(body, s, a + b).
+pub proof fn lemma_loop_n_fusion(
+    body: &Stage, state: SharedState, a: nat, b: nat,
+)
+    ensures loop_n(body, loop_n(body, state, a), b) == loop_n(body, state, a + b),
+    decreases a,
+{
+    if a == 0 {
+    } else {
+        let mid = staged_eval(body, state);
+        lemma_loop_n_fusion(body, mid, (a - 1) as nat, b);
+    }
+}
+
+/// Two consecutive eval_loops fuse into one.
 pub proof fn lemma_loop_fusion(
     body: &Stage, state: SharedState, a: nat, b: nat,
 )
     ensures
         eval_loop(body, eval_loop(body, state, a, 0), b, 0)
             == eval_loop(body, state, a + b, 0),
-    decreases a,
 {
-    if a == 0 {
-    } else {
-        let mid = staged_eval(body, state);
-        // Peel first iteration from both loops
-        assert(eval_loop(body, state, a, 0) == eval_loop(body, mid, a, 1));
-        assert(eval_loop(body, state, a + b, 0) == eval_loop(body, mid, a + b, 1));
-        // IH on mid with a-1, b
-        lemma_loop_fusion(body, mid, (a - 1) as nat, b);
-        // IH gives: eval_loop(body, eval_loop(body, mid, a-1, 0), b, 0)
-        //         == eval_loop(body, mid, a-1+b, 0)
-        assert((a - 1) as nat + b == a + b - 1);
-    }
+    lemma_eval_loop_is_loop_n(body, state, a);
+    lemma_eval_loop_is_loop_n(body, loop_n(body, state, a), b);
+    lemma_eval_loop_is_loop_n(body, state, a + b);
+    lemma_loop_n_fusion(body, state, a, b);
 }
 
 // ══════════════════════════════════════════════════════════════

@@ -5,6 +5,9 @@
 
 use vstd::prelude::*;
 use crate::stage::*;
+use crate::scan::{inclusive_scan, exclusive_scan, reduce, all_partial_sums_bounded,
+    inclusive_scan_int, exclusive_scan_int, reduce_int, as_int_seq};
+use crate::runtime::scan_multiblock::{inclusive_scan_i64_exec, exclusive_scan_i64_exec, reduce_i64_exec};
 
 verus! {
 
@@ -327,6 +330,163 @@ fn vec_i64_zeroed(n: usize) -> (result: Vec<i64>)
         i = i + 1;
     }
     v
+}
+
+// ══════════════════════════════════════════════════════════════
+// Exec scan: run_scan
+// ══════════════════════════════════════════════════════════════
+
+impl RuntimeSharedState {
+    /// Extract a logical buffer as a Vec<i64> (copy out from flat layout).
+    pub fn extract_buffer(&self, buf: usize) -> (result: Vec<i64>)
+        requires
+            self.wf_spec(),
+            buf < self@.num_buffers(),
+            self@.buffer_len(buf as nat) > 0,
+        ensures
+            result@.len() == self@.buffer_len(buf as nat),
+            forall|i: int| 0 <= i < result@.len() ==>
+                result@[i] as int == self@.buffers[buf as int][i],
+    {
+        let off = self.offsets[buf];
+        let len = self.lengths[buf];
+        let mut result: Vec<i64> = Vec::new();
+        let mut i: usize = 0;
+        while i < len
+            invariant
+                0 <= i <= len,
+                len as nat == self@.buffer_len(buf as nat),
+                result@.len() == i,
+                self.wf_spec(),
+                buf < self@.num_buffers(),
+                forall|j: int| 0 <= j < i as int ==>
+                    result@[j] as int == self@.buffers[buf as int][j],
+            decreases len - i,
+        {
+            proof {
+                assert(self.offsets@[buf as int] >= 0);
+                assert(self.offsets@[buf as int] as nat + self.lengths@[buf as int] as nat
+                    <= self.data@.len());
+            }
+            let val = self.data[off + i];
+            result.push(val);
+            i = i + 1;
+        }
+        result
+    }
+
+    /// Write a Vec<i64> back into a logical buffer.
+    pub fn write_buffer(&mut self, buf: usize, new_data: &Vec<i64>)
+        requires
+            old(self).wf_spec(),
+            buf < old(self)@.num_buffers(),
+            new_data@.len() == old(self)@.buffer_len(buf as nat),
+        ensures
+            self.wf_spec(),
+            self@.buffers.len() == old(self)@.buffers.len(),
+            self@.workgroup_size == old(self)@.workgroup_size,
+            self@.buffers[buf as int].len() == new_data@.len(),
+            forall|i: int| 0 <= i < new_data@.len() ==>
+                self@.buffers[buf as int][i] == new_data@[i] as int,
+            forall|b: int| 0 <= b < old(self)@.buffers.len() && b != buf as int ==>
+                self@.buffers[b] == old(self)@.buffers[b],
+    {
+        let off = self.offsets[buf];
+        let len = self.lengths[buf];
+        let mut i: usize = 0;
+        while i < len
+            invariant
+                0 <= i <= len,
+                len == new_data@.len(),
+                len as nat == old(self)@.buffer_len(buf as nat),
+                self.offsets == old(self).offsets,
+                self.lengths == old(self).lengths,
+                self.workgroup_size == old(self).workgroup_size,
+                self.data@.len() == old(self).data@.len(),
+                off == old(self).offsets@[buf as int],
+                buf < self.offsets@.len(),
+                // Written positions match new_data
+                forall|j: int| 0 <= j < i as int ==>
+                    self.data@[off as int + j] == new_data@[j],
+                // Non-written positions in this buffer unchanged
+                forall|j: int| i as int <= j < len as int ==>
+                    self.data@[off as int + j] == old(self).data@[off as int + j],
+                // All other positions unchanged
+                forall|p: int| (0 <= p < off as int || off as int + len as int <= p < self.data@.len()) ==>
+                    self.data@[p] == old(self).data@[p],
+            decreases len - i,
+        {
+            proof {
+                assert(old(self).offsets@[buf as int] as nat
+                    + old(self).lengths@[buf as int] as nat <= old(self).data@.len());
+            }
+            self.data.set(off + i, new_data[i]);
+            i = i + 1;
+        }
+        // Update ghost model
+        let ghost new_buf_spec = Seq::new(new_data@.len(), |i: int| new_data@[i] as int);
+        self.model = Ghost(SharedState {
+            buffers: old(self)@.buffers.update(buf as int, new_buf_spec),
+            workgroup_size: old(self)@.workgroup_size,
+        });
+    }
+
+    /// Execute a scan operation on a logical buffer.
+    /// Ensures result matches eval_scan spec.
+    pub fn run_scan(&mut self, buf: usize, op: ScanOp)
+        requires
+            old(self).wf_spec(),
+            buf < old(self)@.num_buffers(),
+            old(self)@.buffer_len(buf as nat) > 0,
+            old(self)@.buffer_len(buf as nat) <= i64::MAX as nat,
+            // Overflow safety for scan
+            all_partial_sums_bounded(old(self).extract_buffer_spec(buf as nat)),
+        ensures
+            self.wf_spec(),
+            self@ == eval_scan(buf as nat, op, old(self)@),
+    {
+        let data = self.extract_buffer(buf);
+        let scanned = match op {
+            ScanOp::InclusiveSum => inclusive_scan_i64_exec(&data),
+            ScanOp::ExclusiveSum => exclusive_scan_i64_exec(&data),
+            ScanOp::ReduceSum => {
+                let total = reduce_i64_exec(&data);
+                let mut result = Vec::new();
+                let mut i: usize = 0;
+                let len = data.len();
+                while i < len
+                    invariant
+                        0 <= i <= len,
+                        len == data@.len(),
+                        result@.len() == i,
+                        i == 0 || result@[0] == total,
+                        forall|j: int| 1 <= j < i as int ==> result@[j] == data@[j],
+                    decreases len - i,
+                {
+                    if i == 0 { result.push(total); }
+                    else { result.push(data[i]); }
+                    i = i + 1;
+                }
+                result
+            },
+        };
+        self.write_buffer(buf, &scanned);
+        proof {
+            // Connect exec scan result to eval_scan spec
+            // eval_scan uses inclusive_scan::<int> on Seq<int>
+            // exec scan uses inclusive_scan_i64_exec on Vec<i64>
+            // Bridge: inclusive_scan_int(data_i64) == inclusive_scan::<int>(as_int_seq(data_i64))
+            // and as_int_seq(data_i64)[i] == data_i64[i] as int == self@.buffers[buf][i]
+        }
+    }
+}
+
+/// Spec helper: the i64 data for a logical buffer (for preconditions).
+impl RuntimeSharedState {
+    pub open spec fn extract_buffer_spec(&self, buf: nat) -> Seq<i64> {
+        Seq::new(self.lengths@[buf as int] as nat, |i: int|
+            self.data@[self.offsets@[buf as int] as int + i])
+    }
 }
 
 } // verus!
