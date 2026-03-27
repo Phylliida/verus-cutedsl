@@ -89,6 +89,7 @@ impl RuntimeSharedState {
     }
 
     /// Write a value to a buffer.
+    /// Rebuilds the inner Vec to avoid nested &mut indexing (unsupported by Verus).
     pub fn write(&mut self, buf: usize, idx: usize, val: i64)
         requires
             old(self).wf_spec(),
@@ -98,10 +99,36 @@ impl RuntimeSharedState {
             self.wf_spec(),
             self@ == old(self)@.write(buf as nat, idx as nat, val as int),
     {
-        self.buffers[buf].set(idx, val);
-        proof {
-            self.model = Ghost(old(self)@.write(buf as nat, idx as nat, val as int));
+        // Build a new inner vec: copy all elements, replacing [idx] with val
+        let len = self.buffers[buf].len();
+        let mut new_inner: Vec<i64> = Vec::new();
+        let mut k: usize = 0;
+        while k < len
+            invariant
+                0 <= k <= len,
+                len == old(self).buffers@[buf as int].len(),
+                new_inner@.len() == k,
+                // self.buffers unchanged during loop
+                self.buffers@ == old(self).buffers@,
+                self.workgroup_size == old(self).workgroup_size,
+                self.model == old(self).model,
+                buf < self.buffers@.len(),
+                forall|i: int| 0 <= i < k as int ==>
+                    new_inner@[i] == if i == idx as int { val }
+                        else { self.buffers@[buf as int][i] },
+            decreases len - k,
+        {
+            if k == idx {
+                new_inner.push(val);
+            } else {
+                new_inner.push(self.buffers[buf][k]);
+            }
+            k = k + 1;
         }
+        // Replace the buffer at the outer level
+        self.buffers.set(buf, new_inner);
+        // Update ghost model
+        self.model = Ghost(old(self)@.write(buf as nat, idx as nat, val as int));
     }
 
     /// Create a RuntimeSharedState with given buffer sizes, initialized to zero.
