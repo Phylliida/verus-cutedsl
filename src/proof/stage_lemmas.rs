@@ -12,9 +12,8 @@ use vstd::prelude::*;
 use crate::stage::*;
 use crate::kernel::*;
 use crate::arith_expr::*;
-use crate::scan::*;
+use crate::scan::inclusive_scan;
 use verus_algebra::summation::*;
-use verus_algebra::traits::int_ring;
 
 verus! {
 
@@ -377,44 +376,15 @@ pub proof fn lemma_write_preserves_workgroup_size(
 {
 }
 
-// ══════════════════════════════════════════════════════════════
-// sum_range properties (bridge to existing scan specs)
-// ══════════════════════════════════════════════════════════════
-
-/// sum_range is additive: sum[lo..hi) = sum[lo..mid) + sum[mid..hi).
-pub proof fn lemma_sum_range_split(data: Seq<int>, lo: int, mid: int, hi: int)
-    requires 0 <= lo <= mid, mid <= hi, hi <= data.len(),
-    ensures sum_range(data, lo, hi) == sum_range(data, lo, mid) + sum_range(data, mid, hi),
-    decreases hi - mid,
-{
-    if mid == hi {
-    } else {
-        lemma_sum_range_split(data, lo, mid, hi - 1);
-    }
-}
-
-/// sum_range of empty range is 0.
-pub proof fn lemma_sum_range_empty(data: Seq<int>, lo: int)
-    ensures sum_range(data, lo, lo) == 0,
-{
-}
-
-/// sum_range of a single element.
-pub proof fn lemma_sum_range_single(data: Seq<int>, i: int)
-    requires 0 <= i < data.len(),
-    ensures sum_range(data, i, i + 1) == data[i],
-{
-    // sum_range(data, i, i+1) = sum_range(data, i, i) + data[i] = 0 + data[i]
-    assert(sum_range(data, i, i) == 0);
-}
+// (sum_range lemmas removed — eval_scan now uses inclusive_scan::<int> directly)
 
 // ══════════════════════════════════════════════════════════════
 // eval_map unfolding for two-output kernels
 // ══════════════════════════════════════════════════════════════
 
-/// For a two-output kernel, eval_map chains two eval_map_threads calls.
-/// The first output processes on the original state, the second on the result.
-/// Both use the same `inputs` (captured from initial state).
+/// For a two-output kernel, eval_map chains two set_buffer calls using
+/// map_output_declarative. The first output processes on the original state,
+/// the second on the result. Both use the same `inputs` (captured from initial state).
 pub proof fn lemma_eval_map_two_outputs(
     spec: &KernelSpec,
     input_bufs: Seq<nat>,
@@ -423,117 +393,46 @@ pub proof fn lemma_eval_map_two_outputs(
 )
     requires
         spec.outputs.len() == 2,
-        input_bufs.len() == spec.outputs.len() || input_bufs.len() >= 0, // just need valid
         output_bufs.len() == 2,
         forall|i: int| 0 <= i < input_bufs.len() ==>
             (input_bufs[i] as int) < state.buffers.len(),
+        forall|i: int| 0 <= i < output_bufs.len() ==>
+            (output_bufs[i] as int) < state.buffers.len(),
     ensures ({
         let inputs = Seq::new(input_bufs.len(), |i: int| state.buffers[input_bufs[i] as int]);
-        let after_out0 = eval_map_threads(spec, inputs, output_bufs[0], 0, state, 0);
-        let after_out1 = eval_map_threads(spec, inputs, output_bufs[1], 1, after_out0, 0);
+        let new_buf0 = map_output_declarative(spec, 0, inputs,
+            state.buffers[output_bufs[0] as int], state.workgroup_size);
+        let after_out0 = state.set_buffer(output_bufs[0], new_buf0);
+        let new_buf1 = map_output_declarative(spec, 1, inputs,
+            after_out0.buffers[output_bufs[1] as int], after_out0.workgroup_size);
+        let after_out1 = after_out0.set_buffer(output_bufs[1], new_buf1);
         eval_map(spec, input_bufs, output_bufs, state) == after_out1
     }),
 {
     let inputs = Seq::new(input_bufs.len(), |i: int| state.buffers[input_bufs[i] as int]);
-    let after_out0 = eval_map_threads(spec, inputs, output_bufs[0], 0, state, 0);
-    let after_out1 = eval_map_threads(spec, inputs, output_bufs[1], 1, after_out0, 0);
+    let new_buf0 = map_output_declarative(spec, 0, inputs,
+        state.buffers[output_bufs[0] as int], state.workgroup_size);
+    let after_out0 = state.set_buffer(output_bufs[0], new_buf0);
+    let new_buf1 = map_output_declarative(spec, 1, inputs,
+        after_out0.buffers[output_bufs[1] as int], after_out0.workgroup_size);
+    let after_out1 = after_out0.set_buffer(output_bufs[1], new_buf1);
 
-    // Unfold eval_map → eval_map_outputs
+    // Unfold step by step
     assert(eval_map(spec, input_bufs, output_bufs, state)
         == eval_map_outputs(spec, inputs, output_bufs, state, 0));
-
-    // Unfold eval_map_outputs at out_idx=0: process output 0, then recurse
     assert(eval_map_outputs(spec, inputs, output_bufs, state, 0)
         == eval_map_outputs(spec, inputs, output_bufs, after_out0, 1));
-
-    // Unfold eval_map_outputs at out_idx=1: process output 1, then recurse
     assert(eval_map_outputs(spec, inputs, output_bufs, after_out0, 1)
         == eval_map_outputs(spec, inputs, output_bufs, after_out1, 2));
-
-    // Base case: out_idx=2 >= outputs.len()=2, returns state unchanged
     assert(eval_map_outputs(spec, inputs, output_bufs, after_out1, 2) == after_out1);
 }
 
 // ══════════════════════════════════════════════════════════════
-// Scan bridge: sum_range ↔ verus-algebra sum ↔ inclusive_scan
-// ══════════════════════════════════════════════════════════════
-
-/// sum_range equals verus-algebra's sum::<int> over the same range.
-/// Both compute the same thing — sum_range peels from the right,
-/// sum::<int> peels from the left, but lemma_sum_peel_last bridges them.
-pub proof fn lemma_sum_range_equals_sum(data: Seq<int>, lo: int, hi: int)
-    requires 0 <= lo, lo <= hi, hi <= data.len(),
-    ensures sum_range(data, lo, hi) == sum::<int>(|j: int| data[j], lo, hi),
-    decreases hi - lo,
-{
-    if lo == hi {
-        // Both are 0
-    } else {
-        // IH: sum_range(data, lo, hi-1) == sum::<int>(f, lo, hi-1)
-        lemma_sum_range_equals_sum(data, lo, hi - 1);
-        // sum_range(data, lo, hi) = sum_range(data, lo, hi-1) + data[hi-1]  (by def)
-        // sum::<int>(f, lo, hi) ≡ sum::<int>(f, lo, hi-1) + f(hi-1)        (by peel_last)
-        // For int, eqv is ==, so this is exact equality.
-        lemma_sum_peel_last::<int>(|j: int| data[j], lo, hi);
-        // Now: sum(f, lo, hi) == sum(f, lo, hi-1) + data[hi-1]
-        //                     == sum_range(data, lo, hi-1) + data[hi-1]  (by IH)
-        //                     == sum_range(data, lo, hi)                 (by def)
-    }
-}
-
-/// eval_scan result at position i equals inclusive_scan::<int>(data)[i].
-/// This bridges the Stage-level scan spec to the existing verified scan infrastructure.
-pub proof fn lemma_eval_scan_matches_inclusive_scan(
-    buffer: nat, state: SharedState, i: int,
-)
-    requires
-        buffer < state.num_buffers(),
-        0 <= i < state.buffer_len(buffer) as int,
-    ensures
-        eval_scan(buffer, state).read(buffer, i as nat)
-            == inclusive_scan::<int>(state.buffers[buffer as int])[i],
-{
-    let data = state.buffers[buffer as int];
-    // eval_scan produces sum_range(data, 0, i+1) at position i
-    // inclusive_scan::<int>(data)[i] = sum::<int>(|j| data[j], 0, i+1) by definition
-    lemma_sum_range_equals_sum(data, 0, i + 1);
-}
-
-// ══════════════════════════════════════════════════════════════
-// Map determinism — declarative spec
-// ══════════════════════════════════════════════════════════════
-
-/// Declarative (order-independent) spec for a Map's effect on a single output buffer.
-/// For each position j: if some active thread scatters to j, the value
-/// is that thread's compute result. Otherwise the value is unchanged.
-/// Well-defined because scatter injectivity guarantees at most one writer per position.
-pub open spec fn map_output_declarative(
-    spec: &KernelSpec,
-    out_idx: nat,
-    inputs: Seq<Seq<int>>,
-    old_buf: Seq<int>,
-    workgroup_size: nat,
-) -> Seq<int> {
-    Seq::new(old_buf.len(), |j: int|
-        if exists|t: nat| t < workgroup_size
-            && arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
-            && arith_eval_with_arrays(&spec.outputs[out_idx as int].scatter,
-                thread_env_1d(t), inputs) == j
-        {
-            let t = choose|t: nat| t < workgroup_size
-                && arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
-                && arith_eval_with_arrays(&spec.outputs[out_idx as int].scatter,
-                    thread_env_1d(t), inputs) == j;
-            arith_eval_with_arrays(&spec.outputs[out_idx as int].compute,
-                thread_env_1d(t), inputs)
-        } else {
-            old_buf[j]
-        }
-    )
-}
-
-// ══════════════════════════════════════════════════════════════
 // Map determinism proof helpers
+//
+// map_output_declarative is now the PRIMARY definition in stage.rs.
+// eval_map_threads is the OPERATIONAL version for exec.
+// These lemmas prove they agree (under scatter injectivity).
 // ══════════════════════════════════════════════════════════════
 
 /// Thread t is active and scatters to position j for output out_idx.
@@ -579,8 +478,11 @@ pub open spec fn scatter_in_bounds(
         }
 }
 
-/// eval_map_threads preserves the length of the output buffer.
-pub proof fn lemma_eval_map_threads_preserves_buf_len(
+/// Bundled frame lemma: eval_map_threads preserves ALL non-target properties.
+/// One induction instead of four separate lemmas.
+///
+/// Preserves: buffer lengths, other buffers, workgroup_size, num_buffers.
+pub proof fn lemma_eval_map_threads_frame(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
     out_buf: nat,
@@ -592,49 +494,17 @@ pub proof fn lemma_eval_map_threads_preserves_buf_len(
         out_buf < state.num_buffers(),
         out_idx < spec.outputs.len(),
         scatter_in_bounds(spec, inputs, out_idx, state.buffer_len(out_buf), state.workgroup_size),
-    ensures
-        eval_map_threads(spec, inputs, out_buf, out_idx, state, tid)
-            .buffers[out_buf as int].len() == state.buffers[out_buf as int].len(),
-    decreases state.workgroup_size - tid,
-{
-    if tid >= state.workgroup_size {
-    } else {
-        let env = thread_env_1d(tid);
-        let guard_val = arith_eval_with_arrays(&spec.guard, env, inputs);
-        if guard_val != 0 {
-            let (scatter_idx, compute_val) = eval_output(
-                &spec.outputs[out_idx as int], env, inputs,
-            );
-            assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
-            let new_state = state.write(out_buf, scatter_idx as nat, compute_val);
-            lemma_eval_map_threads_preserves_buf_len(
-                spec, inputs, out_buf, out_idx, new_state, tid + 1);
-        } else {
-            lemma_eval_map_threads_preserves_buf_len(
-                spec, inputs, out_buf, out_idx, state, tid + 1);
-        }
-    }
-}
-
-/// eval_map_threads on out_buf preserves other buffers entirely.
-pub proof fn lemma_eval_map_threads_preserves_other_buf(
-    spec: &KernelSpec,
-    inputs: Seq<Seq<int>>,
-    out_buf: nat,
-    out_idx: nat,
-    state: SharedState,
-    tid: nat,
-    other_buf: nat,
-)
-    requires
-        out_buf < state.num_buffers(),
-        other_buf < state.num_buffers(),
-        out_buf != other_buf,
-        out_idx < spec.outputs.len(),
-        scatter_in_bounds(spec, inputs, out_idx, state.buffer_len(out_buf), state.workgroup_size),
-    ensures
-        eval_map_threads(spec, inputs, out_buf, out_idx, state, tid)
-            .buffers[other_buf as int] == state.buffers[other_buf as int],
+    ensures ({
+        let result = eval_map_threads(spec, inputs, out_buf, out_idx, state, tid);
+        // Target buffer length preserved
+        &&& result.buffers[out_buf as int].len() == state.buffers[out_buf as int].len()
+        // Other buffers unchanged
+        &&& forall|b: nat| b < state.num_buffers() && b != out_buf ==>
+            result.buffers[b as int] == state.buffers[b as int]
+        // Structure preserved
+        &&& result.workgroup_size == state.workgroup_size
+        &&& result.num_buffers() == state.num_buffers()
+    }),
     decreases state.workgroup_size - tid,
 {
     if tid >= state.workgroup_size {
@@ -646,83 +516,15 @@ pub proof fn lemma_eval_map_threads_preserves_other_buf(
                 &spec.outputs[out_idx as int], env, inputs);
             assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
             let new_state = state.write(out_buf, scatter_idx as nat, compute_val);
-            lemma_write_other_buffer(state, out_buf, scatter_idx as nat, compute_val, other_buf);
-            lemma_eval_map_threads_preserves_other_buf(
-                spec, inputs, out_buf, out_idx, new_state, tid + 1, other_buf);
-        } else {
-            lemma_eval_map_threads_preserves_other_buf(
-                spec, inputs, out_buf, out_idx, state, tid + 1, other_buf);
-        }
-    }
-}
-
-/// eval_map_threads preserves workgroup_size.
-pub proof fn lemma_eval_map_threads_preserves_wg_size(
-    spec: &KernelSpec,
-    inputs: Seq<Seq<int>>,
-    out_buf: nat,
-    out_idx: nat,
-    state: SharedState,
-    tid: nat,
-)
-    requires
-        out_buf < state.num_buffers(),
-        out_idx < spec.outputs.len(),
-        scatter_in_bounds(spec, inputs, out_idx, state.buffer_len(out_buf), state.workgroup_size),
-    ensures
-        eval_map_threads(spec, inputs, out_buf, out_idx, state, tid)
-            .workgroup_size == state.workgroup_size,
-    decreases state.workgroup_size - tid,
-{
-    if tid >= state.workgroup_size {
-    } else {
-        let env = thread_env_1d(tid);
-        let guard_val = arith_eval_with_arrays(&spec.guard, env, inputs);
-        if guard_val != 0 {
-            let (scatter_idx, compute_val) = eval_output(
-                &spec.outputs[out_idx as int], env, inputs);
-            assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
-            let new_state = state.write(out_buf, scatter_idx as nat, compute_val);
-            lemma_eval_map_threads_preserves_wg_size(
+            // Frame conditions for single write
+            assert forall|b: nat| b < state.num_buffers() && b != out_buf implies
+                new_state.buffers[b as int] == state.buffers[b as int]
+            by { lemma_write_other_buffer(state, out_buf, scatter_idx as nat, compute_val, b); }
+            // Recurse
+            lemma_eval_map_threads_frame(
                 spec, inputs, out_buf, out_idx, new_state, tid + 1);
         } else {
-            lemma_eval_map_threads_preserves_wg_size(
-                spec, inputs, out_buf, out_idx, state, tid + 1);
-        }
-    }
-}
-
-/// eval_map_threads preserves num_buffers.
-pub proof fn lemma_eval_map_threads_preserves_num_bufs(
-    spec: &KernelSpec,
-    inputs: Seq<Seq<int>>,
-    out_buf: nat,
-    out_idx: nat,
-    state: SharedState,
-    tid: nat,
-)
-    requires
-        out_buf < state.num_buffers(),
-        out_idx < spec.outputs.len(),
-        scatter_in_bounds(spec, inputs, out_idx, state.buffer_len(out_buf), state.workgroup_size),
-    ensures
-        eval_map_threads(spec, inputs, out_buf, out_idx, state, tid)
-            .num_buffers() == state.num_buffers(),
-    decreases state.workgroup_size - tid,
-{
-    if tid >= state.workgroup_size {
-    } else {
-        let env = thread_env_1d(tid);
-        let guard_val = arith_eval_with_arrays(&spec.guard, env, inputs);
-        if guard_val != 0 {
-            let (scatter_idx, compute_val) = eval_output(
-                &spec.outputs[out_idx as int], env, inputs);
-            assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
-            let new_state = state.write(out_buf, scatter_idx as nat, compute_val);
-            lemma_eval_map_threads_preserves_num_bufs(
-                spec, inputs, out_buf, out_idx, new_state, tid + 1);
-        } else {
-            lemma_eval_map_threads_preserves_num_bufs(
+            lemma_eval_map_threads_frame(
                 spec, inputs, out_buf, out_idx, state, tid + 1);
         }
     }
@@ -995,9 +797,8 @@ pub proof fn lemma_map_determinism(
     let result_state = eval_map_threads(spec, inputs, out_buf, out_idx, state, 0);
     let decl = map_output_declarative(spec, out_idx, inputs, old_buf, state.workgroup_size);
 
-    // Length: eval_map_threads preserves buffer length
-    lemma_eval_map_threads_preserves_buf_len(
-        spec, inputs, out_buf, out_idx, state, 0);
+    // Frame: eval_map_threads preserves buffer structure
+    lemma_eval_map_threads_frame(spec, inputs, out_buf, out_idx, state, 0);
     assert(result_state.buffers[out_buf as int].len() == old_buf.len());
     // decl has same length by Seq::new construction
     assert(decl.len() == old_buf.len());
@@ -1028,8 +829,7 @@ pub proof fn lemma_eval_scan_preserves_other_buf(
             == state.buffers[other_buf as int],
 {
     lemma_set_buffer_other(state, buffer,
-        Seq::new(state.buffers[buffer as int].len(), |i: int|
-            sum_range(state.buffers[buffer as int], 0, i + 1)),
+        inclusive_scan::<int>(state.buffers[buffer as int]),
         other_buf);
 }
 
@@ -1046,8 +846,7 @@ pub proof fn lemma_eval_scan_preserves_num_bufs(buffer: nat, state: SharedState)
     ensures eval_scan(buffer, state).num_buffers() == state.num_buffers(),
 {
     lemma_set_buffer_preserves_num_buffers(state, buffer,
-        Seq::new(state.buffers[buffer as int].len(), |i: int|
-            sum_range(state.buffers[buffer as int], 0, i + 1)));
+        inclusive_scan::<int>(state.buffers[buffer as int]));
 }
 
 /// eval_scan preserves the length of the scanned buffer.

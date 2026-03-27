@@ -14,6 +14,7 @@
 use vstd::prelude::*;
 use crate::arith_expr::*;
 use crate::kernel::*;
+use crate::scan::inclusive_scan;
 
 verus! {
 
@@ -148,10 +149,47 @@ pub open spec fn seq_stages(stages: Seq<Stage>) -> Stage
 }
 
 // ══════════════════════════════════════════════════════════════
-// Map evaluation (own recursion group, not mutual with staged_eval)
+// Map evaluation — declarative (order-independent)
+//
+// The primary spec for Map stages. Each output position gets the
+// compute value of its unique writer thread (by scatter injectivity),
+// or is unchanged if no thread writes there.
+//
+// This is the "right" definition — no thread ordering baked in.
+// eval_map_threads (below) is the operational version used by the
+// exec interpreter; map_determinism proves they agree.
 // ══════════════════════════════════════════════════════════════
 
-/// Apply a Map: for each active thread, write compute results to output buffers.
+/// Declarative (order-independent) spec for a single Map output's effect.
+/// Position j gets compute(writer) if some thread writes to j, else old value.
+/// Well-defined because scatter injectivity guarantees at most one writer.
+pub open spec fn map_output_declarative(
+    spec: &KernelSpec,
+    out_idx: nat,
+    inputs: Seq<Seq<int>>,
+    old_buf: Seq<int>,
+    workgroup_size: nat,
+) -> Seq<int> {
+    Seq::new(old_buf.len(), |j: int|
+        if exists|t: nat| t < workgroup_size
+            && arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
+            && arith_eval_with_arrays(&spec.outputs[out_idx as int].scatter,
+                thread_env_1d(t), inputs) == j
+        {
+            let t = choose|t: nat| t < workgroup_size
+                && arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
+                && arith_eval_with_arrays(&spec.outputs[out_idx as int].scatter,
+                    thread_env_1d(t), inputs) == j;
+            arith_eval_with_arrays(&spec.outputs[out_idx as int].compute,
+                thread_env_1d(t), inputs)
+        } else {
+            old_buf[j]
+        }
+    )
+}
+
+/// Apply a Map: declarative evaluation. Inputs captured from initial state,
+/// outputs applied sequentially (each output uses the declarative spec).
 pub open spec fn eval_map(
     spec: &KernelSpec,
     input_bufs: Seq<nat>,
@@ -162,7 +200,8 @@ pub open spec fn eval_map(
     eval_map_outputs(spec, inputs, output_bufs, state, 0)
 }
 
-/// Apply each output of a Map, sequentially.
+/// Chain output applications. Each output replaces its target buffer
+/// with the declarative result.
 pub open spec fn eval_map_outputs(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -175,14 +214,26 @@ pub open spec fn eval_map_outputs(
     if out_idx >= spec.outputs.len() {
         state
     } else {
-        let new_state = eval_map_threads(
-            spec, inputs, output_bufs[out_idx as int], out_idx, state, 0,
+        let new_buf = map_output_declarative(
+            spec, out_idx, inputs,
+            state.buffers[output_bufs[out_idx as int] as int],
+            state.workgroup_size,
         );
+        let new_state = state.set_buffer(output_bufs[out_idx as int], new_buf);
         eval_map_outputs(spec, inputs, output_bufs, new_state, out_idx + 1)
     }
 }
 
-/// Apply a single output for threads [tid, workgroup_size).
+// ══════════════════════════════════════════════════════════════
+// Map evaluation — operational (sequential threads, for exec)
+//
+// eval_map_threads processes threads 0, 1, 2, ... writing to state.
+// map_determinism (in stage_lemmas.rs) proves this equals the
+// declarative version above.
+// ══════════════════════════════════════════════════════════════
+
+/// Operational (sequential) Map evaluation for a single output.
+/// Used by the exec interpreter. Proved equivalent to map_output_declarative.
 pub open spec fn eval_map_threads(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -211,24 +262,16 @@ pub open spec fn eval_map_threads(
 }
 
 // ══════════════════════════════════════════════════════════════
-// Scan evaluation (not recursive)
+// Scan evaluation — uses existing verified inclusive_scan
 // ══════════════════════════════════════════════════════════════
 
-/// Sum of data[lo..hi).
-pub open spec fn sum_range(data: Seq<int>, lo: int, hi: int) -> int
-    decreases (if hi > lo { hi - lo } else { 0 }),
-{
-    if hi <= lo { 0 }
-    else { sum_range(data, lo, hi - 1) + data[hi - 1] }
-}
-
 /// Apply inclusive prefix sum to a buffer.
+/// Uses inclusive_scan::<int> from the verified scan infrastructure.
 pub open spec fn eval_scan(buffer: nat, state: SharedState) -> SharedState
     recommends buffer < state.num_buffers(),
 {
     let data = state.buffers[buffer as int];
-    let scanned = Seq::new(data.len(), |i: int| sum_range(data, 0, i + 1));
-    state.set_buffer(buffer, scanned)
+    state.set_buffer(buffer, inclusive_scan::<int>(data))
 }
 
 // ══════════════════════════════════════════════════════════════
