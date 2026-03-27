@@ -588,4 +588,197 @@ pub proof fn lemma_eval_map_threads_preserves_non_target(
     }
 }
 
+/// If thread `writer` is the unique active writer to position j among [tid, workgroup_size),
+/// then after eval_map_threads, buffer[j] == compute(writer).
+pub proof fn lemma_eval_map_threads_writer_wins(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    out_buf: nat,
+    out_idx: nat,
+    state: SharedState,
+    tid: nat,
+    writer: nat,
+    j: nat,
+)
+    requires
+        out_buf < state.num_buffers(),
+        j < state.buffer_len(out_buf),
+        out_idx < spec.outputs.len(),
+        tid <= writer < state.workgroup_size,
+        // writer is active and scatters to j
+        thread_writes_to(spec, inputs, out_idx, writer, j as int),
+        // no OTHER thread in [tid, workgroup_size) writes to j
+        forall|t: nat| tid <= t < state.workgroup_size && t != writer ==>
+            !#[trigger] thread_writes_to(spec, inputs, out_idx, t, j as int),
+        scatter_in_bounds(spec, inputs, out_idx, state.buffer_len(out_buf), state.workgroup_size),
+    ensures
+        eval_map_threads(spec, inputs, out_buf, out_idx, state, tid).read(out_buf, j)
+            == arith_eval_with_arrays(
+                &spec.outputs[out_idx as int].compute,
+                thread_env_1d(writer), inputs),
+    decreases writer - tid,
+{
+    if tid == writer {
+        // This is the writer thread. It writes compute(writer) to position j.
+        let env = thread_env_1d(tid);
+        let guard_val = arith_eval_with_arrays(&spec.guard, env, inputs);
+        assert(guard_val != 0); // writer is active
+        let (scatter_idx, compute_val) = eval_output(
+            &spec.outputs[out_idx as int], env, inputs,
+        );
+        assert(scatter_idx == j as int); // writer scatters to j
+        assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
+        let si = scatter_idx as nat;
+        assert(si == j);
+        let new_state = state.write(out_buf, j, compute_val);
+        // After write: new_state.read(out_buf, j) == compute_val
+        lemma_write_read_same(state, out_buf, j, compute_val);
+        // No thread in [writer+1, workgroup_size) writes to j
+        // → eval_map_threads from writer+1 preserves position j
+        lemma_eval_map_threads_preserves_non_target(
+            spec, inputs, out_buf, out_idx, new_state, tid + 1, j,
+        );
+    } else {
+        // tid < writer. Thread tid does NOT write to j.
+        assert(!thread_writes_to(spec, inputs, out_idx, tid, j as int));
+        let env = thread_env_1d(tid);
+        let guard_val = arith_eval_with_arrays(&spec.guard, env, inputs);
+        if guard_val != 0 {
+            let (scatter_idx, compute_val) = eval_output(
+                &spec.outputs[out_idx as int], env, inputs,
+            );
+            assert(scatter_idx != j as int);
+            assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
+            let si = scatter_idx as nat;
+            let new_state = state.write(out_buf, si, compute_val);
+            // IH on new_state from tid+1
+            lemma_eval_map_threads_writer_wins(
+                spec, inputs, out_buf, out_idx, new_state, tid + 1, writer, j,
+            );
+        } else {
+            // Guard is 0, no write
+            lemma_eval_map_threads_writer_wins(
+                spec, inputs, out_buf, out_idx, state, tid + 1, writer, j,
+            );
+        }
+    }
+}
+
+/// All active thread pairs satisfy scatter_injective for output out_idx.
+pub open spec fn all_scatter_injective(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    out_idx: nat,
+    workgroup_size: nat,
+) -> bool {
+    forall|t1: nat, t2: nat|
+        t1 < workgroup_size && t2 < workgroup_size && t1 != t2
+        ==> scatter_injective(
+            &spec.outputs[out_idx as int], &spec.guard,
+            inputs, thread_env_1d(t1), thread_env_1d(t2))
+}
+
+/// Per-position map determinism: at position j, eval_map_threads agrees
+/// with map_output_declarative.
+proof fn lemma_map_determinism_at(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    out_buf: nat,
+    out_idx: nat,
+    state: SharedState,
+    j: nat,
+)
+    requires
+        out_buf < state.num_buffers(),
+        j < state.buffer_len(out_buf),
+        out_idx < spec.outputs.len(),
+        all_scatter_injective(spec, inputs, out_idx, state.workgroup_size),
+        scatter_in_bounds(spec, inputs, out_idx, state.buffer_len(out_buf), state.workgroup_size),
+    ensures
+        eval_map_threads(spec, inputs, out_buf, out_idx, state, 0).read(out_buf, j)
+            == map_output_declarative(
+                spec, out_idx, inputs,
+                state.buffers[out_buf as int], state.workgroup_size)[j as int],
+{
+    let ws = state.workgroup_size;
+    let old_buf = state.buffers[out_buf as int];
+
+    if exists|t: nat| t < ws && thread_writes_to(spec, inputs, out_idx, t, j as int) {
+        // Some thread writes to j. Pick it.
+        let writer = choose|t: nat| t < ws
+            && thread_writes_to(spec, inputs, out_idx, t, j as int);
+
+        // Prove uniqueness: no other thread writes to j
+        assert forall|t: nat|
+            0 <= t < ws && t != writer
+            implies !#[trigger] thread_writes_to(spec, inputs, out_idx, t, j as int)
+        by {
+            if thread_writes_to(spec, inputs, out_idx, t, j as int) {
+                let env_t = thread_env_1d(t);
+                let env_w = thread_env_1d(writer);
+                assert(scatter_injective(
+                    &spec.outputs[out_idx as int], &spec.guard,
+                    inputs, env_t, env_w));
+                assert(env_t == env_w);
+                assert(env_t[0] == env_w[0]);
+            }
+        }
+
+        // eval_map_threads gives compute(writer) at position j
+        lemma_eval_map_threads_writer_wins(
+            spec, inputs, out_buf, out_idx, state, 0, writer, j);
+
+        // map_output_declarative: the exists branch fires, choose picks a satisfier.
+        // By uniqueness, any satisfier gives the same compute value as writer.
+        let decl_t = choose|t: nat| t < ws
+            && arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
+            && arith_eval_with_arrays(&spec.outputs[out_idx as int].scatter,
+                thread_env_1d(t), inputs) == j as int;
+        // decl_t satisfies thread_writes_to, so decl_t == writer
+        assert(thread_writes_to(spec, inputs, out_idx, decl_t, j as int));
+        if decl_t != writer {
+            assert(!thread_writes_to(spec, inputs, out_idx, decl_t, j as int));
+        }
+        assert(decl_t == writer);
+    } else {
+        // No thread writes to j → position unchanged
+        assert(no_writer_in_range(spec, inputs, out_idx, j as int, 0, ws));
+        lemma_eval_map_threads_preserves_non_target(
+            spec, inputs, out_buf, out_idx, state, 0, j);
+    }
+}
+
+/// Map determinism: eval_map_threads (sequential) produces the same buffer
+/// as map_output_declarative (order-independent choose-based spec).
+///
+/// THE key theorem — proves GPU thread execution order doesn't affect results.
+pub proof fn lemma_map_determinism(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    out_buf: nat,
+    out_idx: nat,
+    state: SharedState,
+)
+    requires
+        out_buf < state.num_buffers(),
+        out_idx < spec.outputs.len(),
+        all_scatter_injective(spec, inputs, out_idx, state.workgroup_size),
+        scatter_in_bounds(spec, inputs, out_idx, state.buffer_len(out_buf), state.workgroup_size),
+    ensures
+        eval_map_threads(spec, inputs, out_buf, out_idx, state, 0).buffers[out_buf as int]
+            =~= map_output_declarative(
+                spec, out_idx, inputs,
+                state.buffers[out_buf as int], state.workgroup_size),
+{
+    let old_buf = state.buffers[out_buf as int];
+    assert forall|j: int| 0 <= j < old_buf.len() implies
+        eval_map_threads(spec, inputs, out_buf, out_idx, state, 0)
+            .buffers[out_buf as int][j]
+        == map_output_declarative(
+            spec, out_idx, inputs, old_buf, state.workgroup_size)[j]
+    by {
+        lemma_map_determinism_at(spec, inputs, out_buf, out_idx, state, j as nat);
+    }
+}
+
 } // verus!
