@@ -5,15 +5,6 @@
 /// independently for race-freedom, and Hoare-style invariants at barrier
 /// points provide compositional functional correctness.
 ///
-/// Key design decisions:
-/// - Barriers are **explicit** (developer-placed), not implicit between stages.
-///   Adjacent Maps without a Barrier fuse — no sync overhead.
-/// - Barriers are **workgroup-scoped** by default (~20 cycles). Grid scope
-///   available for rare cooperative-groups use cases.
-/// - `Map` and `Scan` are atomic proof-level statements. Their internal
-///   thread-level correctness (scatter injectivity, scan algorithm correctness)
-///   is established separately in KernelSpec / scan proofs.
-///
 /// Literature basis:
 /// - GPUVerify (Betts et al., OOPSLA 2012) — barrier-interval analysis
 /// - Barrier Invariants (Chong et al., OOPSLA 2013) — Hoare-style predicates at barriers
@@ -31,8 +22,7 @@ verus! {
 // ══════════════════════════════════════════════════════════════
 
 /// Shared state: a collection of named integer buffers.
-/// This models both shared memory and global memory visible to a workgroup.
-/// Each buffer is a Seq<int> indexed by position.
+/// Models both shared memory and global memory visible to a workgroup.
 pub struct SharedState {
     pub buffers: Seq<Seq<int>>,
     pub workgroup_size: nat,
@@ -49,14 +39,12 @@ impl SharedState {
         self.buffers[buf as int].len()
     }
 
-    /// Read a value from a buffer.
     pub open spec fn read(&self, buf: nat, idx: nat) -> int
         recommends buf < self.num_buffers(), idx < self.buffer_len(buf),
     {
         self.buffers[buf as int][idx as int]
     }
 
-    /// Write a value to a buffer, producing a new state.
     pub open spec fn write(&self, buf: nat, idx: nat, val: int) -> SharedState
         recommends buf < self.num_buffers(), idx < self.buffer_len(buf),
     {
@@ -67,7 +55,6 @@ impl SharedState {
         }
     }
 
-    /// Bulk-update a buffer with a complete new sequence.
     pub open spec fn set_buffer(&self, buf: nat, data: Seq<int>) -> SharedState
         recommends buf < self.num_buffers(),
     {
@@ -82,41 +69,28 @@ impl SharedState {
 // Barrier scope
 // ══════════════════════════════════════════════════════════════
 
-/// Scope of a barrier synchronization.
 pub enum BarrierScope {
-    /// Workgroup-level barrier (__syncthreads / workgroupBarrier).
-    /// All threads in the workgroup must reach this point before any proceeds.
-    /// Cheap (~20 cycles). The default and common case.
+    /// Workgroup-level: __syncthreads / workgroupBarrier. Cheap (~20 cycles).
     Workgroup,
-    /// Grid-level barrier (cooperative groups grid_group::sync).
-    /// All threads in the entire dispatch must synchronize.
-    /// Expensive. Requires cooperative kernel launch. Rare.
+    /// Grid-level: cooperative groups grid_group::sync. Expensive, rare.
     Grid,
 }
 
 // ══════════════════════════════════════════════════════════════
 // Stage: composable kernel building block
+//
+// Uses binary Seq (first + then) instead of Seq<Stage> so that
+// structural recursion works cleanly in Verus — both children
+// are sub-terms of the Seq variant.
 // ══════════════════════════════════════════════════════════════
 
-/// A GPU kernel as a tree of composable stages.
-///
-/// Barriers are explicit — the developer places them where cross-thread
-/// communication occurs. Adjacent Maps without a Barrier between them
-/// fuse with no synchronization overhead.
-///
-/// Verification is compositional:
-/// - Between barriers: race-freedom (scatter injectivity from KernelSpec)
-/// - At barriers: Hoare-style invariants (StatePredicate)
-/// - Loops: inductive invariants checked at barriers inside the body
 pub enum Stage {
-    /// Parallel map: each thread `t` in `[0, workgroup_size)` where `guard(t) != 0`
-    /// writes `compute(t)` to `output_buf[scatter(t)]` for each output.
-    ///
-    /// Uses the existing verified KernelSpec. Scatter injectivity guarantees
-    /// no data races within a single Map.
-    ///
-    /// `input_bufs` maps KernelSpec's logical input array indices to SharedState buffer indices.
-    /// `output_bufs` maps KernelSpec's logical output indices to SharedState buffer indices.
+    /// No-op: identity on shared state.
+    Noop,
+
+    /// Parallel map using a verified KernelSpec.
+    /// `input_bufs[i]` = SharedState buffer index for KernelSpec input array i.
+    /// `output_bufs[i]` = SharedState buffer index for KernelSpec output i.
     Map {
         spec: KernelSpec,
         input_bufs: Seq<nat>,
@@ -124,43 +98,27 @@ pub enum Stage {
     },
 
     /// Parallel inclusive prefix sum on a buffer.
-    ///
-    /// Replaces `buffer[i]` with `buffer[0] + buffer[1] + ... + buffer[i]`.
-    /// Uses existing verified scan algorithms (Hillis-Steele, Blelloch, Brent-Kung).
-    /// The scan is an atomic operation — internal barrier management is encapsulated.
     Scan {
         buffer: nat,
     },
 
-    /// Explicit barrier with a postcondition (invariant) on shared state.
-    ///
-    /// This is the ONLY synchronization point in the model. After a barrier,
-    /// all prior writes by all threads in the scope are visible to all threads.
-    ///
-    /// The `post` predicate must hold after the barrier — this is the Hoare-logic
-    /// assertion that enables compositional verification.
+    /// Explicit barrier with postcondition.
+    /// The ONLY synchronization point. All prior writes become visible.
     Barrier {
         scope: BarrierScope,
         post: spec_fn(SharedState) -> bool,
     },
 
-    /// Sequential composition. Stages execute in order.
-    ///
-    /// **No implicit barriers** between stages. Adjacent Maps without an
-    /// intervening Barrier are fused — data flows thread-locally.
-    /// The developer must insert Barrier stages where cross-thread
-    /// communication occurs.
+    /// Binary sequential composition: execute `first`, then `then`.
+    /// NO implicit barrier between them — they fuse unless separated by a Barrier.
+    /// Build longer sequences with the `stages!` helper or nested Seq.
     Seq {
-        stages: Seq<Stage>,
+        first: Box<Stage>,
+        then: Box<Stage>,
     },
 
-    /// Bounded loop. The body executes `bound` times.
-    ///
-    /// `bound` is evaluated once from the initial state before the loop starts.
-    /// The `invariant` is an inductive predicate checked at Barrier stages
-    /// inside the body: it must hold initially and be preserved by each iteration.
-    ///
-    /// Note: no data-dependent early exit. If needed, add LoopWhile variant later.
+    /// Bounded loop: execute `body` exactly `bound` times.
+    /// `invariant(state, iteration)` is the inductive loop invariant.
     Loop {
         bound: nat,
         body: Box<Stage>,
@@ -169,37 +127,45 @@ pub enum Stage {
 }
 
 // ══════════════════════════════════════════════════════════════
-// Stage evaluation semantics
+// Sequence builder — flat list → nested binary Seq
 // ══════════════════════════════════════════════════════════════
 
-/// Apply a single Map stage to the shared state.
-///
-/// For each thread `t` in `[0, workgroup_size)` where `guard(t) != 0`:
-///   For each output `o`:
-///     state.buffers[output_bufs[o]][scatter_o(t)] = compute_o(t, inputs)
-///
-/// The result is deterministic because scatter injectivity guarantees
-/// no two active threads write to the same output index.
+/// Build a Stage from a flat list of stages.
+/// `seq_stages([a, b, c])` = `Seq(a, Seq(b, c))`.
+pub open spec fn seq_stages(stages: Seq<Stage>) -> Stage
+    decreases stages.len(),
+{
+    if stages.len() == 0 {
+        Stage::Noop
+    } else if stages.len() == 1 {
+        stages[0]
+    } else {
+        Stage::Seq {
+            first: Box::new(stages[0]),
+            then: Box::new(seq_stages(stages.skip(1))),
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Map evaluation (own recursion group, not mutual with staged_eval)
+// ══════════════════════════════════════════════════════════════
+
+/// Apply a Map: for each active thread, write compute results to output buffers.
 pub open spec fn eval_map(
     spec: &KernelSpec,
     input_bufs: Seq<nat>,
     output_bufs: Seq<nat>,
     state: SharedState,
-) -> SharedState
-    decreases 0nat,
-{
-    // Build the input arrays from state buffers
+) -> SharedState {
     let inputs = Seq::new(input_bufs.len(), |i: int| state.buffers[input_bufs[i] as int]);
-
-    // Apply each output sequentially (order doesn't matter due to scatter injectivity —
-    // each output writes to a different buffer or non-overlapping positions)
-    eval_map_outputs(spec, &inputs, output_bufs, state, 0)
+    eval_map_outputs(spec, inputs, output_bufs, state, 0)
 }
 
-/// Apply Map outputs one at a time, threading state through.
+/// Apply each output of a Map, sequentially.
 pub open spec fn eval_map_outputs(
     spec: &KernelSpec,
-    inputs: &Seq<Seq<int>>,
+    inputs: Seq<Seq<int>>,
     output_bufs: Seq<nat>,
     state: SharedState,
     out_idx: nat,
@@ -209,30 +175,17 @@ pub open spec fn eval_map_outputs(
     if out_idx >= spec.outputs.len() {
         state
     } else {
-        let new_state = eval_map_single_output(
-            spec, inputs, output_bufs[out_idx as int], out_idx, state,
+        let new_state = eval_map_threads(
+            spec, inputs, output_bufs[out_idx as int], out_idx, state, 0,
         );
         eval_map_outputs(spec, inputs, output_bufs, new_state, out_idx + 1)
     }
 }
 
-/// Apply a single output of a Map across all threads.
-pub open spec fn eval_map_single_output(
-    spec: &KernelSpec,
-    inputs: &Seq<Seq<int>>,
-    out_buf: nat,
-    out_idx: nat,
-    state: SharedState,
-) -> SharedState
-    decreases state.workgroup_size,
-{
-    eval_map_threads(spec, inputs, out_buf, out_idx, state, 0)
-}
-
 /// Apply a single output for threads [tid, workgroup_size).
 pub open spec fn eval_map_threads(
     spec: &KernelSpec,
-    inputs: &Seq<Seq<int>>,
+    inputs: Seq<Seq<int>>,
     out_buf: nat,
     out_idx: nat,
     state: SharedState,
@@ -244,10 +197,10 @@ pub open spec fn eval_map_threads(
         state
     } else {
         let env = thread_env_1d(tid);
-        let guard_val = arith_eval_with_arrays(&spec.guard, env, *inputs);
+        let guard_val = arith_eval_with_arrays(&spec.guard, env, inputs);
         let new_state = if guard_val != 0 {
             let (scatter_idx, compute_val) = eval_output(
-                &spec.outputs[out_idx as int], env, *inputs,
+                &spec.outputs[out_idx as int], env, inputs,
             );
             state.write(out_buf, scatter_idx as nat, compute_val)
         } else {
@@ -257,22 +210,9 @@ pub open spec fn eval_map_threads(
     }
 }
 
-/// Apply a Scan (inclusive prefix sum) to a buffer in the shared state.
-///
-/// Replaces buffer contents with the inclusive prefix sum.
-/// Uses the algebraic spec from scan.rs: result[i] = Σ_{j=0}^{i} buffer[j].
-pub open spec fn eval_scan(
-    buffer: nat,
-    state: SharedState,
-) -> SharedState
-    recommends buffer < state.num_buffers(),
-{
-    let data = state.buffers[buffer as int];
-    let scanned = Seq::new(data.len(), |i: int|
-        sum_range(data, 0, i + 1)
-    );
-    state.set_buffer(buffer, scanned)
-}
+// ══════════════════════════════════════════════════════════════
+// Scan evaluation (not recursive)
+// ══════════════════════════════════════════════════════════════
 
 /// Sum of data[lo..hi).
 pub open spec fn sum_range(data: Seq<int>, lo: int, hi: int) -> int
@@ -282,11 +222,29 @@ pub open spec fn sum_range(data: Seq<int>, lo: int, hi: int) -> int
     else { sum_range(data, lo, hi - 1) + data[hi - 1] }
 }
 
-/// Evaluate a full Stage tree, producing the final SharedState.
+/// Apply inclusive prefix sum to a buffer.
+pub open spec fn eval_scan(buffer: nat, state: SharedState) -> SharedState
+    recommends buffer < state.num_buffers(),
+{
+    let data = state.buffers[buffer as int];
+    let scanned = Seq::new(data.len(), |i: int| sum_range(data, 0, i + 1));
+    state.set_buffer(buffer, scanned)
+}
+
+// ══════════════════════════════════════════════════════════════
+// Stage evaluation — mutual recursion group
+//
+// staged_eval + eval_loop are mutually recursive.
+// Decreases: (Stage, nat). Follows arith_eval/reduce_sum pattern.
+// Binary Seq means both children are structural sub-terms.
+// ══════════════════════════════════════════════════════════════
+
+/// Evaluate a Stage tree, producing the final SharedState.
 pub open spec fn staged_eval(stage: &Stage, state: SharedState) -> SharedState
-    decreases stage,
+    decreases stage, 0nat,
 {
     match stage {
+        Stage::Noop => state,
         Stage::Map { spec, input_bufs, output_bufs } => {
             eval_map(spec, *input_bufs, *output_bufs, state)
         },
@@ -294,35 +252,27 @@ pub open spec fn staged_eval(stage: &Stage, state: SharedState) -> SharedState
             eval_scan(*buffer, state)
         },
         Stage::Barrier { scope, post } => {
-            // Barrier is a no-op on state — it just asserts the postcondition holds.
-            // The actual synchronization is a hardware concern; at the spec level,
-            // our sequential evaluation already ensures writes are ordered.
+            // Barrier is a no-op on state at the spec level.
+            // Sequential evaluation already ensures write ordering.
             state
         },
-        Stage::Seq { stages } => {
-            eval_seq(stages, state, 0)
+        Stage::Seq { first, then } => {
+            // Both *first and *then are structural sub-terms of Seq.
+            let mid = staged_eval(&**first, state);
+            staged_eval(&**then, mid)
         },
         Stage::Loop { bound, body, invariant } => {
-            eval_loop(&*body, state, *bound, 0)
+            eval_loop(&**body, state, *bound, 0)
         },
     }
 }
 
-/// Evaluate a sequence of stages left-to-right.
-pub open spec fn eval_seq(stages: &Seq<Stage>, state: SharedState, idx: nat) -> SharedState
-    decreases stages.len() - idx,
-{
-    if idx >= stages.len() {
-        state
-    } else {
-        let new_state = staged_eval(&stages[idx as int], state);
-        eval_seq(stages, new_state, idx + 1)
-    }
-}
-
-/// Evaluate a loop body `bound` times.
-pub open spec fn eval_loop(body: &Stage, state: SharedState, bound: nat, iter: nat) -> SharedState
-    decreases bound - iter,
+/// Evaluate a loop body `bound - iter` more times.
+/// `body` is the sub-term from Stage::Loop — structurally smaller than the Loop.
+pub open spec fn eval_loop(
+    body: &Stage, state: SharedState, bound: nat, iter: nat,
+) -> SharedState
+    decreases body, bound - iter,
 {
     if iter >= bound {
         state
@@ -336,9 +286,7 @@ pub open spec fn eval_loop(body: &Stage, state: SharedState, bound: nat, iter: n
 // Race-freedom predicates
 // ══════════════════════════════════════════════════════════════
 
-/// A Map stage is race-free if its scatter is injective under its guard.
-/// This is the per-output scatter_injective predicate from kernel.rs,
-/// applied to all outputs.
+/// A Map is race-free if scatter is injective under guard for all outputs.
 pub open spec fn map_race_free(
     spec: &KernelSpec,
     input_bufs: Seq<nat>,
@@ -359,17 +307,8 @@ pub open spec fn map_race_free(
         )
 }
 
-/// Two adjacent Maps (without a barrier between them) are race-free if:
-/// 1. Each Map individually has injective scatter (within-Map race freedom)
-/// 2. They write to disjoint output buffers (cross-Map race freedom)
-///
-/// Condition 2 is sufficient because if they write to different buffers,
-/// no thread in Map B can conflict with any thread in Map A.
-/// If they share a buffer, a Barrier is needed between them.
-pub open spec fn adjacent_maps_race_free(
-    bufs_a: Seq<nat>,
-    bufs_b: Seq<nat>,
-) -> bool {
+/// Two Maps are cross-race-free if they write to disjoint output buffers.
+pub open spec fn maps_write_disjoint(bufs_a: Seq<nat>, bufs_b: Seq<nat>) -> bool {
     forall|i: int, j: int|
         0 <= i < bufs_a.len() && 0 <= j < bufs_b.len()
         ==> bufs_a[i] != bufs_b[j]
@@ -379,32 +318,57 @@ pub open spec fn adjacent_maps_race_free(
 // Basic properties
 // ══════════════════════════════════════════════════════════════
 
-/// Evaluating an empty sequence is the identity.
-pub proof fn lemma_eval_seq_empty(state: SharedState)
-    ensures eval_seq(&seq![], state, 0) == state,
+/// Noop is identity.
+pub proof fn lemma_noop(state: SharedState)
+    ensures staged_eval(&Stage::Noop, state) == state,
 {}
 
-/// Evaluating a singleton sequence equals evaluating the stage.
-pub proof fn lemma_eval_seq_single(stage: Stage, state: SharedState)
-    ensures eval_seq(&seq![stage], state, 0) == staged_eval(&stage, state),
-{}
-
-/// A zero-iteration loop is the identity.
-pub proof fn lemma_eval_loop_zero(body: Stage, state: SharedState)
-    ensures eval_loop(&body, state, 0, 0) == state,
-{}
-
-/// A barrier is a no-op on state.
-pub proof fn lemma_barrier_noop(scope: BarrierScope, post: spec_fn(SharedState) -> bool, state: SharedState)
+/// Barrier is identity on state.
+pub proof fn lemma_barrier_noop(
+    scope: BarrierScope, post: spec_fn(SharedState) -> bool, state: SharedState,
+)
     ensures staged_eval(&Stage::Barrier { scope, post }, state) == state,
 {}
 
-/// Loop unrolling: one iteration peels off.
-pub proof fn lemma_eval_loop_step(body: Stage, state: SharedState, bound: nat, iter: nat)
+/// Zero-iteration loop is identity.
+pub proof fn lemma_loop_zero(body: Stage, inv: spec_fn(SharedState, nat) -> bool, state: SharedState)
+    ensures staged_eval(&Stage::Loop { bound: 0, body: Box::new(body), invariant: inv }, state) == state,
+{
+    let stage = Stage::Loop { bound: 0, body: Box::new(body), invariant: inv };
+    // Help Z3 see through the match + Box
+    assert(staged_eval(&stage, state) == eval_loop(&body, state, 0, 0));
+}
+
+/// Seq is composition: eval(Seq(a, b), s) == eval(b, eval(a, s)).
+pub proof fn lemma_seq_compose(a: Stage, b: Stage, state: SharedState)
+    ensures
+        staged_eval(&Stage::Seq { first: Box::new(a), then: Box::new(b) }, state)
+            == staged_eval(&b, staged_eval(&a, state)),
+{}
+
+/// Loop step: one iteration peels off.
+pub proof fn lemma_loop_step(body: &Stage, state: SharedState, bound: nat, iter: nat)
     requires iter < bound,
     ensures
-        eval_loop(&body, state, bound, iter)
-            == eval_loop(&body, staged_eval(&body, state), bound, iter + 1),
+        eval_loop(body, state, bound, iter)
+            == eval_loop(body, staged_eval(body, state), bound, iter + 1),
 {}
+
+/// eval_loop at bound == iter is identity.
+pub proof fn lemma_loop_done(body: &Stage, state: SharedState, n: nat)
+    ensures eval_loop(body, state, n, n) == state,
+{}
+
+/// Single-iteration loop equals one body evaluation.
+pub proof fn lemma_loop_one(body: Stage, inv: spec_fn(SharedState, nat) -> bool, state: SharedState)
+    ensures
+        staged_eval(&Stage::Loop { bound: 1, body: Box::new(body), invariant: inv }, state)
+            == staged_eval(&body, state),
+{
+    let stage = Stage::Loop { bound: 1, body: Box::new(body), invariant: inv };
+    assert(staged_eval(&stage, state) == eval_loop(&body, state, 1, 0));
+    assert(eval_loop(&body, state, 1, 0)
+        == eval_loop(&body, staged_eval(&body, state), 1, 1));
+}
 
 } // verus!

@@ -23,3 +23,4 @@ pub mod scan_multiblock_lemmas;
 pub mod radix_sort_lemmas;
 pub mod segmented_scan_lemmas;
 pub mod contraction_lemmas;
+pub mod stage_lemmas;
