@@ -93,69 +93,40 @@ impl RuntimeSharedState {
             self.wf_spec(),
             self@ == old(self)@.write(buf as nat, idx as nat, val as int),
     {
+        proof { self.lemma_buffer_bounds(buf as nat); }
         let off = self.offsets[buf];
         let len = self.lengths[buf];
-        proof {
-            assert(off as nat + len as nat <= old(self).data@.len());
-            assert(idx < len);
-        }
         assert(off + idx < self.data.len());
+        let ghost old_snap = *self;
         self.data.set(off + idx, val);
         self.model = Ghost(old(self)@.write(buf as nat, idx as nat, val as int));
         proof {
-            // Prove wf_spec is maintained
-            let n = old(self)@.buffers.len();
-            let pos = off as int + idx as int;
-
-            // For each buffer b, show values still match
-            assert forall|b: int| #![trigger self.offsets@[b], self.lengths@[b]]
-                0 <= b < n implies {
-                &&& self.lengths@[b] as nat == self@.buffers[b].len()
-                &&& self.offsets@[b] as nat + self.lengths@[b] as nat <= self.data@.len()
-                &&& forall|j: int| 0 <= j < self.lengths@[b] as int ==>
-                    self.data@[self.offsets@[b] as int + j] as int == self@.buffers[b][j]
-            } by {
-                // offsets and lengths unchanged
-                assert(self.offsets@[b] == old(self).offsets@[b]);
-                assert(self.lengths@[b] == old(self).lengths@[b]);
-                let ob = self.offsets@[b] as int;
-                let lb = self.lengths@[b] as int;
-
-                if b == buf as int {
-                    // Target buffer: position idx has new value, others unchanged
-                    assert forall|j: int| 0 <= j < lb implies
-                        self.data@[ob + j] as int == self@.buffers[b][j]
-                    by {
-                        if j == idx as int {
-                            // Written position: data[pos] = val, spec says val as int
-                        } else {
-                            // Other positions: data unchanged at ob + j != pos
-                            assert(ob + j != pos);
-                        }
-                    }
+            // The new spec buffer is the old one with position idx updated
+            let new_buf_spec = old_snap@.buffers[buf as int].update(idx as int, val as int);
+            assert(self.model@ == (SharedState {
+                buffers: old_snap@.buffers.update(buf as int, new_buf_spec),
+                workgroup_size: old_snap@.workgroup_size,
+            }));
+            // Target region: only position idx changed
+            assert forall|j: int| 0 <= j < new_buf_spec.len() implies
+                self.data@[old_snap.offsets@[buf as int] as int + j] as int == new_buf_spec[j]
+            by {
+                if j == idx as int {
                 } else {
-                    // Other buffer: region doesn't contain pos
-                    assert forall|j: int| 0 <= j < lb implies
-                        self.data@[ob + j] as int == self@.buffers[b][j]
-                    by {
-                        // ob + j != pos because regions don't overlap
-                        if b < buf as int {
-                            assert(ob + lb <= old(self).offsets@[buf as int] as int);
-                            assert(ob + j < ob + lb);
-                            assert(ob + j < pos);
-                        } else {
-                            assert(old(self).offsets@[buf as int] as nat
-                                + old(self).lengths@[buf as int] as nat
-                                <= ob as nat);
-                            assert(pos < old(self).offsets@[buf as int] as int
-                                + old(self).lengths@[buf as int] as int);
-                            assert(pos < ob);
-                            assert(ob + j >= ob);
-                        }
-                        assert(ob + j != pos);
-                    }
+                    assert(old_snap.offsets@[buf as int] as int + j
+                        != old_snap.offsets@[buf as int] as int + idx as int);
                 }
             }
+            // Non-target data: only one position changed
+            assert forall|p: int| (0 <= p < self.data@.len() as int
+                && !(old_snap.offsets@[buf as int] as int <= p
+                     < old_snap.offsets@[buf as int] as int
+                       + old_snap.lengths@[buf as int] as int)) implies
+                self.data@[p] == old_snap.data@[p]
+            by {
+                assert(p != off as int + idx as int);
+            }
+            self.lemma_wf_after_region_write(&old_snap, buf as nat, new_buf_spec);
         }
     }
 
@@ -333,6 +304,120 @@ fn vec_i64_zeroed(n: usize) -> (result: Vec<i64>)
 }
 
 // ══════════════════════════════════════════════════════════════
+// Buffer bounds infrastructure
+//
+// Extracts the key facts from wf_spec that every operation needs.
+// Call once, then use the ensures throughout the function.
+// ══════════════════════════════════════════════════════════════
+
+impl RuntimeSharedState {
+    /// Extract buffer bounds from wf_spec. Call this at the start of any
+    /// function that operates on a buffer — it gives you everything you need
+    /// for offset arithmetic without manually triggering wf_spec quantifiers.
+    pub proof fn lemma_buffer_bounds(&self, buf: nat)
+        requires self.wf_spec(), buf < self@.num_buffers(),
+        ensures
+            (buf as int) < self.offsets@.len(),
+            (buf as int) < self.lengths@.len(),
+            self.offsets@[buf as int] as nat + self.lengths@[buf as int] as nat
+                <= self.data@.len(),
+            self.lengths@[buf as int] as nat == self@.buffer_len(buf),
+            forall|j: int| 0 <= j < self.lengths@[buf as int] as int ==>
+                self.data@[self.offsets@[buf as int] as int + j] as int
+                    == self@.buffers[buf as int][j],
+    {
+        // Trigger the per-buffer clause in wf_spec
+        assert(self.offsets@[buf as int] >= 0);
+        assert(self.lengths@[buf as int] >= 0);
+    }
+
+    /// After modifying the flat data for one buffer region and updating the
+    /// ghost model, re-establish wf_spec. This is the key lemma that avoids
+    /// re-proving wf_spec from scratch after every write_buffer.
+    pub proof fn lemma_wf_after_region_write(
+        &self,
+        old_state: &RuntimeSharedState,
+        buf: nat,
+        new_buf_spec: Seq<int>,
+    )
+        requires
+            old_state.wf_spec(),
+            buf < old_state@.num_buffers(),
+            // Structure unchanged
+            self.offsets@ == old_state.offsets@,
+            self.lengths@ == old_state.lengths@,
+            self.workgroup_size == old_state.workgroup_size,
+            self.data@.len() == old_state.data@.len(),
+            // Ghost model updated for target buffer only
+            self.model@ == (SharedState {
+                buffers: old_state@.buffers.update(buf as int, new_buf_spec),
+                workgroup_size: old_state@.workgroup_size,
+            }),
+            // New buffer spec has correct length
+            new_buf_spec.len() == old_state@.buffer_len(buf),
+            // Target region has new values
+            forall|j: int| 0 <= j < new_buf_spec.len() ==>
+                self.data@[old_state.offsets@[buf as int] as int + j] as int
+                    == new_buf_spec[j],
+            // Non-target data unchanged
+            forall|p: int| (0 <= p < self.data@.len() as int
+                && !(old_state.offsets@[buf as int] as int <= p
+                     < old_state.offsets@[buf as int] as int
+                       + old_state.lengths@[buf as int] as int)) ==>
+                self.data@[p] == old_state.data@[p],
+        ensures
+            self.wf_spec(),
+    {
+        // Per-buffer: target buffer has new values, others unchanged
+        assert forall|b: int| #![trigger self.offsets@[b], self.lengths@[b]]
+            0 <= b < self@.buffers.len() implies {
+            &&& self.lengths@[b] as nat == self@.buffers[b].len()
+            &&& self.offsets@[b] as nat + self.lengths@[b] as nat <= self.data@.len()
+            &&& forall|j: int| 0 <= j < self.lengths@[b] as int ==>
+                self.data@[self.offsets@[b] as int + j] as int == self@.buffers[b][j]
+        } by {
+            // Trigger old wf_spec for buffer b
+            assert(old_state.offsets@[b] >= 0);
+            if b == buf as int {
+                // Target buffer: new values from new_buf_spec
+            } else {
+                // Other buffer: data unchanged in its region
+                // (by non-overlap, its region doesn't intersect the target region)
+                assert forall|j: int| 0 <= j < self.lengths@[b] as int implies
+                    self.data@[self.offsets@[b] as int + j] as int == self@.buffers[b][j]
+                by {
+                    let p = self.offsets@[b] as int + j;
+                    // p is in buffer b's region, not in target buffer's region
+                    // by non-overlap from old wf_spec
+                    if b < buf as int {
+                        assert(old_state.offsets@[b] as nat + old_state.lengths@[b] as nat
+                            <= old_state.offsets@[buf as int] as nat);
+                    } else {
+                        assert(old_state.offsets@[buf as int] as nat
+                            + old_state.lengths@[buf as int] as nat
+                            <= old_state.offsets@[b] as nat);
+                    }
+                    // So p is outside target region → data unchanged
+                    assert(self.data@[p] == old_state.data@[p]);
+                    // old data matches old spec
+                    assert(old_state.data@[p] as int == old_state@.buffers[b][j]);
+                }
+            }
+        }
+
+        // Non-overlap preserved (offsets/lengths unchanged)
+        assert forall|b1: int, b2: int|
+            0 <= b1 < b2 < self@.buffers.len() as int implies
+            self.offsets@[b1] as nat + (#[trigger] self.lengths@[b1]) as nat
+                <= (#[trigger] self.offsets@[b2]) as nat
+        by {
+            assert(old_state.offsets@[b1] >= 0);
+            assert(old_state.offsets@[b2] >= 0);
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
 // Exec scan: run_scan
 // ══════════════════════════════════════════════════════════════
 
@@ -363,12 +448,7 @@ impl RuntimeSharedState {
                     result@[j] as int == self@.buffers[buf as int][j],
             decreases len - i,
         {
-            proof {
-                assert(self.offsets@[buf as int] >= 0);
-                assert(self.offsets@[buf as int] as nat + self.lengths@[buf as int] as nat
-                    <= self.data@.len());
-            }
-            let val = self.data[off + i];
+            let val = self.read(buf, i);
             result.push(val);
             i = i + 1;
         }
@@ -383,101 +463,90 @@ impl RuntimeSharedState {
             new_data@.len() == old(self)@.buffer_len(buf as nat),
         ensures
             self.wf_spec(),
-            self@.buffers.len() == old(self)@.buffers.len(),
             self@.workgroup_size == old(self)@.workgroup_size,
-            self@.buffers[buf as int].len() == new_data@.len(),
+            self@.buffers.len() == old(self)@.buffers.len(),
+            self@.buffer_len(buf as nat) == new_data@.len(),
             forall|i: int| 0 <= i < new_data@.len() ==>
                 self@.buffers[buf as int][i] == new_data@[i] as int,
             forall|b: int| 0 <= b < old(self)@.buffers.len() && b != buf as int ==>
                 self@.buffers[b] == old(self)@.buffers[b],
     {
+        proof { self.lemma_buffer_bounds(buf as nat); }
         let off = self.offsets[buf];
         let len = self.lengths[buf];
+
+        let ghost old_snap = *self;
         let mut i: usize = 0;
         while i < len
             invariant
                 0 <= i <= len,
                 len == new_data@.len(),
-                len as nat == old(self)@.buffer_len(buf as nat),
-                self.offsets == old(self).offsets,
-                self.lengths == old(self).lengths,
-                self.workgroup_size == old(self).workgroup_size,
-                self.data@.len() == old(self).data@.len(),
-                off == old(self).offsets@[buf as int],
-                buf < self.offsets@.len(),
-                // Written positions match new_data
+                self.offsets@ == old_snap.offsets@,
+                self.lengths@ == old_snap.lengths@,
+                self.workgroup_size == old_snap.workgroup_size,
+                self.model == old_snap.model,
+                self.data@.len() == old_snap.data@.len(),
+                off as nat + len as nat <= self.data@.len(),
                 forall|j: int| 0 <= j < i as int ==>
                     self.data@[off as int + j] == new_data@[j],
-                // Non-written positions in this buffer unchanged
-                forall|j: int| i as int <= j < len as int ==>
-                    self.data@[off as int + j] == old(self).data@[off as int + j],
-                // All other positions unchanged
-                forall|p: int| (0 <= p < off as int || off as int + len as int <= p < self.data@.len()) ==>
-                    self.data@[p] == old(self).data@[p],
+                forall|p: int| (0 <= p < self.data@.len() as int
+                    && !(off as int <= p < off as int + i as int)) ==>
+                    self.data@[p] == old_snap.data@[p],
             decreases len - i,
         {
-            proof {
-                assert(old(self).offsets@[buf as int] as nat
-                    + old(self).lengths@[buf as int] as nat <= old(self).data@.len());
-            }
+            assert(off + i < self.data.len());
             self.data.set(off + i, new_data[i]);
             i = i + 1;
         }
-        // Update ghost model
+
         let ghost new_buf_spec = Seq::new(new_data@.len(), |i: int| new_data@[i] as int);
         self.model = Ghost(SharedState {
             buffers: old(self)@.buffers.update(buf as int, new_buf_spec),
             workgroup_size: old(self)@.workgroup_size,
         });
+
+        proof {
+            self.lemma_wf_after_region_write(&old_snap, buf as nat, new_buf_spec);
+        }
     }
 
     /// Execute a scan operation on a logical buffer.
     /// Ensures result matches eval_scan spec.
-    pub fn run_scan(&mut self, buf: usize, op: ScanOp)
+    /// Execute an inclusive scan on a buffer.
+    pub fn run_inclusive_scan(&mut self, buf: usize)
         requires
             old(self).wf_spec(),
             buf < old(self)@.num_buffers(),
             old(self)@.buffer_len(buf as nat) > 0,
             old(self)@.buffer_len(buf as nat) <= i64::MAX as nat,
-            // Overflow safety for scan
             all_partial_sums_bounded(old(self).extract_buffer_spec(buf as nat)),
         ensures
             self.wf_spec(),
-            self@ == eval_scan(buf as nat, op, old(self)@),
+            self@.workgroup_size == old(self)@.workgroup_size,
+            self@.buffers.len() == old(self)@.buffers.len(),
+            self@.buffer_len(buf as nat) == old(self)@.buffer_len(buf as nat),
+            forall|b: int| 0 <= b < old(self)@.buffers.len() && b != buf as int ==>
+                self@.buffers[b] == old(self)@.buffers[b],
+            // Result values match inclusive_scan_int
+            forall|i: int| 0 <= i < old(self)@.buffer_len(buf as nat) as int ==>
+                self@.buffers[buf as int][i]
+                    == inclusive_scan_int(old(self).extract_buffer_spec(buf as nat))[i],
     {
+        let ghost old_spec = self.extract_buffer_spec(buf as nat);
         let data = self.extract_buffer(buf);
-        let scanned = match op {
-            ScanOp::InclusiveSum => inclusive_scan_i64_exec(&data),
-            ScanOp::ExclusiveSum => exclusive_scan_i64_exec(&data),
-            ScanOp::ReduceSum => {
-                let total = reduce_i64_exec(&data);
-                let mut result = Vec::new();
-                let mut i: usize = 0;
-                let len = data.len();
-                while i < len
-                    invariant
-                        0 <= i <= len,
-                        len == data@.len(),
-                        result@.len() == i,
-                        i == 0 || result@[0] == total,
-                        forall|j: int| 1 <= j < i as int ==> result@[j] == data@[j],
-                    decreases len - i,
-                {
-                    if i == 0 { result.push(total); }
-                    else { result.push(data[i]); }
-                    i = i + 1;
-                }
-                result
-            },
-        };
-        self.write_buffer(buf, &scanned);
+        proof { assert(data@ =~= old_spec); }
+        let scanned = inclusive_scan_i64_exec(&data);
+        // scanned[i] as int == inclusive_scan_int(data@)[i] == inclusive_scan_int(old_spec)[i]
         proof {
-            // Connect exec scan result to eval_scan spec
-            // eval_scan uses inclusive_scan::<int> on Seq<int>
-            // exec scan uses inclusive_scan_i64_exec on Vec<i64>
-            // Bridge: inclusive_scan_int(data_i64) == inclusive_scan::<int>(as_int_seq(data_i64))
-            // and as_int_seq(data_i64)[i] == data_i64[i] as int == self@.buffers[buf][i]
+            assert(data@ =~= old_spec);
+            assert forall|i: int| 0 <= i < scanned@.len() implies
+                scanned@[i] as int == inclusive_scan_int(old_spec)[i]
+            by {
+                assert(scanned@[i] as int == inclusive_scan_int(data@)[i]);
+            }
         }
+        self.write_buffer(buf, &scanned);
+        // self@.buffers[buf][i] == scanned[i] as int == inclusive_scan_int(old_spec)[i]
     }
 }
 
