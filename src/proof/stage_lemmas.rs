@@ -997,4 +997,100 @@ pub proof fn lemma_identity_scatter_in_bounds(
 {
 }
 
+// ══════════════════════════════════════════════════════════════
+// 2D thread environment bridge
+// ══════════════════════════════════════════════════════════════
+
+/// thread_env_for_dim(Dim1D, t) == thread_env_1d(t).
+/// This allows 1D determinism proofs to apply to Dim1D maps.
+pub proof fn lemma_dim1d_env_equals_1d(t: nat)
+    ensures thread_env_for_dim(&ThreadDim::Dim1D, t) == thread_env_1d(t),
+{
+}
+
+/// thread_env_for_dim(Dim2D, t) == thread_env_2d(t % width, t / width).
+pub proof fn lemma_dim2d_env(t: nat, width: nat, height: nat)
+    requires width > 0,
+    ensures thread_env_for_dim(
+        &ThreadDim::Dim2D { width, height }, t)
+        == thread_env_2d(t % width, t / width),
+{
+}
+
+// ══════════════════════════════════════════════════════════════
+// Loop fusion: two consecutive loops = one loop with summed bounds
+// ══════════════════════════════════════════════════════════════
+
+/// Two consecutive eval_loops with the same body fuse into one.
+/// eval_loop(body, eval_loop(body, state, a, 0), b, 0)
+///   == eval_loop(body, state, a + b, 0)
+pub proof fn lemma_loop_fusion(
+    body: &Stage, state: SharedState, a: nat, b: nat,
+)
+    ensures
+        eval_loop(body, eval_loop(body, state, a, 0), b, 0)
+            == eval_loop(body, state, a + b, 0),
+    decreases a,
+{
+    if a == 0 {
+    } else {
+        let mid = staged_eval(body, state);
+        // Peel first iteration from both loops
+        assert(eval_loop(body, state, a, 0) == eval_loop(body, mid, a, 1));
+        assert(eval_loop(body, state, a + b, 0) == eval_loop(body, mid, a + b, 1));
+        // IH on mid with a-1, b
+        lemma_loop_fusion(body, mid, (a - 1) as nat, b);
+        // IH gives: eval_loop(body, eval_loop(body, mid, a-1, 0), b, 0)
+        //         == eval_loop(body, mid, a-1+b, 0)
+        assert((a - 1) as nat + b == a + b - 1);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// General seq_stages correctness (inductive)
+// ══════════════════════════════════════════════════════════════
+
+/// seq_stages of an empty list is Noop (identity).
+pub proof fn lemma_seq_stages_empty(state: SharedState)
+    ensures staged_eval(&seq_stages(Seq::<Stage>::empty()), state) == state,
+{
+}
+
+/// seq_stages distributes: evaluating seq_stages([a] + rest) =
+/// evaluating a, then evaluating seq_stages(rest).
+pub proof fn lemma_seq_stages_cons(first: Stage, rest: Seq<Stage>, state: SharedState)
+    requires rest.len() > 0,
+    ensures
+        staged_eval(&seq_stages(seq![first].add(rest)), state)
+            == staged_eval(&seq_stages(rest), staged_eval(&first, state)),
+{
+    let full = seq![first].add(rest);
+    assert(full.len() >= 2);
+    assert(full[0] == first);
+    assert(full.skip(1) =~= rest);
+    let inner = seq_stages(rest);
+    lemma_seq_compose(first, inner, state);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Map with zero outputs is identity
+// ══════════════════════════════════════════════════════════════
+
+/// A Map with no outputs doesn't change the state.
+pub proof fn lemma_map_zero_outputs(
+    spec: &KernelSpec,
+    input_bufs: Seq<nat>,
+    output_bufs: Seq<nat>,
+    state: SharedState,
+    thread_dim: &ThreadDim,
+)
+    requires
+        spec.outputs.len() == 0,
+        forall|i: int| 0 <= i < input_bufs.len() ==>
+            (input_bufs[i] as int) < state.buffers.len(),
+    ensures
+        eval_map(spec, input_bufs, output_bufs, state, thread_dim) == state,
+{
+}
+
 } // verus!
