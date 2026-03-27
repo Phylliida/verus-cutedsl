@@ -703,10 +703,21 @@ proof fn lemma_map_determinism_at(
     let ws = state.workgroup_size;
     let old_buf = state.buffers[out_buf as int];
 
+    // Bridge: thread_writes_to(spec, inputs, out_idx, t, j) is the same predicate
+    // as the exists in map_output_declarative, just named.
+    let decl_val = map_output_declarative(
+        spec, out_idx, inputs, old_buf, ws)[j as int];
+
     if exists|t: nat| t < ws && thread_writes_to(spec, inputs, out_idx, t, j as int) {
         // Some thread writes to j. Pick it.
         let writer = choose|t: nat| t < ws
             && thread_writes_to(spec, inputs, out_idx, t, j as int);
+
+        // Help Z3: writer satisfies the raw exists in map_output_declarative
+        assert(arith_eval_with_arrays(&spec.guard, thread_env_1d(writer), inputs) != 0);
+        assert(arith_eval_with_arrays(
+            &spec.outputs[out_idx as int].scatter,
+            thread_env_1d(writer), inputs) == j as int);
 
         // Prove uniqueness: no other thread writes to j
         assert forall|t: nat|
@@ -727,24 +738,33 @@ proof fn lemma_map_determinism_at(
         // eval_map_threads gives compute(writer) at position j
         lemma_eval_map_threads_writer_wins(
             spec, inputs, out_buf, out_idx, state, 0, writer, j);
+        let compute_w = arith_eval_with_arrays(
+            &spec.outputs[out_idx as int].compute,
+            thread_env_1d(writer), inputs);
+        assert(eval_map_threads(spec, inputs, out_buf, out_idx, state, 0)
+            .read(out_buf, j) == compute_w);
 
-        // map_output_declarative: the exists branch fires, choose picks a satisfier.
-        // By uniqueness, any satisfier gives the same compute value as writer.
+        // map_output_declarative: the choose picks some satisfier.
+        // Any satisfier must be writer (by uniqueness), so compute value matches.
         let decl_t = choose|t: nat| t < ws
             && arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
             && arith_eval_with_arrays(&spec.outputs[out_idx as int].scatter,
                 thread_env_1d(t), inputs) == j as int;
-        // decl_t satisfies thread_writes_to, so decl_t == writer
         assert(thread_writes_to(spec, inputs, out_idx, decl_t, j as int));
         if decl_t != writer {
             assert(!thread_writes_to(spec, inputs, out_idx, decl_t, j as int));
         }
         assert(decl_t == writer);
+        assert(decl_val == compute_w);
     } else {
-        // No thread writes to j → position unchanged
+        // No thread writes to j
         assert(no_writer_in_range(spec, inputs, out_idx, j as int, 0, ws));
         lemma_eval_map_threads_preserves_non_target(
             spec, inputs, out_buf, out_idx, state, 0, j);
+        // Both sides give old_buf[j]
+        assert(eval_map_threads(spec, inputs, out_buf, out_idx, state, 0)
+            .read(out_buf, j) == old_buf[j as int]);
+        assert(decl_val == old_buf[j as int]);
     }
 }
 
