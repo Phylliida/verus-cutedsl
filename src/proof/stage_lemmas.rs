@@ -1011,4 +1011,106 @@ pub proof fn lemma_map_determinism(
     }
 }
 
+// ══════════════════════════════════════════════════════════════
+// eval_scan frame conditions
+// ══════════════════════════════════════════════════════════════
+
+/// eval_scan preserves other buffers.
+pub proof fn lemma_eval_scan_preserves_other_buf(
+    buffer: nat, state: SharedState, other_buf: nat,
+)
+    requires
+        buffer < state.num_buffers(),
+        other_buf < state.num_buffers(),
+        buffer != other_buf,
+    ensures
+        eval_scan(buffer, state).buffers[other_buf as int]
+            == state.buffers[other_buf as int],
+{
+    lemma_set_buffer_other(state, buffer,
+        Seq::new(state.buffers[buffer as int].len(), |i: int|
+            sum_range(state.buffers[buffer as int], 0, i + 1)),
+        other_buf);
+}
+
+/// eval_scan preserves workgroup_size.
+pub proof fn lemma_eval_scan_preserves_wg_size(buffer: nat, state: SharedState)
+    requires buffer < state.num_buffers(),
+    ensures eval_scan(buffer, state).workgroup_size == state.workgroup_size,
+{
+}
+
+/// eval_scan preserves num_buffers.
+pub proof fn lemma_eval_scan_preserves_num_bufs(buffer: nat, state: SharedState)
+    requires buffer < state.num_buffers(),
+    ensures eval_scan(buffer, state).num_buffers() == state.num_buffers(),
+{
+    lemma_set_buffer_preserves_num_buffers(state, buffer,
+        Seq::new(state.buffers[buffer as int].len(), |i: int|
+            sum_range(state.buffers[buffer as int], 0, i + 1)));
+}
+
+/// eval_scan preserves the length of the scanned buffer.
+pub proof fn lemma_eval_scan_preserves_buf_len(buffer: nat, state: SharedState)
+    requires buffer < state.num_buffers(),
+    ensures
+        eval_scan(buffer, state).buffer_len(buffer)
+            == state.buffer_len(buffer),
+{
+}
+
+// ══════════════════════════════════════════════════════════════
+// Identity scatter injectivity (generic — works for any kernel)
+// ══════════════════════════════════════════════════════════════
+
+/// A kernel where scatter = Var(0) for output `out_idx` is automatically
+/// scatter-injective. This is the most common pattern (thread i writes to position i).
+pub proof fn lemma_identity_scatter_injective(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    out_idx: nat,
+    workgroup_size: nat,
+)
+    requires
+        out_idx < spec.outputs.len(),
+        spec.outputs[out_idx as int].scatter == ArithExpr::Var(0),
+    ensures
+        all_scatter_injective(spec, inputs, out_idx, workgroup_size),
+{
+    assert forall|t1: nat, t2: nat|
+        t1 < workgroup_size && t2 < workgroup_size && t1 != t2
+    implies
+        scatter_injective(
+            &spec.outputs[out_idx as int], &spec.guard,
+            inputs, thread_env_1d(t1), thread_env_1d(t2))
+    by {
+        // scatter(t1) = Var(0) evaluated at env(t1) = t1
+        // scatter(t2) = Var(0) evaluated at env(t2) = t2
+        // If t1 != t2, then scatter(t1) != scatter(t2),
+        // so the implication in scatter_injective holds vacuously.
+    }
+}
+
+/// Var(0) scatter is always in bounds when n_pixels <= buffer_len.
+pub proof fn lemma_identity_scatter_in_bounds(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    out_idx: nat,
+    n_pixels: nat,
+    buf_len: nat,
+    workgroup_size: nat,
+)
+    requires
+        out_idx < spec.outputs.len(),
+        spec.outputs[out_idx as int].scatter == ArithExpr::Var(0),
+        n_pixels <= buf_len,
+        // Guard only activates threads < n_pixels
+        forall|t: nat| t < workgroup_size
+            && arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
+            ==> t < n_pixels,
+    ensures
+        scatter_in_bounds(spec, inputs, out_idx, buf_len, workgroup_size),
+{
+}
+
 } // verus!
