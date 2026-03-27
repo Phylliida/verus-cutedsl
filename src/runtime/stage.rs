@@ -171,6 +171,8 @@ impl RuntimeSharedState {
                 ==> result@.buffers[i][j] == 0,
     {
         let n = buffer_sizes.len();
+        let ghost sizes = buffer_sizes@;
+        let ghost total_bound = spec_total_size(sizes);
 
         // Compute offsets (consecutive)
         let mut total: usize = 0;
@@ -179,21 +181,21 @@ impl RuntimeSharedState {
         while i < n
             invariant
                 0 <= i <= n,
-                n == buffer_sizes@.len(),
+                n == sizes.len(),
+                sizes == buffer_sizes@,
+                total_bound == spec_total_size(sizes),
+                total_bound <= usize::MAX as nat,
                 offsets@.len() == i,
-                total as nat == spec_partial_sum(buffer_sizes@, i as nat),
-                total as nat <= usize::MAX as nat,
+                total as nat == spec_partial_sum(sizes, i as nat),
                 forall|k: int| 0 <= k < i as int ==>
-                    offsets@[k] as nat == spec_partial_sum(buffer_sizes@, k as nat),
+                    offsets@[k] as nat == spec_partial_sum(sizes, k as nat),
             decreases n - i,
         {
             offsets.push(total);
             proof {
-                lemma_partial_sum_step(buffer_sizes@, i as nat);
-                let ps_next = spec_partial_sum(buffer_sizes@, (i + 1) as nat);
-                assert(ps_next == total as nat + buffer_sizes@[i as int] as nat);
-                lemma_partial_sum_monotone(buffer_sizes@, (i + 1) as nat);
-                assert(ps_next <= spec_total_size(buffer_sizes@));
+                lemma_partial_sum_step(sizes, i as nat);
+                lemma_partial_sum_monotone(sizes, (i + 1) as nat);
+                assert(spec_partial_sum(sizes, (i + 1) as nat) <= total_bound);
             }
             total = total + buffer_sizes[i];
             i = i + 1;

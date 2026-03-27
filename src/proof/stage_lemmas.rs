@@ -376,15 +376,58 @@ pub proof fn lemma_write_preserves_workgroup_size(
 {
 }
 
-// (sum_range lemmas removed — eval_scan now uses inclusive_scan::<int> directly)
+/// set_buffer preserves workgroup_size.
+pub proof fn lemma_set_buffer_preserves_workgroup_size(
+    state: SharedState, buf: nat, data: Seq<int>,
+)
+    requires buf < state.num_buffers(),
+    ensures state.set_buffer(buf, data).workgroup_size == state.workgroup_size,
+{
+}
+
+// ══════════════════════════════════════════════════════════════
+// seq_stages correctness
+// ══════════════════════════════════════════════════════════════
+
+/// seq_stages of a single stage is that stage.
+pub proof fn lemma_seq_stages_single(s: Stage, state: SharedState)
+    ensures staged_eval(&seq_stages(seq![s]), state) == staged_eval(&s, state),
+{
+}
+
+/// seq_stages of two stages is Seq(a, b).
+pub proof fn lemma_seq_stages_two(a: Stage, b: Stage, state: SharedState)
+    ensures staged_eval(&seq_stages(seq![a, b]), state)
+        == staged_eval(&b, staged_eval(&a, state)),
+{
+    assert(seq![a, b].skip(1) =~= seq![b]);
+    assert(seq_stages(seq![b]) == b);
+    // Now: seq_stages(seq![a, b]) = Seq(a, b)
+    assert(seq_stages(seq![a, b]) == Stage::Seq {
+        first: Box::new(a), then: Box::new(b) });
+    lemma_seq_compose(a, b, state);
+}
+
+/// seq_stages of three stages composes left-to-right.
+pub proof fn lemma_seq_stages_three(a: Stage, b: Stage, c: Stage, state: SharedState)
+    ensures staged_eval(&seq_stages(seq![a, b, c]), state)
+        == staged_eval(&c, staged_eval(&b, staged_eval(&a, state))),
+{
+    // Help Z3 unfold seq_stages
+    assert(seq![a, b, c].skip(1) =~= seq![b, c]);
+    let bc = seq_stages(seq![b, c]);
+    lemma_seq_compose(a, bc, state);
+    lemma_seq_stages_two(b, c, staged_eval(&a, state));
+}
 
 // ══════════════════════════════════════════════════════════════
 // eval_map unfolding for two-output kernels
 // ══════════════════════════════════════════════════════════════
 
 /// For a two-output kernel, eval_map chains two set_buffer calls using
-/// map_output_declarative. The first output processes on the original state,
-/// the second on the result. Both use the same `inputs` (captured from initial state).
+/// map_output_declarative. Both use the same `inputs` (captured from initial state).
+/// Works for both distinct and same output buffers — the second output
+/// naturally sees the first output's writes in its `old_buf`.
 pub proof fn lemma_eval_map_two_outputs(
     spec: &KernelSpec,
     input_bufs: Seq<nat>,

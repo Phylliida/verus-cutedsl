@@ -14,7 +14,7 @@
 use vstd::prelude::*;
 use crate::arith_expr::*;
 use crate::kernel::*;
-use crate::scan::inclusive_scan;
+use crate::scan::{inclusive_scan, exclusive_scan, reduce};
 
 verus! {
 
@@ -85,6 +85,26 @@ pub enum BarrierScope {
 // are sub-terms of the Seq variant.
 // ══════════════════════════════════════════════════════════════
 
+/// Scan operation type.
+pub enum ScanOp {
+    /// Inclusive prefix sum: result[i] = data[0] + ... + data[i].
+    InclusiveSum,
+    /// Exclusive prefix sum: result[i] = data[0] + ... + data[i-1], result[0] = 0.
+    ExclusiveSum,
+    /// Reduction: replaces buffer[0] with sum of all elements.
+    /// Other positions are unspecified (implementation-defined).
+    ReduceSum,
+}
+
+/// Thread dispatch dimensionality.
+pub enum ThreadDim {
+    /// 1D dispatch: workgroup_size threads, env = [tid].
+    Dim1D,
+    /// 2D dispatch: width * height threads, env = [gid_x, gid_y].
+    /// workgroup_size = width * height.
+    Dim2D { width: nat, height: nat },
+}
+
 pub enum Stage {
     /// No-op: identity on shared state.
     Noop,
@@ -92,15 +112,18 @@ pub enum Stage {
     /// Parallel map using a verified KernelSpec.
     /// `input_bufs[i]` = SharedState buffer index for KernelSpec input array i.
     /// `output_bufs[i]` = SharedState buffer index for KernelSpec output i.
+    /// `thread_dim` controls the dispatch shape (1D or 2D).
     Map {
         spec: KernelSpec,
         input_bufs: Seq<nat>,
         output_bufs: Seq<nat>,
+        thread_dim: ThreadDim,
     },
 
-    /// Parallel inclusive prefix sum on a buffer.
+    /// Parallel scan/reduce on a buffer.
     Scan {
         buffer: nat,
+        op: ScanOp,
     },
 
     /// Explicit barrier with postcondition.
@@ -169,23 +192,46 @@ pub open spec fn map_output_declarative(
     inputs: Seq<Seq<int>>,
     old_buf: Seq<int>,
     workgroup_size: nat,
+    thread_dim: &ThreadDim,
 ) -> Seq<int> {
     Seq::new(old_buf.len(), |j: int|
         if exists|t: nat| t < workgroup_size
-            && arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
+            && arith_eval_with_arrays(&spec.guard, thread_env_for_dim(thread_dim, t), inputs) != 0
             && arith_eval_with_arrays(&spec.outputs[out_idx as int].scatter,
-                thread_env_1d(t), inputs) == j
+                thread_env_for_dim(thread_dim, t), inputs) == j
         {
             let t = choose|t: nat| t < workgroup_size
-                && arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
+                && arith_eval_with_arrays(&spec.guard, thread_env_for_dim(thread_dim, t), inputs) != 0
                 && arith_eval_with_arrays(&spec.outputs[out_idx as int].scatter,
-                    thread_env_1d(t), inputs) == j;
+                    thread_env_for_dim(thread_dim, t), inputs) == j;
             arith_eval_with_arrays(&spec.outputs[out_idx as int].compute,
-                thread_env_1d(t), inputs)
+                thread_env_for_dim(thread_dim, t), inputs)
         } else {
             old_buf[j]
         }
     )
+}
+
+/// Total thread count for a given dispatch dimension.
+pub open spec fn thread_count(dim: &ThreadDim, workgroup_size: nat) -> nat {
+    match dim {
+        ThreadDim::Dim1D => workgroup_size,
+        ThreadDim::Dim2D { width, height } => *width * *height,
+    }
+}
+
+/// Build the thread environment for a given linear thread ID and dimension.
+pub open spec fn thread_env_for_dim(dim: &ThreadDim, tid: nat) -> Seq<int> {
+    match dim {
+        ThreadDim::Dim1D => thread_env_1d(tid),
+        ThreadDim::Dim2D { width, height } => {
+            if *width > 0 {
+                thread_env_2d(tid % *width, tid / *width)
+            } else {
+                seq![0int, 0int]
+            }
+        },
+    }
 }
 
 /// Apply a Map: declarative evaluation. Inputs captured from initial state,
@@ -195,9 +241,11 @@ pub open spec fn eval_map(
     input_bufs: Seq<nat>,
     output_bufs: Seq<nat>,
     state: SharedState,
+    thread_dim: &ThreadDim,
 ) -> SharedState {
     let inputs = Seq::new(input_bufs.len(), |i: int| state.buffers[input_bufs[i] as int]);
-    eval_map_outputs(spec, inputs, output_bufs, state, 0)
+    let ws = thread_count(thread_dim, state.workgroup_size);
+    eval_map_outputs(spec, inputs, output_bufs, state, 0, ws, thread_dim)
 }
 
 /// Chain output applications. Each output replaces its target buffer
@@ -208,6 +256,8 @@ pub open spec fn eval_map_outputs(
     output_bufs: Seq<nat>,
     state: SharedState,
     out_idx: nat,
+    workgroup_size: nat,
+    thread_dim: &ThreadDim,
 ) -> SharedState
     decreases spec.outputs.len() - out_idx,
 {
@@ -217,10 +267,11 @@ pub open spec fn eval_map_outputs(
         let new_buf = map_output_declarative(
             spec, out_idx, inputs,
             state.buffers[output_bufs[out_idx as int] as int],
-            state.workgroup_size,
+            workgroup_size,
+            thread_dim,
         );
         let new_state = state.set_buffer(output_bufs[out_idx as int], new_buf);
-        eval_map_outputs(spec, inputs, output_bufs, new_state, out_idx + 1)
+        eval_map_outputs(spec, inputs, output_bufs, new_state, out_idx + 1, workgroup_size, thread_dim)
     }
 }
 
@@ -265,13 +316,25 @@ pub open spec fn eval_map_threads(
 // Scan evaluation — uses existing verified inclusive_scan
 // ══════════════════════════════════════════════════════════════
 
-/// Apply inclusive prefix sum to a buffer.
-/// Uses inclusive_scan::<int> from the verified scan infrastructure.
-pub open spec fn eval_scan(buffer: nat, state: SharedState) -> SharedState
+/// Apply a scan/reduce operation to a buffer.
+/// Uses the verified scan infrastructure from scan.rs.
+pub open spec fn eval_scan(buffer: nat, op: ScanOp, state: SharedState) -> SharedState
     recommends buffer < state.num_buffers(),
 {
     let data = state.buffers[buffer as int];
-    state.set_buffer(buffer, inclusive_scan::<int>(data))
+    match op {
+        ScanOp::InclusiveSum => state.set_buffer(buffer, inclusive_scan::<int>(data)),
+        ScanOp::ExclusiveSum => state.set_buffer(buffer, exclusive_scan::<int>(data)),
+        ScanOp::ReduceSum => {
+            // Reduce: buffer[0] = sum of all elements. Rest unchanged.
+            if data.len() > 0 {
+                let total = reduce::<int>(data, 0, data.len() as int);
+                state.set_buffer(buffer, data.update(0, total))
+            } else {
+                state
+            }
+        },
+    }
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -288,11 +351,11 @@ pub open spec fn staged_eval(stage: &Stage, state: SharedState) -> SharedState
 {
     match stage {
         Stage::Noop => state,
-        Stage::Map { spec, input_bufs, output_bufs } => {
-            eval_map(spec, *input_bufs, *output_bufs, state)
+        Stage::Map { spec, input_bufs, output_bufs, thread_dim } => {
+            eval_map(spec, *input_bufs, *output_bufs, state, thread_dim)
         },
-        Stage::Scan { buffer } => {
-            eval_scan(*buffer, state)
+        Stage::Scan { buffer, op } => {
+            eval_scan(*buffer, *op, state)
         },
         Stage::Barrier { scope, post } => {
             // Barrier is a no-op on state at the spec level.
