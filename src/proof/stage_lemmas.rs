@@ -533,6 +533,43 @@ pub open spec fn scatter_in_bounds(
         }
 }
 
+/// eval_map_threads preserves the length of the output buffer.
+pub proof fn lemma_eval_map_threads_preserves_buf_len(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    out_buf: nat,
+    out_idx: nat,
+    state: SharedState,
+    tid: nat,
+)
+    requires
+        out_buf < state.num_buffers(),
+        out_idx < spec.outputs.len(),
+        scatter_in_bounds(spec, inputs, out_idx, state.buffer_len(out_buf), state.workgroup_size),
+    ensures
+        eval_map_threads(spec, inputs, out_buf, out_idx, state, tid)
+            .buffers[out_buf as int].len() == state.buffers[out_buf as int].len(),
+    decreases state.workgroup_size - tid,
+{
+    if tid >= state.workgroup_size {
+    } else {
+        let env = thread_env_1d(tid);
+        let guard_val = arith_eval_with_arrays(&spec.guard, env, inputs);
+        if guard_val != 0 {
+            let (scatter_idx, compute_val) = eval_output(
+                &spec.outputs[out_idx as int], env, inputs,
+            );
+            assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
+            let new_state = state.write(out_buf, scatter_idx as nat, compute_val);
+            lemma_eval_map_threads_preserves_buf_len(
+                spec, inputs, out_buf, out_idx, new_state, tid + 1);
+        } else {
+            lemma_eval_map_threads_preserves_buf_len(
+                spec, inputs, out_buf, out_idx, state, tid + 1);
+        }
+    }
+}
+
 /// If no thread in [tid, workgroup_size) writes to position j,
 /// then eval_map_threads leaves buffer[j] unchanged.
 pub proof fn lemma_eval_map_threads_preserves_non_target(
@@ -761,10 +798,16 @@ proof fn lemma_map_determinism_at(
         assert(no_writer_in_range(spec, inputs, out_idx, j as int, 0, ws));
         lemma_eval_map_threads_preserves_non_target(
             spec, inputs, out_buf, out_idx, state, 0, j);
-        // Both sides give old_buf[j]
         assert(eval_map_threads(spec, inputs, out_buf, out_idx, state, 0)
             .read(out_buf, j) == old_buf[j as int]);
-        assert(decl_val == old_buf[j as int]);
+        // Help Z3: no thread satisfies the raw predicate either
+        assert forall|t: nat| t < ws implies
+            !(arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
+              && arith_eval_with_arrays(&spec.outputs[out_idx as int].scatter,
+                  #[trigger] thread_env_1d(t), inputs) == j as int)
+        by {
+            assert(!thread_writes_to(spec, inputs, out_idx, t, j as int));
+        }
     }
 }
 
@@ -791,13 +834,22 @@ pub proof fn lemma_map_determinism(
                 state.buffers[out_buf as int], state.workgroup_size),
 {
     let old_buf = state.buffers[out_buf as int];
+    let result_state = eval_map_threads(spec, inputs, out_buf, out_idx, state, 0);
+    let decl = map_output_declarative(spec, out_idx, inputs, old_buf, state.workgroup_size);
+
+    // Length: eval_map_threads preserves buffer length
+    lemma_eval_map_threads_preserves_buf_len(
+        spec, inputs, out_buf, out_idx, state, 0);
+    assert(result_state.buffers[out_buf as int].len() == old_buf.len());
+    // decl has same length by Seq::new construction
+    assert(decl.len() == old_buf.len());
+
+    // Pointwise equality
     assert forall|j: int| 0 <= j < old_buf.len() implies
-        eval_map_threads(spec, inputs, out_buf, out_idx, state, 0)
-            .buffers[out_buf as int][j]
-        == map_output_declarative(
-            spec, out_idx, inputs, old_buf, state.workgroup_size)[j]
+        result_state.buffers[out_buf as int][j] == decl[j]
     by {
         lemma_map_determinism_at(spec, inputs, out_buf, out_idx, state, j as nat);
+        assert(result_state.read(out_buf, j as nat) == result_state.buffers[out_buf as int][j]);
     }
 }
 
