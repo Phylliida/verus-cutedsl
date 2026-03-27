@@ -409,6 +409,52 @@ pub proof fn lemma_sum_range_single(data: Seq<int>, i: int)
 }
 
 // ══════════════════════════════════════════════════════════════
+// eval_map unfolding for two-output kernels
+// ══════════════════════════════════════════════════════════════
+
+/// For a two-output kernel, eval_map chains two eval_map_threads calls.
+/// The first output processes on the original state, the second on the result.
+/// Both use the same `inputs` (captured from initial state).
+pub proof fn lemma_eval_map_two_outputs(
+    spec: &KernelSpec,
+    input_bufs: Seq<nat>,
+    output_bufs: Seq<nat>,
+    state: SharedState,
+)
+    requires
+        spec.outputs.len() == 2,
+        input_bufs.len() == spec.outputs.len() || input_bufs.len() >= 0, // just need valid
+        output_bufs.len() == 2,
+        forall|i: int| 0 <= i < input_bufs.len() ==>
+            (input_bufs[i] as int) < state.buffers.len(),
+    ensures ({
+        let inputs = Seq::new(input_bufs.len(), |i: int| state.buffers[input_bufs[i] as int]);
+        let after_out0 = eval_map_threads(spec, inputs, output_bufs[0], 0, state, 0);
+        let after_out1 = eval_map_threads(spec, inputs, output_bufs[1], 1, after_out0, 0);
+        eval_map(spec, input_bufs, output_bufs, state) == after_out1
+    }),
+{
+    let inputs = Seq::new(input_bufs.len(), |i: int| state.buffers[input_bufs[i] as int]);
+    let after_out0 = eval_map_threads(spec, inputs, output_bufs[0], 0, state, 0);
+    let after_out1 = eval_map_threads(spec, inputs, output_bufs[1], 1, after_out0, 0);
+
+    // Unfold eval_map → eval_map_outputs
+    assert(eval_map(spec, input_bufs, output_bufs, state)
+        == eval_map_outputs(spec, inputs, output_bufs, state, 0));
+
+    // Unfold eval_map_outputs at out_idx=0: process output 0, then recurse
+    assert(eval_map_outputs(spec, inputs, output_bufs, state, 0)
+        == eval_map_outputs(spec, inputs, output_bufs, after_out0, 1));
+
+    // Unfold eval_map_outputs at out_idx=1: process output 1, then recurse
+    assert(eval_map_outputs(spec, inputs, output_bufs, after_out0, 1)
+        == eval_map_outputs(spec, inputs, output_bufs, after_out1, 2));
+
+    // Base case: out_idx=2 >= outputs.len()=2, returns state unchanged
+    assert(eval_map_outputs(spec, inputs, output_bufs, after_out1, 2) == after_out1);
+}
+
+// ══════════════════════════════════════════════════════════════
 // Scan bridge: sum_range ↔ verus-algebra sum ↔ inclusive_scan
 // ══════════════════════════════════════════════════════════════
 
@@ -565,6 +611,118 @@ pub proof fn lemma_eval_map_threads_preserves_buf_len(
                 spec, inputs, out_buf, out_idx, new_state, tid + 1);
         } else {
             lemma_eval_map_threads_preserves_buf_len(
+                spec, inputs, out_buf, out_idx, state, tid + 1);
+        }
+    }
+}
+
+/// eval_map_threads on out_buf preserves other buffers entirely.
+pub proof fn lemma_eval_map_threads_preserves_other_buf(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    out_buf: nat,
+    out_idx: nat,
+    state: SharedState,
+    tid: nat,
+    other_buf: nat,
+)
+    requires
+        out_buf < state.num_buffers(),
+        other_buf < state.num_buffers(),
+        out_buf != other_buf,
+        out_idx < spec.outputs.len(),
+        scatter_in_bounds(spec, inputs, out_idx, state.buffer_len(out_buf), state.workgroup_size),
+    ensures
+        eval_map_threads(spec, inputs, out_buf, out_idx, state, tid)
+            .buffers[other_buf as int] == state.buffers[other_buf as int],
+    decreases state.workgroup_size - tid,
+{
+    if tid >= state.workgroup_size {
+    } else {
+        let env = thread_env_1d(tid);
+        let guard_val = arith_eval_with_arrays(&spec.guard, env, inputs);
+        if guard_val != 0 {
+            let (scatter_idx, compute_val) = eval_output(
+                &spec.outputs[out_idx as int], env, inputs);
+            assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
+            let new_state = state.write(out_buf, scatter_idx as nat, compute_val);
+            lemma_write_other_buffer(state, out_buf, scatter_idx as nat, compute_val, other_buf);
+            lemma_eval_map_threads_preserves_other_buf(
+                spec, inputs, out_buf, out_idx, new_state, tid + 1, other_buf);
+        } else {
+            lemma_eval_map_threads_preserves_other_buf(
+                spec, inputs, out_buf, out_idx, state, tid + 1, other_buf);
+        }
+    }
+}
+
+/// eval_map_threads preserves workgroup_size.
+pub proof fn lemma_eval_map_threads_preserves_wg_size(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    out_buf: nat,
+    out_idx: nat,
+    state: SharedState,
+    tid: nat,
+)
+    requires
+        out_buf < state.num_buffers(),
+        out_idx < spec.outputs.len(),
+        scatter_in_bounds(spec, inputs, out_idx, state.buffer_len(out_buf), state.workgroup_size),
+    ensures
+        eval_map_threads(spec, inputs, out_buf, out_idx, state, tid)
+            .workgroup_size == state.workgroup_size,
+    decreases state.workgroup_size - tid,
+{
+    if tid >= state.workgroup_size {
+    } else {
+        let env = thread_env_1d(tid);
+        let guard_val = arith_eval_with_arrays(&spec.guard, env, inputs);
+        if guard_val != 0 {
+            let (scatter_idx, compute_val) = eval_output(
+                &spec.outputs[out_idx as int], env, inputs);
+            assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
+            let new_state = state.write(out_buf, scatter_idx as nat, compute_val);
+            lemma_eval_map_threads_preserves_wg_size(
+                spec, inputs, out_buf, out_idx, new_state, tid + 1);
+        } else {
+            lemma_eval_map_threads_preserves_wg_size(
+                spec, inputs, out_buf, out_idx, state, tid + 1);
+        }
+    }
+}
+
+/// eval_map_threads preserves num_buffers.
+pub proof fn lemma_eval_map_threads_preserves_num_bufs(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    out_buf: nat,
+    out_idx: nat,
+    state: SharedState,
+    tid: nat,
+)
+    requires
+        out_buf < state.num_buffers(),
+        out_idx < spec.outputs.len(),
+        scatter_in_bounds(spec, inputs, out_idx, state.buffer_len(out_buf), state.workgroup_size),
+    ensures
+        eval_map_threads(spec, inputs, out_buf, out_idx, state, tid)
+            .num_buffers() == state.num_buffers(),
+    decreases state.workgroup_size - tid,
+{
+    if tid >= state.workgroup_size {
+    } else {
+        let env = thread_env_1d(tid);
+        let guard_val = arith_eval_with_arrays(&spec.guard, env, inputs);
+        if guard_val != 0 {
+            let (scatter_idx, compute_val) = eval_output(
+                &spec.outputs[out_idx as int], env, inputs);
+            assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
+            let new_state = state.write(out_buf, scatter_idx as nat, compute_val);
+            lemma_eval_map_threads_preserves_num_bufs(
+                spec, inputs, out_buf, out_idx, new_state, tid + 1);
+        } else {
+            lemma_eval_map_threads_preserves_num_bufs(
                 spec, inputs, out_buf, out_idx, state, tid + 1);
         }
     }
