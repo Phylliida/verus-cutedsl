@@ -190,10 +190,10 @@ impl RuntimeSharedState {
             offsets.push(total);
             proof {
                 lemma_partial_sum_step(buffer_sizes@, i as nat);
+                let ps_next = spec_partial_sum(buffer_sizes@, (i + 1) as nat);
+                assert(ps_next == total as nat + buffer_sizes@[i as int] as nat);
                 lemma_partial_sum_monotone(buffer_sizes@, (i + 1) as nat);
-                // partial_sum(i+1) = partial_sum(i) + sizes[i] = total + sizes[i]
-                // partial_sum(i+1) <= total_size <= usize::MAX
-                assert(total as nat + buffer_sizes@[i as int] as nat <= usize::MAX as nat);
+                assert(ps_next <= spec_total_size(buffer_sizes@));
             }
             total = total + buffer_sizes[i];
             i = i + 1;
