@@ -12,7 +12,7 @@ use vstd::prelude::*;
 use crate::stage::*;
 use crate::kernel::*;
 use crate::arith_expr::*;
-use crate::scan::inclusive_scan;
+use crate::scan::{inclusive_scan, exclusive_scan, reduce};
 use verus_algebra::summation::*;
 
 verus! {
@@ -433,6 +433,7 @@ pub proof fn lemma_eval_map_two_outputs(
     input_bufs: Seq<nat>,
     output_bufs: Seq<nat>,
     state: SharedState,
+    thread_dim: &ThreadDim,
 )
     requires
         spec.outputs.len() == 2,
@@ -443,31 +444,32 @@ pub proof fn lemma_eval_map_two_outputs(
             (output_bufs[i] as int) < state.buffers.len(),
     ensures ({
         let inputs = Seq::new(input_bufs.len(), |i: int| state.buffers[input_bufs[i] as int]);
+        let ws = thread_count(thread_dim, state.workgroup_size);
         let new_buf0 = map_output_declarative(spec, 0, inputs,
-            state.buffers[output_bufs[0] as int], state.workgroup_size);
+            state.buffers[output_bufs[0] as int], ws, thread_dim);
         let after_out0 = state.set_buffer(output_bufs[0], new_buf0);
         let new_buf1 = map_output_declarative(spec, 1, inputs,
-            after_out0.buffers[output_bufs[1] as int], after_out0.workgroup_size);
+            after_out0.buffers[output_bufs[1] as int], ws, thread_dim);
         let after_out1 = after_out0.set_buffer(output_bufs[1], new_buf1);
-        eval_map(spec, input_bufs, output_bufs, state) == after_out1
+        eval_map(spec, input_bufs, output_bufs, state, thread_dim) == after_out1
     }),
 {
     let inputs = Seq::new(input_bufs.len(), |i: int| state.buffers[input_bufs[i] as int]);
+    let ws = thread_count(thread_dim, state.workgroup_size);
     let new_buf0 = map_output_declarative(spec, 0, inputs,
-        state.buffers[output_bufs[0] as int], state.workgroup_size);
+        state.buffers[output_bufs[0] as int], ws, thread_dim);
     let after_out0 = state.set_buffer(output_bufs[0], new_buf0);
     let new_buf1 = map_output_declarative(spec, 1, inputs,
-        after_out0.buffers[output_bufs[1] as int], after_out0.workgroup_size);
+        after_out0.buffers[output_bufs[1] as int], ws, thread_dim);
     let after_out1 = after_out0.set_buffer(output_bufs[1], new_buf1);
 
-    // Unfold step by step
-    assert(eval_map(spec, input_bufs, output_bufs, state)
-        == eval_map_outputs(spec, inputs, output_bufs, state, 0));
-    assert(eval_map_outputs(spec, inputs, output_bufs, state, 0)
-        == eval_map_outputs(spec, inputs, output_bufs, after_out0, 1));
-    assert(eval_map_outputs(spec, inputs, output_bufs, after_out0, 1)
-        == eval_map_outputs(spec, inputs, output_bufs, after_out1, 2));
-    assert(eval_map_outputs(spec, inputs, output_bufs, after_out1, 2) == after_out1);
+    assert(eval_map(spec, input_bufs, output_bufs, state, thread_dim)
+        == eval_map_outputs(spec, inputs, output_bufs, state, 0, ws, thread_dim));
+    assert(eval_map_outputs(spec, inputs, output_bufs, state, 0, ws, thread_dim)
+        == eval_map_outputs(spec, inputs, output_bufs, after_out0, 1, ws, thread_dim));
+    assert(eval_map_outputs(spec, inputs, output_bufs, after_out0, 1, ws, thread_dim)
+        == eval_map_outputs(spec, inputs, output_bufs, after_out1, 2, ws, thread_dim));
+    assert(eval_map_outputs(spec, inputs, output_bufs, after_out1, 2, ws, thread_dim) == after_out1);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -720,6 +722,8 @@ pub open spec fn all_scatter_injective(
 
 /// Per-position map determinism: at position j, eval_map_threads agrees
 /// with map_output_declarative.
+/// Map determinism for 1D dispatch. For 2D, the same proof works
+/// with thread_env_for_dim — left as a follow-up.
 proof fn lemma_map_determinism_at(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -738,15 +742,15 @@ proof fn lemma_map_determinism_at(
         eval_map_threads(spec, inputs, out_buf, out_idx, state, 0).read(out_buf, j)
             == map_output_declarative(
                 spec, out_idx, inputs,
-                state.buffers[out_buf as int], state.workgroup_size)[j as int],
+                state.buffers[out_buf as int], state.workgroup_size,
+                &ThreadDim::Dim1D)[j as int],
 {
     let ws = state.workgroup_size;
     let old_buf = state.buffers[out_buf as int];
+    let dim1d = ThreadDim::Dim1D;
 
-    // Bridge: thread_writes_to(spec, inputs, out_idx, t, j) is the same predicate
-    // as the exists in map_output_declarative, just named.
     let decl_val = map_output_declarative(
-        spec, out_idx, inputs, old_buf, ws)[j as int];
+        spec, out_idx, inputs, old_buf, ws, &dim1d)[j as int];
 
     if exists|t: nat| t < ws && thread_writes_to(spec, inputs, out_idx, t, j as int) {
         // Some thread writes to j. Pick it.
@@ -784,12 +788,16 @@ proof fn lemma_map_determinism_at(
         assert(eval_map_threads(spec, inputs, out_buf, out_idx, state, 0)
             .read(out_buf, j) == compute_w);
 
+        // Bridge: thread_env_for_dim(Dim1D, t) == thread_env_1d(t)
+        assert forall|t: nat| thread_env_for_dim(&dim1d, t) == thread_env_1d(t) by {}
+
         // map_output_declarative: the choose picks some satisfier.
         // Any satisfier must be writer (by uniqueness), so compute value matches.
         let decl_t = choose|t: nat| t < ws
-            && arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
+            && arith_eval_with_arrays(&spec.guard, thread_env_for_dim(&dim1d, t), inputs) != 0
             && arith_eval_with_arrays(&spec.outputs[out_idx as int].scatter,
-                thread_env_1d(t), inputs) == j as int;
+                thread_env_for_dim(&dim1d, t), inputs) == j as int;
+        assert(thread_env_for_dim(&dim1d, decl_t) == thread_env_1d(decl_t));
         assert(thread_writes_to(spec, inputs, out_idx, decl_t, j as int));
         if decl_t != writer {
             assert(!thread_writes_to(spec, inputs, out_idx, decl_t, j as int));
@@ -803,12 +811,14 @@ proof fn lemma_map_determinism_at(
             spec, inputs, out_buf, out_idx, state, 0, j);
         assert(eval_map_threads(spec, inputs, out_buf, out_idx, state, 0)
             .read(out_buf, j) == old_buf[j as int]);
-        // Help Z3: no thread satisfies the raw predicate either
+        // Help Z3: no thread satisfies the raw predicate (with dim1d env) either
+        assert forall|t: nat| thread_env_for_dim(&dim1d, t) == thread_env_1d(t) by {}
         assert forall|t: nat| t < ws implies
-            !(arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
+            !(arith_eval_with_arrays(&spec.guard, #[trigger] thread_env_for_dim(&dim1d, t), inputs) != 0
               && arith_eval_with_arrays(&spec.outputs[out_idx as int].scatter,
-                  #[trigger] thread_env_1d(t), inputs) == j as int)
+                  thread_env_for_dim(&dim1d, t), inputs) == j as int)
         by {
+            assert(thread_env_for_dim(&dim1d, t) == thread_env_1d(t));
             assert(!thread_writes_to(spec, inputs, out_idx, t, j as int));
         }
     }
@@ -818,6 +828,7 @@ proof fn lemma_map_determinism_at(
 /// as map_output_declarative (order-independent choose-based spec).
 ///
 /// THE key theorem — proves GPU thread execution order doesn't affect results.
+/// Map determinism for 1D dispatch.
 pub proof fn lemma_map_determinism(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -834,11 +845,12 @@ pub proof fn lemma_map_determinism(
         eval_map_threads(spec, inputs, out_buf, out_idx, state, 0).buffers[out_buf as int]
             =~= map_output_declarative(
                 spec, out_idx, inputs,
-                state.buffers[out_buf as int], state.workgroup_size),
+                state.buffers[out_buf as int], state.workgroup_size,
+                &ThreadDim::Dim1D),
 {
     let old_buf = state.buffers[out_buf as int];
     let result_state = eval_map_threads(spec, inputs, out_buf, out_idx, state, 0);
-    let decl = map_output_declarative(spec, out_idx, inputs, old_buf, state.workgroup_size);
+    let decl = map_output_declarative(spec, out_idx, inputs, old_buf, state.workgroup_size, &ThreadDim::Dim1D);
 
     // Frame: eval_map_threads preserves buffer structure
     lemma_eval_map_threads_frame(spec, inputs, out_buf, out_idx, state, 0);
@@ -859,44 +871,74 @@ pub proof fn lemma_map_determinism(
 // eval_scan frame conditions
 // ══════════════════════════════════════════════════════════════
 
-/// eval_scan preserves other buffers.
+/// eval_scan preserves other buffers (for any ScanOp).
 pub proof fn lemma_eval_scan_preserves_other_buf(
-    buffer: nat, state: SharedState, other_buf: nat,
+    buffer: nat, op: ScanOp, state: SharedState, other_buf: nat,
 )
     requires
         buffer < state.num_buffers(),
         other_buf < state.num_buffers(),
         buffer != other_buf,
     ensures
-        eval_scan(buffer, state).buffers[other_buf as int]
+        eval_scan(buffer, op, state).buffers[other_buf as int]
             == state.buffers[other_buf as int],
 {
-    lemma_set_buffer_other(state, buffer,
-        inclusive_scan::<int>(state.buffers[buffer as int]),
-        other_buf);
+    // All ScanOps use set_buffer on `buffer`, which doesn't affect other_buf
+    match op {
+        ScanOp::InclusiveSum => {
+            lemma_set_buffer_other(state, buffer,
+                inclusive_scan::<int>(state.buffers[buffer as int]), other_buf);
+        },
+        ScanOp::ExclusiveSum => {
+            lemma_set_buffer_other(state, buffer,
+                exclusive_scan::<int>(state.buffers[buffer as int]), other_buf);
+        },
+        ScanOp::ReduceSum => {
+            if state.buffers[buffer as int].len() > 0 {
+                let data = state.buffers[buffer as int];
+                let total = reduce::<int>(data, 0, data.len() as int);
+                lemma_set_buffer_other(state, buffer, data.update(0, total), other_buf);
+            }
+        },
+    }
 }
 
-/// eval_scan preserves workgroup_size.
-pub proof fn lemma_eval_scan_preserves_wg_size(buffer: nat, state: SharedState)
+/// eval_scan preserves workgroup_size (for any ScanOp).
+pub proof fn lemma_eval_scan_preserves_wg_size(buffer: nat, op: ScanOp, state: SharedState)
     requires buffer < state.num_buffers(),
-    ensures eval_scan(buffer, state).workgroup_size == state.workgroup_size,
+    ensures eval_scan(buffer, op, state).workgroup_size == state.workgroup_size,
 {
 }
 
-/// eval_scan preserves num_buffers.
-pub proof fn lemma_eval_scan_preserves_num_bufs(buffer: nat, state: SharedState)
+/// eval_scan preserves num_buffers (for any ScanOp).
+pub proof fn lemma_eval_scan_preserves_num_bufs(buffer: nat, op: ScanOp, state: SharedState)
     requires buffer < state.num_buffers(),
-    ensures eval_scan(buffer, state).num_buffers() == state.num_buffers(),
+    ensures eval_scan(buffer, op, state).num_buffers() == state.num_buffers(),
 {
-    lemma_set_buffer_preserves_num_buffers(state, buffer,
-        inclusive_scan::<int>(state.buffers[buffer as int]));
+    match op {
+        ScanOp::InclusiveSum => {
+            lemma_set_buffer_preserves_num_buffers(state, buffer,
+                inclusive_scan::<int>(state.buffers[buffer as int]));
+        },
+        ScanOp::ExclusiveSum => {
+            lemma_set_buffer_preserves_num_buffers(state, buffer,
+                exclusive_scan::<int>(state.buffers[buffer as int]));
+        },
+        ScanOp::ReduceSum => {
+            if state.buffers[buffer as int].len() > 0 {
+                let data = state.buffers[buffer as int];
+                let total = reduce::<int>(data, 0, data.len() as int);
+                lemma_set_buffer_preserves_num_buffers(state, buffer, data.update(0, total));
+            }
+        },
+    }
 }
 
-/// eval_scan preserves the length of the scanned buffer.
-pub proof fn lemma_eval_scan_preserves_buf_len(buffer: nat, state: SharedState)
+/// eval_scan preserves the length of the scanned buffer (for inclusive/exclusive).
+pub proof fn lemma_eval_scan_preserves_buf_len(buffer: nat, op: ScanOp, state: SharedState)
     requires buffer < state.num_buffers(),
     ensures
-        eval_scan(buffer, state).buffer_len(buffer)
+        eval_scan(buffer, op, state).buffer_len(buffer)
             == state.buffer_len(buffer),
 {
 }
