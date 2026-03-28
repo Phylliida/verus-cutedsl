@@ -100,11 +100,11 @@ pub proof fn lemma_hillis_steele_round_kernel_correct(
 }
 
 /// After one round of the Stage, buffer contents match hillis_steele_state
-/// at the next level. This connects staged_eval to hillis_steele_state.
+/// at the next level.
 ///
-/// The key insight: eval_map with in-place buffer (input=output=[0])
-/// captures the old buffer as a snapshot, computes per-element values,
-/// and writes back — exactly what hillis_steele_state does.
+/// Proves TWO things:
+/// 1. map_output_declarative matches hillis_steele_state (per-element)
+/// 2. staged_eval(round_stage, state) updates the buffer correctly
 pub proof fn lemma_hillis_steele_round_correct(
     data: Seq<int>, n: nat, level: nat,
     state: SharedState,
@@ -114,18 +114,12 @@ pub proof fn lemma_hillis_steele_round_correct(
         state.buffers.len() >= 1,
         state.buffers[0].len() == n,
         state.workgroup_size == n,
-        // State buffer matches hillis_steele_state at current level
         state.buffers[0] == hillis_steele_state(data, n, level),
     ensures ({
         let stride = pow2(level);
         let round = hillis_steele_round_stage(n, stride);
-        let old_buf = state.buffers[0];
-        let inputs = seq![old_buf];
-        let dim = ThreadDim::Dim1D;
-        let ws = thread_count(&dim, state.workgroup_size);
-        // The Map's declarative output matches the next Hillis-Steele level
-        map_output_declarative(
-            &hillis_steele_round_kernel(n, stride), 0, inputs, old_buf, ws, &dim)
+        // staged_eval produces the next Hillis-Steele level
+        staged_eval(&round, state).buffers[0]
             =~= hillis_steele_state(data, n, level + 1)
     }),
 {

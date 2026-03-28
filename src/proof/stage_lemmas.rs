@@ -386,6 +386,62 @@ pub proof fn lemma_set_buffer_preserves_workgroup_size(
 }
 
 // ══════════════════════════════════════════════════════════════
+// eval_map for single-output kernels
+//
+// THE key bridge: connects staged_eval(Map{...}) to set_buffer + map_output_declarative.
+// Unlocks per-element reasoning for any single-output kernel.
+// ══════════════════════════════════════════════════════════════
+
+/// For a single-output kernel, staged_eval(Map) = set_buffer(map_output_declarative).
+/// This is the fundamental lemma for connecting Stage evaluation to per-element reasoning.
+pub proof fn lemma_staged_eval_map_single_output(
+    spec: &KernelSpec,
+    input_bufs: Seq<nat>,
+    output_bufs: Seq<nat>,
+    state: SharedState,
+    thread_dim: &ThreadDim,
+)
+    requires
+        spec.outputs.len() == 1,
+        output_bufs.len() == 1,
+        forall|i: int| 0 <= i < input_bufs.len() ==>
+            (input_bufs[i] as int) < state.buffers.len(),
+        (output_bufs[0] as int) < state.buffers.len(),
+    ensures ({
+        let inputs = Seq::new(input_bufs.len(), |i: int| state.buffers[input_bufs[i] as int]);
+        let ws = thread_count(thread_dim, state.workgroup_size);
+        let new_buf = map_output_declarative(spec, 0, inputs,
+            state.buffers[output_bufs[0] as int], ws, thread_dim);
+        staged_eval(
+            &Stage::Map { spec: *spec, input_bufs, output_bufs, thread_dim: *thread_dim },
+            state,
+        ) == state.set_buffer(output_bufs[0], new_buf)
+    }),
+{
+    let map_stage = Stage::Map {
+        spec: *spec, input_bufs, output_bufs, thread_dim: *thread_dim };
+    let inputs = Seq::new(input_bufs.len(), |i: int| state.buffers[input_bufs[i] as int]);
+    let ws = thread_count(thread_dim, state.workgroup_size);
+    // staged_eval(Map) = eval_map(spec, input_bufs, output_bufs, state, thread_dim)
+    // eval_map = eval_map_outputs(spec, inputs, output_bufs, state, 0, ws, thread_dim)
+    // For single output: eval_map_outputs processes output 0, then returns
+    let new_buf = map_output_declarative(spec, 0, inputs,
+        state.buffers[output_bufs[0] as int], ws, thread_dim);
+    let after = state.set_buffer(output_bufs[0], new_buf);
+
+    // Chain: staged_eval(Map) → eval_map → eval_map_outputs
+    assert(staged_eval(&map_stage, state)
+        == eval_map(spec, input_bufs, output_bufs, state, thread_dim));
+    assert(eval_map(spec, input_bufs, output_bufs, state, thread_dim)
+        == eval_map_outputs(spec, inputs, output_bufs, state, 0, ws, thread_dim));
+    // eval_map_outputs at out_idx=0: set_buffer + recurse at out_idx=1
+    assert(eval_map_outputs(spec, inputs, output_bufs, state, 0, ws, thread_dim)
+        == eval_map_outputs(spec, inputs, output_bufs, after, 1, ws, thread_dim));
+    // eval_map_outputs at out_idx=1 >= outputs.len()=1: return after
+    assert(eval_map_outputs(spec, inputs, output_bufs, after, 1, ws, thread_dim) == after);
+}
+
+// ══════════════════════════════════════════════════════════════
 // seq_stages correctness
 // ══════════════════════════════════════════════════════════════
 
