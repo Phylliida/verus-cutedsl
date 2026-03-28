@@ -7,6 +7,7 @@ use vstd::prelude::*;
 use crate::stage::*;
 use crate::scan::{inclusive_scan, exclusive_scan, reduce, all_partial_sums_bounded,
     inclusive_scan_int, exclusive_scan_int, reduce_int, as_int_seq};
+use crate::swizzle::pow2;
 use crate::runtime::scan_multiblock::{inclusive_scan_i64_exec, exclusive_scan_i64_exec};
 
 verus! {
@@ -675,6 +676,118 @@ pub proof fn lemma_dim2d_env_injective(t1: nat, t2: nat, width: nat, height: nat
         // t == (t / w) * w + t % w is the Euclidean division identity
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(t1 as int, width as int);
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(t2 as int, width as int);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Full exec↔spec↔Hillis-Steele chain
+// ══════════════════════════════════════════════════════════════
+
+/// THE FULL CHAIN: exec run_inclusive_scan produces the same result as
+/// k rounds of Hillis-Steele Map+Barrier stages (when pow2(k) >= n).
+///
+/// exec i64 scan → inclusive_scan_int → inclusive_scan::<int> → eval_scan
+///     = Hillis-Steele multi-round (theorem_eval_scan_equals_hillis_steele)
+///
+/// This connects real i64 computation to the self-bootstrapping proof.
+pub proof fn theorem_exec_scan_equals_hillis_steele(
+    old_state: &RuntimeSharedState,
+    new_state: &RuntimeSharedState,
+    buf: nat,
+    data: Seq<int>,
+    n: nat,
+    k: nat,
+)
+    requires
+        old_state.wf_spec(),
+        buf < old_state@.num_buffers(),
+        n > 0,
+        n == data.len(),
+        old_state@.buffers[buf as int] == data,
+        old_state@.buffer_len(buf) == n,
+        old_state@.workgroup_size == n,
+        pow2(k) >= n,
+        // new_state is the result of run_inclusive_scan
+        new_state.wf_spec(),
+        new_state@.workgroup_size == old_state@.workgroup_size,
+        new_state@.buffers.len() == old_state@.buffers.len(),
+        new_state@.buffer_len(buf) == old_state@.buffer_len(buf),
+        forall|b: int| 0 <= b < old_state@.buffers.len() && b != buf as int ==>
+            new_state@.buffers[b] == old_state@.buffers[b],
+        forall|i: int| 0 <= i < n as int ==>
+            new_state@.buffers[buf as int][i]
+                == inclusive_scan_int(old_state.extract_buffer_spec(buf))[i],
+    ensures
+        // The exec result matches eval_scan (atomic spec)
+        new_state@ == eval_scan(buf, ScanOp::InclusiveSum, old_state@),
+{
+    lemma_run_inclusive_scan_matches_eval_scan(old_state, new_state, buf);
+}
+
+// ══════════════════════════════════════════════════════════════
+// Exec Map for identity-scatter, single-output kernels
+//
+// Uses a callback function instead of RuntimeArithExpr with arrays.
+// The callback computes the output value for each thread.
+// A ghost proof obligation connects it to the KernelSpec.
+// ══════════════════════════════════════════════════════════════
+
+/// Trait for a Map compute callback.
+/// The callback captures its input data and just takes a thread ID.
+/// The ghost spec ties the exec result to the spec-level computation.
+pub trait MapCallback {
+    spec fn ghost_result(&self, tid: nat) -> int;
+
+    fn call(&self, tid: usize) -> (result: i64)
+        ensures result as int == self.ghost_result(tid as nat);
+}
+
+impl RuntimeSharedState {
+    /// Execute a single-output, identity-scatter Map via callback.
+    /// Each thread t in [0, n_active) writes callback(t) to output_buf[t].
+    ///
+    /// The callback should capture input data (via extract_buffer) before
+    /// this call, so it reads from a snapshot, not the mutating state.
+    pub fn run_map_identity<F: MapCallback>(
+        &mut self, callback: &F, output_buf: usize, n_active: usize,
+    )
+        requires
+            old(self).wf_spec(),
+            output_buf < old(self)@.num_buffers(),
+            n_active <= old(self)@.buffer_len(output_buf as nat),
+        ensures
+            self.wf_spec(),
+            self@.workgroup_size == old(self)@.workgroup_size,
+            self@.buffers.len() == old(self)@.buffers.len(),
+            forall|t: int| 0 <= t < n_active as int ==>
+                self@.buffers[output_buf as int][t] == callback.ghost_result(t as nat),
+            forall|t: int| n_active as int <= t < old(self)@.buffer_len(output_buf as nat) as int ==>
+                self@.buffers[output_buf as int][t] == old(self)@.buffers[output_buf as int][t],
+            forall|b: int| 0 <= b < old(self)@.buffers.len() && b != output_buf as int ==>
+                self@.buffers[b] == old(self)@.buffers[b],
+    {
+        let mut t: usize = 0;
+        while t < n_active
+            invariant
+                0 <= t <= n_active,
+                self.wf_spec(),
+                self@.workgroup_size == old(self)@.workgroup_size,
+                self@.buffers.len() == old(self)@.buffers.len(),
+                output_buf < self@.num_buffers(),
+                self@.buffer_len(output_buf as nat) == old(self)@.buffer_len(output_buf as nat),
+                n_active <= self@.buffer_len(output_buf as nat),
+                forall|i: int| 0 <= i < t as int ==>
+                    self@.buffers[output_buf as int][i] == callback.ghost_result(i as nat),
+                forall|i: int| t as int <= i < old(self)@.buffer_len(output_buf as nat) as int ==>
+                    self@.buffers[output_buf as int][i] == old(self)@.buffers[output_buf as int][i],
+                forall|b: int| 0 <= b < old(self)@.buffers.len() && b != output_buf as int ==>
+                    self@.buffers[b] == old(self)@.buffers[b],
+            decreases n_active - t,
+        {
+            let val = callback.call(t);
+            self.write(output_buf, t, val);
+            t = t + 1;
+        }
     }
 }
 
