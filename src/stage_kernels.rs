@@ -131,21 +131,42 @@ pub proof fn lemma_hillis_steele_round_correct(
     let ws = thread_count(&dim, state.workgroup_size);
     let result_buf = map_output_declarative(&spec, 0, inputs, old_buf, ws, &dim);
     let hs_next = hillis_steele_state(data, n, level + 1);
-    let prev = hillis_steele_state(data, n, level);
-    assert(old_buf == prev);
 
+    // 1. staged_eval(round) unfolds to Seq(Map, Barrier)
+    let map_stage = Stage::Map {
+        spec: spec, input_bufs: seq![0nat], output_bufs: seq![0nat],
+        thread_dim: ThreadDim::Dim1D };
+    let barrier_stage = Stage::Barrier {
+        scope: BarrierScope::Workgroup, post: |_s: SharedState| true };
+    lemma_seq_compose(map_stage, barrier_stage, state);
+    lemma_barrier_noop(BarrierScope::Workgroup, |_s: SharedState| true,
+        staged_eval(&map_stage, state));
+
+    // 2. Unfold eval_map for single output directly
+    let after = state.set_buffer(0nat, result_buf);
+    assert(staged_eval(&map_stage, state) == eval_map(&spec, seq![0nat], seq![0nat], state, &dim));
+    // Help Z3: our `inputs` matches what eval_map constructs internally
+    let eval_inputs = Seq::new(seq![0nat].len(), |i: int| state.buffers[seq![0nat][i] as int]);
+    assert(eval_inputs =~= inputs);
+    assert(eval_map(&spec, seq![0nat], seq![0nat], state, &dim)
+        == eval_map_outputs(&spec, inputs, seq![0nat], state, 0, ws, &dim));
+    assert(eval_map_outputs(&spec, inputs, seq![0nat], state, 0, ws, &dim)
+        == eval_map_outputs(&spec, inputs, seq![0nat], after, 1, ws, &dim));
+    assert(eval_map_outputs(&spec, inputs, seq![0nat], after, 1, ws, &dim) == after);
+    // So staged_eval(map, state) == after == state.set_buffer(0, result_buf)
+    // And set_buffer(0, result_buf).buffers[0] == result_buf
+    assert(after.buffers[0] =~= result_buf);
+
+    // 3. Pointwise: result_buf =~= hs_next
     assert forall|i: int| 0 <= i < n as int implies result_buf[i] == hs_next[i] by {
         assert(thread_env_for_dim(&dim, i as nat) == thread_env_1d(i as nat));
         if i >= stride as int {
-            // Thread i writes: provide witness for exists in map_output_declarative
             lemma_hillis_steele_round_kernel_correct(n, stride, old_buf, i as nat);
             assert(arith_eval_with_arrays(&spec.guard,
                 thread_env_for_dim(&dim, i as nat), inputs) != 0);
             assert(arith_eval_with_arrays(&spec.outputs[0].scatter,
                 thread_env_for_dim(&dim, i as nat), inputs) == i);
         } else {
-            // No thread writes to i: all threads t either have guard=0 (t<stride)
-            // or scatter=t!=i (t>=stride>i)
             assert forall|t: nat| t < n implies
                 !(arith_eval_with_arrays(&spec.guard,
                     #[trigger] thread_env_for_dim(&dim, t), inputs) != 0
@@ -154,12 +175,9 @@ pub proof fn lemma_hillis_steele_round_correct(
             by {
                 assert(thread_env_for_dim(&dim, t) == thread_env_1d(t));
                 if t >= stride {
-                    // scatter = Var(0) evaluates to t. t >= stride > i, so t != i.
                     assert(arith_eval_with_arrays(&spec.outputs[0].scatter,
                         thread_env_1d(t), inputs) == t as int);
-                    assert(t as int != i);
                 } else {
-                    // guard = Cmp(Ge, Var(0), Const(stride)): t < stride → guard = 0
                     lemma_eval_with_arrays_cmp(&CmpOp::Ge,
                         &ArithExpr::Var(0), &ArithExpr::Const(stride as int),
                         thread_env_1d(t), inputs);
@@ -287,6 +305,73 @@ pub open spec fn gemm_stage(m: nat, n: nat, k_size: nat, tile_k: nat) -> Stage {
         output_bufs: seq![2nat],
         thread_dim: ThreadDim::Dim2D { width: m, height: n },
     }
+}
+
+// ══════════════════════════════════════════════════════════════
+// stage_wf proofs for all kernel definitions
+// ══════════════════════════════════════════════════════════════
+
+// ══════════════════════════════════════════════════════════════
+// Hillis-Steele round preserves structure (enables chaining)
+// ══════════════════════════════════════════════════════════════
+
+/// After one Hillis-Steele round, the state still has the right structure
+/// for the next round: 1 buffer, correct length, correct workgroup_size.
+pub proof fn lemma_hillis_steele_round_preserves_structure(
+    n: nat, stride: nat, state: SharedState,
+)
+    requires
+        n > 0,
+        state.buffers.len() >= 1,
+        state.buffers[0].len() == n,
+        state.workgroup_size == n,
+    ensures ({
+        let round = hillis_steele_round_stage(n, stride);
+        let result = staged_eval(&round, state);
+        result.buffers.len() >= 1
+        && result.buffers[0].len() == n
+        && result.workgroup_size == n
+    }),
+{
+    let round = hillis_steele_round_stage(n, stride);
+    let spec = hillis_steele_round_kernel(n, stride);
+    let map_stage = Stage::Map {
+        spec: spec, input_bufs: seq![0nat], output_bufs: seq![0nat],
+        thread_dim: ThreadDim::Dim1D };
+    let barrier_stage = Stage::Barrier {
+        scope: BarrierScope::Workgroup, post: |_s: SharedState| true };
+    lemma_seq_compose(map_stage, barrier_stage, state);
+    lemma_barrier_noop(BarrierScope::Workgroup, |_s: SharedState| true,
+        staged_eval(&map_stage, state));
+
+    // Map preserves structure via single-output lemma
+    use crate::proof::stage_lemmas::lemma_staged_eval_map_single_output;
+    lemma_staged_eval_map_single_output(&spec, seq![0nat], seq![0nat], state, &ThreadDim::Dim1D);
+    // staged_eval(map) = state.set_buffer(0, result_buf) where result_buf.len() == old.len()
+    lemma_map_output_declarative_preserves_len(
+        &spec, 0, seq![state.buffers[0]], state.buffers[0],
+        state.workgroup_size, &ThreadDim::Dim1D);
+}
+
+// stage_wf proofs for composed stages are blocked by Z3's difficulty with
+// Box::new in structural recursion. The individual components verify
+// (e.g., stage_wf(&Stage::Map{...}, n) works) but composed stages built
+// with seq_stages or explicit Seq{Box::new(...)} don't unfold cleanly.
+// These proofs need either opaque+reveal or manual unfolding — deferred.
+
+// ══════════════════════════════════════════════════════════════
+// Re-runnable stages: stage_wf preserved after eval
+// ══════════════════════════════════════════════════════════════
+
+/// If a stage is well-formed and we evaluate it, it remains well-formed
+/// (since num_buffers is preserved by staged_eval).
+pub proof fn lemma_stage_wf_preserved(stage: &Stage, state: SharedState)
+    requires
+        stage_wf(stage, state.num_buffers()),
+    ensures
+        stage_wf(stage, staged_eval(stage, state).num_buffers()),
+{
+    lemma_staged_eval_preserves_num_buffers(stage, state);
 }
 
 } // verus!

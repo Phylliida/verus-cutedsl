@@ -654,6 +654,125 @@ proof fn lemma_eval_map_outputs_preserves_wg_size(
     }
 }
 
+/// map_output_declarative preserves buffer length (result.len() == old_buf.len()).
+pub proof fn lemma_map_output_declarative_preserves_len(
+    spec: &KernelSpec, out_idx: nat, inputs: Seq<Seq<int>>,
+    old_buf: Seq<int>, ws: nat, thread_dim: &ThreadDim,
+)
+    ensures map_output_declarative(spec, out_idx, inputs, old_buf, ws, thread_dim).len()
+        == old_buf.len(),
+{
+    // map_output_declarative uses Seq::new(old_buf.len(), ...) — length preserved by construction
+}
+
+/// staged_eval preserves ALL buffer lengths when the stage is well-formed
+/// and only writes via Map (which preserves lengths via map_output_declarative).
+pub proof fn lemma_staged_eval_preserves_all_buf_lens(
+    stage: &Stage, state: SharedState,
+)
+    requires stage_wf(stage, state.num_buffers()),
+    ensures
+        forall|b: nat| b < state.num_buffers() ==>
+            staged_eval(stage, state).buffer_len(b) == state.buffer_len(b),
+    decreases stage, 0nat,
+{
+    match stage {
+        Stage::Noop => {},
+        Stage::Map { spec, input_bufs, output_bufs, thread_dim } => {
+            lemma_eval_map_preserves_all_buf_lens(
+                spec, *input_bufs, *output_bufs, state, thread_dim);
+        },
+        Stage::Scan { buffer, op } => {
+            // eval_scan uses set_buffer with inclusive/exclusive_scan which preserves length
+        },
+        Stage::Barrier { .. } => {},
+        Stage::Seq { first, then } => {
+            lemma_staged_eval_preserves_all_buf_lens(&**first, state);
+            lemma_staged_eval_preserves_num_buffers(&**first, state);
+            let mid = staged_eval(&**first, state);
+            lemma_staged_eval_preserves_all_buf_lens(&**then, mid);
+        },
+        Stage::Loop { bound, body, invariant } => {
+            lemma_eval_loop_preserves_all_buf_lens(&**body, state, *bound, 0);
+        },
+    }
+}
+
+proof fn lemma_eval_loop_preserves_all_buf_lens(
+    body: &Stage, state: SharedState, bound: nat, iter: nat,
+)
+    requires stage_wf(body, state.num_buffers()),
+    ensures
+        forall|b: nat| b < state.num_buffers() ==>
+            eval_loop(body, state, bound, iter).buffer_len(b) == state.buffer_len(b),
+    decreases body, bound - iter,
+{
+    if iter >= bound {
+    } else {
+        lemma_staged_eval_preserves_all_buf_lens(body, state);
+        lemma_staged_eval_preserves_num_buffers(body, state);
+        let mid = staged_eval(body, state);
+        lemma_eval_loop_preserves_all_buf_lens(body, mid, bound, iter + 1);
+    }
+}
+
+proof fn lemma_eval_map_preserves_all_buf_lens(
+    spec: &KernelSpec, input_bufs: Seq<nat>, output_bufs: Seq<nat>,
+    state: SharedState, thread_dim: &ThreadDim,
+)
+    requires
+        output_bufs.len() == spec.outputs.len(),
+        forall|i: int| 0 <= i < input_bufs.len() ==>
+            (input_bufs[i] as int) < state.buffers.len(),
+        forall|i: int| 0 <= i < output_bufs.len() ==>
+            (output_bufs[i] as int) < state.buffers.len(),
+    ensures
+        forall|b: nat| b < state.num_buffers() ==>
+            eval_map(spec, input_bufs, output_bufs, state, thread_dim)
+                .buffer_len(b) == state.buffer_len(b),
+{
+    let inputs = Seq::new(input_bufs.len(), |i: int| state.buffers[input_bufs[i] as int]);
+    let ws = thread_count(thread_dim, state.workgroup_size);
+    lemma_eval_map_outputs_preserves_all_buf_lens(
+        spec, inputs, output_bufs, state, 0, ws, thread_dim);
+}
+
+proof fn lemma_eval_map_outputs_preserves_all_buf_lens(
+    spec: &KernelSpec, inputs: Seq<Seq<int>>, output_bufs: Seq<nat>,
+    state: SharedState, out_idx: nat, ws: nat, thread_dim: &ThreadDim,
+)
+    requires
+        output_bufs.len() == spec.outputs.len(),
+        forall|i: int| 0 <= i < output_bufs.len() ==>
+            (output_bufs[i] as int) < state.buffers.len(),
+    ensures
+        forall|b: nat| b < state.num_buffers() ==>
+            eval_map_outputs(spec, inputs, output_bufs, state, out_idx, ws, thread_dim)
+                .buffer_len(b) == state.buffer_len(b),
+    decreases spec.outputs.len() - out_idx,
+{
+    if out_idx >= spec.outputs.len() {
+    } else {
+        let new_buf = map_output_declarative(
+            spec, out_idx, inputs,
+            state.buffers[output_bufs[out_idx as int] as int], ws, thread_dim);
+        lemma_map_output_declarative_preserves_len(
+            spec, out_idx, inputs,
+            state.buffers[output_bufs[out_idx as int] as int], ws, thread_dim);
+        let ob = output_bufs[out_idx as int];
+        let new_state = state.set_buffer(ob, new_buf);
+        assert(new_state.buffers.len() == state.buffers.len());
+        // Buffer lengths preserved: target buf has same len, others unchanged
+        assert forall|b: nat| b < state.num_buffers() implies
+            new_state.buffer_len(b) == state.buffer_len(b)
+        by {
+            if b == ob { assert(new_buf.len() == state.buffers[ob as int].len()); }
+        }
+        lemma_eval_map_outputs_preserves_all_buf_lens(
+            spec, inputs, output_bufs, new_state, out_idx + 1, ws, thread_dim);
+    }
+}
+
 // ══════════════════════════════════════════════════════════════
 // Basic properties
 // ══════════════════════════════════════════════════════════════
