@@ -14,6 +14,7 @@ pub mod scan_multiblock;
 pub mod radix_sort;
 pub mod scan_segmented;
 pub mod stage;
+pub mod arith_eval_arrays;
 
 verus! {
 
