@@ -422,4 +422,155 @@ pub proof fn lemma_stage_wf_preserved(stage: &Stage, state: SharedState)
     lemma_staged_eval_preserves_num_buffers(stage, state);
 }
 
+// ══════════════════════════════════════════════════════════════
+// Hillis-Steele = inclusive_scan (capstone theorem)
+//
+// When pow2(k) >= n, k rounds of Map+Barrier produce inclusive_scan.
+// Connects: multi_round → hillis_steele_state → inclusive_scan
+// ══════════════════════════════════════════════════════════════
+
+/// THE CAPSTONE: k rounds of Map+Barrier = inclusive_scan,
+/// when pow2(k) >= n.
+/// This proves: Scan = Map + Barrier (self-bootstrapping).
+pub proof fn theorem_hillis_steele_is_inclusive_scan(
+    data: Seq<int>, n: nat, state: SharedState, k: nat,
+)
+    requires
+        n > 0,
+        n == data.len(),
+        state.buffers.len() >= 1,
+        state.buffers[0] == data,
+        state.buffers[0].len() == n,
+        state.workgroup_size == n,
+        pow2(k) >= n,
+    ensures ({
+        let final_state = hillis_steele_multi_eval(data, n, state, k);
+        forall|i: int| 0 <= i < n as int ==>
+            final_state.buffers[0][i] == inclusive_scan::<int>(data)[i]
+    }),
+{
+    // 1. Multi-round gives hillis_steele_state(data, n, k)
+    lemma_hillis_steele_multi_round(data, n, state, k);
+    let final_state = hillis_steele_multi_eval(data, n, state, k);
+    assert(final_state.buffers[0] =~= hillis_steele_state(data, n, k));
+
+    // 2. hillis_steele_invariant holds at level k (existing proof)
+    use crate::proof::scan_tree_lemmas::lemma_hillis_steele_invariant_upto;
+    lemma_hillis_steele_invariant_upto(data, n, k);
+
+    // 3. When pow2(k) >= n, invariant implies inclusive_scan
+    // hillis_steele_invariant says: state[i] = sum(data, max(0, i+1-pow2(k)), i+1)
+    // When pow2(k) >= n: max(0, i+1-pow2(k)) = 0, so state[i] = sum(data, 0, i+1) = inclusive_scan[i]
+    assert forall|i: int| 0 <= i < n as int implies
+        final_state.buffers[0][i] == inclusive_scan::<int>(data)[i]
+    by {
+        // hillis_steele_state(data, n, k)[i] = sum(data, lo, i+1) where lo = max(0, i+1-pow2(k))
+        // Since pow2(k) >= n > i, we have i+1-pow2(k) <= 0, so lo = 0
+        // sum(data, 0, i+1) = inclusive_scan::<int>(data)[i] by definition
+        assert(as_int_seq_from_ints(data) == data);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// Stage equivalence: eval_scan = Hillis-Steele multi-round
+//
+// The atomic Scan primitive equals the composed implementation.
+// ══════════════════════════════════════════════════════════════
+
+/// eval_scan(buf, InclusiveSum, state) produces the same buffer[0] as
+/// k rounds of Hillis-Steele when pow2(k) >= n.
+pub proof fn theorem_eval_scan_equals_hillis_steele(
+    data: Seq<int>, n: nat, state: SharedState, k: nat,
+)
+    requires
+        n > 0,
+        n == data.len(),
+        state.buffers.len() >= 1,
+        state.buffers[0] == data,
+        state.buffers[0].len() == n,
+        state.workgroup_size == n,
+        pow2(k) >= n,
+    ensures
+        eval_scan(0, ScanOp::InclusiveSum, state).buffers[0]
+            =~= hillis_steele_multi_eval(data, n, state, k).buffers[0],
+{
+    // eval_scan produces inclusive_scan::<int>(data)
+    // Hillis-Steele multi-round produces hillis_steele_state(data, n, k)
+    // Both equal inclusive_scan when pow2(k) >= n
+    theorem_hillis_steele_is_inclusive_scan(data, n, state, k);
+    lemma_hillis_steele_multi_round(data, n, state, k);
+    let hs_buf = hillis_steele_multi_eval(data, n, state, k).buffers[0];
+    let scan_buf = eval_scan(0, ScanOp::InclusiveSum, state).buffers[0];
+    // Both =~= inclusive_scan::<int>(data) pointwise
+}
+
+// ══════════════════════════════════════════════════════════════
+// Stage determinism: staged_eval is deterministic for well-formed stages
+// ══════════════════════════════════════════════════════════════
+
+/// staged_eval is a function — it's deterministic by construction.
+/// This is trivially true (spec functions are deterministic in Verus),
+/// but stating it explicitly documents the key GPU correctness property:
+/// well-formed stages produce unique, reproducible results.
+pub proof fn theorem_staged_eval_deterministic(
+    stage: &Stage, state1: SharedState, state2: SharedState,
+)
+    requires state1 == state2,
+    ensures staged_eval(stage, state1) == staged_eval(stage, state2),
+{
+    // Trivially true: spec functions are deterministic.
+    // The real content is in map_determinism (stage_lemmas.rs) which proves
+    // that the OPERATIONAL eval_map_threads (thread-order-dependent) agrees
+    // with the DECLARATIVE map_output_declarative (thread-order-independent).
+    // Since staged_eval uses the declarative version, determinism is by construction.
+}
+
+// ══════════════════════════════════════════════════════════════
+// Compact scatter kernel correctness
+//
+// The scatter kernel writes data[i] to position scan[i] when pred[i].
+// Proves: the output matches compact_result from scan.rs.
+// ══════════════════════════════════════════════════════════════
+
+/// The compact scatter kernel correctly writes each active element
+/// to its compacted position.
+pub proof fn lemma_compact_scatter_kernel_correct(
+    n: nat,
+    data_buf: Seq<int>,
+    pred_buf: Seq<int>,
+    scan_buf: Seq<int>,
+    px: nat,
+)
+    requires
+        px < n,
+        data_buf.len() >= n as int,
+        pred_buf.len() >= n as int,
+        scan_buf.len() >= n as int,
+        pred_buf[px as int] != 0,  // active pixel
+    ensures ({
+        let k = compact_scatter_kernel(n);
+        let env = thread_env_1d(px);
+        let inputs = seq![data_buf, pred_buf, scan_buf];
+        // Guard is active (pred[px] != 0)
+        arith_eval_with_arrays(&k.guard, env, inputs) != 0
+        // Scatter to scan[px] (the compacted position)
+        && arith_eval_with_arrays(&k.outputs[0].scatter, env, inputs) == scan_buf[px as int]
+        // Compute is data[px]
+        && arith_eval_with_arrays(&k.outputs[0].compute, env, inputs) == data_buf[px as int]
+    }),
+{
+    let k = compact_scatter_kernel(n);
+    let env = thread_env_1d(px);
+    let inputs = seq![data_buf, pred_buf, scan_buf];
+
+    // Guard = Index(1, Var(0)) = pred_buf[px]
+    lemma_eval_with_arrays_index(1, &ArithExpr::Var(0), env, inputs, px as int);
+
+    // Scatter = Index(2, Var(0)) = scan_buf[px]
+    lemma_eval_with_arrays_index(2, &ArithExpr::Var(0), env, inputs, px as int);
+
+    // Compute = Index(0, Var(0)) = data_buf[px]
+    lemma_eval_with_arrays_index(0, &ArithExpr::Var(0), env, inputs, px as int);
+}
+
 } // verus!
