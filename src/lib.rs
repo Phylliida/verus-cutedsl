@@ -77,6 +77,9 @@ pub mod kernel;
 pub mod stage;
 
 #[cfg(verus_keep_ghost)]
+pub mod stage_kernels;
+
+#[cfg(verus_keep_ghost)]
 pub mod proof;
 
 #[cfg(verus_keep_ghost)]
