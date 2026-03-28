@@ -421,6 +421,240 @@ pub open spec fn maps_write_disjoint(bufs_a: Seq<nat>, bufs_b: Seq<nat>) -> bool
 }
 
 // ══════════════════════════════════════════════════════════════
+// Stage well-formedness
+//
+// Checks that all buffer indices are valid, output counts match,
+// etc. When stage_wf holds, staged_eval won't access out-of-bounds
+// buffers.
+// ══════════════════════════════════════════════════════════════
+
+/// Well-formedness of a Stage tree with respect to a given number of buffers.
+pub open spec fn stage_wf(stage: &Stage, num_buffers: nat) -> bool
+    decreases stage,
+{
+    match stage {
+        Stage::Noop => true,
+        Stage::Map { spec, input_bufs, output_bufs, thread_dim } => {
+            // Output count matches KernelSpec
+            &&& output_bufs.len() == spec.outputs.len()
+            // All input buffer indices valid
+            &&& forall|i: int| 0 <= i < input_bufs.len() ==>
+                (input_bufs[i] as int) < num_buffers as int
+            // All output buffer indices valid
+            &&& forall|i: int| 0 <= i < output_bufs.len() ==>
+                (output_bufs[i] as int) < num_buffers as int
+        },
+        Stage::Scan { buffer, op } => {
+            *buffer < num_buffers
+        },
+        Stage::Barrier { scope, post } => true,
+        Stage::Seq { first, then } => {
+            stage_wf(&**first, num_buffers) && stage_wf(&**then, num_buffers)
+        },
+        Stage::Loop { bound, body, invariant } => {
+            stage_wf(&**body, num_buffers)
+        },
+    }
+}
+
+/// staged_eval preserves num_buffers when the stage is well-formed.
+pub proof fn lemma_staged_eval_preserves_num_buffers(
+    stage: &Stage, state: SharedState,
+)
+    requires stage_wf(stage, state.num_buffers()),
+    ensures staged_eval(stage, state).num_buffers() == state.num_buffers(),
+    decreases stage, 0nat,
+{
+    match stage {
+        Stage::Noop => {},
+        Stage::Map { spec, input_bufs, output_bufs, thread_dim } => {
+            // eval_map chains set_buffer calls which preserve num_buffers
+            lemma_eval_map_preserves_num_buffers(
+                spec, *input_bufs, *output_bufs, state, thread_dim);
+        },
+        Stage::Scan { buffer, op } => {
+            // eval_scan uses set_buffer which preserves num_buffers
+        },
+        Stage::Barrier { .. } => {},
+        Stage::Seq { first, then } => {
+            lemma_staged_eval_preserves_num_buffers(&**first, state);
+            let mid = staged_eval(&**first, state);
+            // mid has same num_buffers, and then is wf for that
+            lemma_staged_eval_preserves_num_buffers(&**then, mid);
+        },
+        Stage::Loop { bound, body, invariant } => {
+            lemma_eval_loop_preserves_num_buffers(&**body, state, *bound, 0);
+        },
+    }
+}
+
+/// eval_loop preserves num_buffers.
+proof fn lemma_eval_loop_preserves_num_buffers(
+    body: &Stage, state: SharedState, bound: nat, iter: nat,
+)
+    requires stage_wf(body, state.num_buffers()),
+    ensures eval_loop(body, state, bound, iter).num_buffers() == state.num_buffers(),
+    decreases body, bound - iter,
+{
+    if iter >= bound {
+    } else {
+        lemma_staged_eval_preserves_num_buffers(body, state);
+        let mid = staged_eval(body, state);
+        lemma_eval_loop_preserves_num_buffers(body, mid, bound, iter + 1);
+    }
+}
+
+/// eval_map preserves num_buffers (set_buffer preserves num_buffers).
+proof fn lemma_eval_map_preserves_num_buffers(
+    spec: &KernelSpec,
+    input_bufs: Seq<nat>,
+    output_bufs: Seq<nat>,
+    state: SharedState,
+    thread_dim: &ThreadDim,
+)
+    requires
+        output_bufs.len() == spec.outputs.len(),
+        forall|i: int| 0 <= i < input_bufs.len() ==>
+            (input_bufs[i] as int) < state.buffers.len(),
+        forall|i: int| 0 <= i < output_bufs.len() ==>
+            (output_bufs[i] as int) < state.buffers.len(),
+    ensures
+        eval_map(spec, input_bufs, output_bufs, state, thread_dim).num_buffers()
+            == state.num_buffers(),
+{
+    let inputs = Seq::new(input_bufs.len(), |i: int| state.buffers[input_bufs[i] as int]);
+    let ws = thread_count(thread_dim, state.workgroup_size);
+    lemma_eval_map_outputs_preserves_num_buffers(
+        spec, inputs, output_bufs, state, 0, ws, thread_dim);
+}
+
+proof fn lemma_eval_map_outputs_preserves_num_buffers(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    output_bufs: Seq<nat>,
+    state: SharedState,
+    out_idx: nat,
+    ws: nat,
+    thread_dim: &ThreadDim,
+)
+    requires
+        output_bufs.len() == spec.outputs.len(),
+        forall|i: int| 0 <= i < output_bufs.len() ==>
+            (output_bufs[i] as int) < state.buffers.len(),
+    ensures
+        eval_map_outputs(spec, inputs, output_bufs, state, out_idx, ws, thread_dim)
+            .num_buffers() == state.num_buffers(),
+    decreases spec.outputs.len() - out_idx,
+{
+    if out_idx >= spec.outputs.len() {
+    } else {
+        let new_buf = map_output_declarative(
+            spec, out_idx, inputs,
+            state.buffers[output_bufs[out_idx as int] as int], ws, thread_dim);
+        let new_state = state.set_buffer(output_bufs[out_idx as int], new_buf);
+        assert(new_state.buffers.len() == state.buffers.len());
+        lemma_eval_map_outputs_preserves_num_buffers(
+            spec, inputs, output_bufs, new_state, out_idx + 1, ws, thread_dim);
+    }
+}
+
+/// staged_eval preserves workgroup_size when well-formed.
+pub proof fn lemma_staged_eval_preserves_wg_size(
+    stage: &Stage, state: SharedState,
+)
+    requires stage_wf(stage, state.num_buffers()),
+    ensures staged_eval(stage, state).workgroup_size == state.workgroup_size,
+    decreases stage, 0nat,
+{
+    match stage {
+        Stage::Noop => {},
+        Stage::Map { spec, input_bufs, output_bufs, thread_dim } => {
+            lemma_eval_map_preserves_wg_size(
+                spec, *input_bufs, *output_bufs, state, thread_dim);
+        },
+        Stage::Scan { buffer, op } => {},
+        Stage::Barrier { .. } => {},
+        Stage::Seq { first, then } => {
+            lemma_staged_eval_preserves_wg_size(&**first, state);
+            lemma_staged_eval_preserves_num_buffers(&**first, state);
+            let mid = staged_eval(&**first, state);
+            lemma_staged_eval_preserves_wg_size(&**then, mid);
+        },
+        Stage::Loop { bound, body, invariant } => {
+            lemma_eval_loop_preserves_wg_size(&**body, state, *bound, 0);
+        },
+    }
+}
+
+proof fn lemma_eval_loop_preserves_wg_size(
+    body: &Stage, state: SharedState, bound: nat, iter: nat,
+)
+    requires stage_wf(body, state.num_buffers()),
+    ensures eval_loop(body, state, bound, iter).workgroup_size == state.workgroup_size,
+    decreases body, bound - iter,
+{
+    if iter >= bound {
+    } else {
+        lemma_staged_eval_preserves_wg_size(body, state);
+        lemma_staged_eval_preserves_num_buffers(body, state);
+        let mid = staged_eval(body, state);
+        lemma_eval_loop_preserves_wg_size(body, mid, bound, iter + 1);
+    }
+}
+
+proof fn lemma_eval_map_preserves_wg_size(
+    spec: &KernelSpec,
+    input_bufs: Seq<nat>,
+    output_bufs: Seq<nat>,
+    state: SharedState,
+    thread_dim: &ThreadDim,
+)
+    requires
+        output_bufs.len() == spec.outputs.len(),
+        forall|i: int| 0 <= i < input_bufs.len() ==>
+            (input_bufs[i] as int) < state.buffers.len(),
+        forall|i: int| 0 <= i < output_bufs.len() ==>
+            (output_bufs[i] as int) < state.buffers.len(),
+    ensures
+        eval_map(spec, input_bufs, output_bufs, state, thread_dim).workgroup_size
+            == state.workgroup_size,
+{
+    let inputs = Seq::new(input_bufs.len(), |i: int| state.buffers[input_bufs[i] as int]);
+    let ws = thread_count(thread_dim, state.workgroup_size);
+    lemma_eval_map_outputs_preserves_wg_size(
+        spec, inputs, output_bufs, state, 0, ws, thread_dim);
+}
+
+proof fn lemma_eval_map_outputs_preserves_wg_size(
+    spec: &KernelSpec,
+    inputs: Seq<Seq<int>>,
+    output_bufs: Seq<nat>,
+    state: SharedState,
+    out_idx: nat,
+    ws: nat,
+    thread_dim: &ThreadDim,
+)
+    requires
+        output_bufs.len() == spec.outputs.len(),
+        forall|i: int| 0 <= i < output_bufs.len() ==>
+            (output_bufs[i] as int) < state.buffers.len(),
+    ensures
+        eval_map_outputs(spec, inputs, output_bufs, state, out_idx, ws, thread_dim)
+            .workgroup_size == state.workgroup_size,
+    decreases spec.outputs.len() - out_idx,
+{
+    if out_idx >= spec.outputs.len() {
+    } else {
+        let new_buf = map_output_declarative(
+            spec, out_idx, inputs,
+            state.buffers[output_bufs[out_idx as int] as int], ws, thread_dim);
+        let new_state = state.set_buffer(output_bufs[out_idx as int], new_buf);
+        lemma_eval_map_outputs_preserves_wg_size(
+            spec, inputs, output_bufs, new_state, out_idx + 1, ws, thread_dim);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
 // Basic properties
 // ══════════════════════════════════════════════════════════════
 

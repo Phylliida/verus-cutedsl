@@ -7,7 +7,7 @@ use vstd::prelude::*;
 use crate::stage::*;
 use crate::scan::{inclusive_scan, exclusive_scan, reduce, all_partial_sums_bounded,
     inclusive_scan_int, exclusive_scan_int, reduce_int, as_int_seq};
-use crate::runtime::scan_multiblock::{inclusive_scan_i64_exec, exclusive_scan_i64_exec, reduce_i64_exec};
+use crate::runtime::scan_multiblock::{inclusive_scan_i64_exec, exclusive_scan_i64_exec};
 
 verus! {
 
@@ -557,5 +557,131 @@ impl RuntimeSharedState {
             self.data@[self.offsets@[buf as int] as int + i])
     }
 }
+
+// ══════════════════════════════════════════════════════════════
+// #1: Full scan exec↔spec bridge
+// ══════════════════════════════════════════════════════════════
+
+/// Bridge: as_int_seq of extract_buffer_spec equals the spec-level buffer.
+pub proof fn lemma_as_int_seq_extract_equals_spec(state: &RuntimeSharedState, buf: nat)
+    requires state.wf_spec(), buf < state@.num_buffers(),
+    ensures as_int_seq(state.extract_buffer_spec(buf)) =~= state@.buffers[buf as int],
+{
+    state.lemma_buffer_bounds(buf);
+}
+
+/// Full bridge: if run_inclusive_scan's ensures hold, the result equals eval_scan.
+pub proof fn lemma_run_inclusive_scan_matches_eval_scan(
+    old_state: &RuntimeSharedState,
+    new_state: &RuntimeSharedState,
+    buf: nat,
+)
+    requires
+        old_state.wf_spec(),
+        buf < old_state@.num_buffers(),
+        new_state.wf_spec(),
+        new_state@.workgroup_size == old_state@.workgroup_size,
+        new_state@.buffers.len() == old_state@.buffers.len(),
+        new_state@.buffer_len(buf) == old_state@.buffer_len(buf),
+        forall|b: int| 0 <= b < old_state@.buffers.len() && b != buf as int ==>
+            new_state@.buffers[b] == old_state@.buffers[b],
+        forall|i: int| 0 <= i < old_state@.buffer_len(buf) as int ==>
+            new_state@.buffers[buf as int][i]
+                == inclusive_scan_int(old_state.extract_buffer_spec(buf))[i],
+    ensures
+        new_state@ == eval_scan(buf, ScanOp::InclusiveSum, old_state@),
+{
+    let scan_result = inclusive_scan::<int>(old_state@.buffers[buf as int]);
+    lemma_as_int_seq_extract_equals_spec(old_state, buf);
+    // inclusive_scan_int(extract) = inclusive_scan::<int>(as_int_seq(extract))
+    // as_int_seq(extract) =~= spec_buf  (from bridge lemma)
+    // So scan_result =~= inclusive_scan_int(extract)
+    let extract = old_state.extract_buffer_spec(buf);
+    assert(as_int_seq(extract) =~= old_state@.buffers[buf as int]);
+    // inclusive_scan_int(extract) == inclusive_scan::<int>(as_int_seq(extract))
+    //                             =~= inclusive_scan::<int>(spec_buf) = scan_result
+    // inclusive_scan_int(extract) = inclusive_scan::<int>(as_int_seq(extract)) by definition
+    // as_int_seq(extract) =~= spec_buf, so their inclusive_scans agree pointwise
+    assert(inclusive_scan::<int>(as_int_seq(extract))
+        =~= inclusive_scan::<int>(old_state@.buffers[buf as int]));
+    assert forall|i: int| 0 <= i < scan_result.len() implies
+        new_state@.buffers[buf as int][i] == scan_result[i]
+    by {
+        assert(new_state@.buffers[buf as int][i] == inclusive_scan_int(extract)[i]);
+        assert(inclusive_scan_int(extract)[i]
+            == inclusive_scan::<int>(as_int_seq(extract))[i]);
+    }
+    assert(new_state@.buffers[buf as int] =~= scan_result);
+    assert(new_state@.buffers =~= old_state@.set_buffer(buf, scan_result).buffers);
+}
+
+// ══════════════════════════════════════════════════════════════
+// #2: run_exclusive_scan
+// ══════════════════════════════════════════════════════════════
+
+impl RuntimeSharedState {
+    pub fn run_exclusive_scan(&mut self, buf: usize)
+        requires
+            old(self).wf_spec(),
+            buf < old(self)@.num_buffers(),
+            old(self)@.buffer_len(buf as nat) > 0,
+            old(self)@.buffer_len(buf as nat) <= i64::MAX as nat,
+            all_partial_sums_bounded(old(self).extract_buffer_spec(buf as nat)),
+        ensures
+            self.wf_spec(),
+            self@.workgroup_size == old(self)@.workgroup_size,
+            self@.buffers.len() == old(self)@.buffers.len(),
+            self@.buffer_len(buf as nat) == old(self)@.buffer_len(buf as nat),
+            forall|b: int| 0 <= b < old(self)@.buffers.len() && b != buf as int ==>
+                self@.buffers[b] == old(self)@.buffers[b],
+            forall|i: int| 0 <= i < old(self)@.buffer_len(buf as nat) as int ==>
+                self@.buffers[buf as int][i]
+                    == exclusive_scan_int(old(self).extract_buffer_spec(buf as nat))[i],
+    {
+        let ghost old_spec = self.extract_buffer_spec(buf as nat);
+        let data = self.extract_buffer(buf);
+        proof { assert(data@ =~= old_spec); }
+        let scanned = exclusive_scan_i64_exec(&data);
+        proof {
+            assert forall|i: int| 0 <= i < scanned@.len() implies
+                scanned@[i] as int == exclusive_scan_int(old_spec)[i]
+            by {
+                assert(scanned@[i] as int == exclusive_scan_int(data@)[i]);
+            }
+        }
+        self.write_buffer(buf, &scanned);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+// #3: 2D thread env injectivity
+// ══════════════════════════════════════════════════════════════
+
+/// For 2D dispatch, distinct linear thread IDs produce distinct environments.
+/// env(t) = [t % width, t / width] — the mixed-radix decomposition is injective.
+pub proof fn lemma_dim2d_env_injective(t1: nat, t2: nat, width: nat, height: nat)
+    requires
+        width > 0,
+        t1 < width * height,
+        t2 < width * height,
+        t1 != t2,
+    ensures
+        thread_env_for_dim(&ThreadDim::Dim2D { width, height }, t1)
+            != thread_env_for_dim(&ThreadDim::Dim2D { width, height }, t2),
+{
+    // If envs were equal: t1 % w == t2 % w AND t1 / w == t2 / w
+    // Then t1 == (t1/w)*w + t1%w == (t2/w)*w + t2%w == t2. Contradiction.
+    if t1 % width == t2 % width && t1 / width == t2 / width {
+        // t == (t / w) * w + t % w is the Euclidean division identity
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(t1 as int, width as int);
+        vstd::arithmetic::div_mod::lemma_fundamental_div_mod(t2 as int, width as int);
+    }
+}
+
+// NOTE on 2D scatter: Var(0) scatter is NOT injective for 2D dispatch
+// because env[0] = t % width (gid_x), and threads in different rows share
+// the same gid_x. For 2D kernels, scatter must linearize:
+//   scatter = Add(Var(0), Mul(Var(1), Const(width)))
+// The lemma_identity_scatter_injective in stage_lemmas.rs works for 1D only.
 
 } // verus!
