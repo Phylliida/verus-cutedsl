@@ -353,6 +353,54 @@ pub proof fn lemma_hillis_steele_round_preserves_structure(
         state.workgroup_size, &ThreadDim::Dim1D);
 }
 
+/// Multi-round Hillis-Steele: k rounds of Map+Barrier produce
+/// hillis_steele_state(data, n, k).
+/// By induction using round_correct + preserves_structure.
+pub proof fn lemma_hillis_steele_multi_round(
+    data: Seq<int>, n: nat, state: SharedState, k: nat,
+)
+    requires
+        n > 0,
+        state.buffers.len() >= 1,
+        state.buffers[0].len() == n,
+        state.workgroup_size == n,
+        state.buffers[0] == hillis_steele_state(data, n, 0),  // = data
+    ensures ({
+        let final_state = hillis_steele_multi_eval(data, n, state, k);
+        final_state.buffers.len() >= 1
+        && final_state.buffers[0].len() == n
+        && final_state.workgroup_size == n
+        && final_state.buffers[0] =~= hillis_steele_state(data, n, k)
+    }),
+    decreases k,
+{
+    if k == 0 {
+    } else {
+        // IH: (k-1) rounds give hillis_steele_state(data, n, k-1)
+        lemma_hillis_steele_multi_round(data, n, state, (k - 1) as nat);
+        let after_prev = hillis_steele_multi_eval(data, n, state, (k - 1) as nat);
+
+        // One more round advances from level k-1 to level k
+        let stride = pow2((k - 1) as nat);
+        lemma_hillis_steele_round_correct(data, n, (k - 1) as nat, after_prev);
+        lemma_hillis_steele_round_preserves_structure(n, stride, after_prev);
+    }
+}
+
+/// Apply k rounds of Hillis-Steele (helper spec for the induction).
+pub open spec fn hillis_steele_multi_eval(
+    data: Seq<int>, n: nat, state: SharedState, k: nat,
+) -> SharedState
+    decreases k,
+{
+    if k == 0 { state }
+    else {
+        let prev = hillis_steele_multi_eval(data, n, state, (k - 1) as nat);
+        let stride = pow2((k - 1) as nat);
+        staged_eval(&hillis_steele_round_stage(n, stride), prev)
+    }
+}
+
 // stage_wf proofs for composed stages are blocked by Z3's difficulty with
 // Box::new in structural recursion. The individual components verify
 // (e.g., stage_wf(&Stage::Map{...}, n) works) but composed stages built
