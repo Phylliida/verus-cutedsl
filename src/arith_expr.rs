@@ -4,46 +4,46 @@ use crate::layout::*;
 
 verus! {
 
-// ══════════════════════════════════════════════════════════════
-// Verified arithmetic expression language for GPU codegen
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Verified arithmetic expression language for GPU codegen
+//  ══════════════════════════════════════════════════════════════
 
-/// Comparison operator for Cmp node.
+///  Comparison operator for Cmp node.
 pub enum CmpOp {
     Lt, Le, Gt, Ge, Eq, Ne,
 }
 
-/// Arithmetic expression — the IR shared between Verus verification and GPU codegen.
-/// Every CuTe index computation reduces to this language.
+///  Arithmetic expression — the IR shared between Verus verification and GPU codegen.
+///  Every CuTe index computation reduces to this language.
 pub enum ArithExpr {
-    /// Integer constant
+    ///  Integer constant
     Const(int),
-    /// Variable reference by index (into an environment)
+    ///  Variable reference by index (into an environment)
     Var(nat),
-    /// Addition
+    ///  Addition
     Add(Box<ArithExpr>, Box<ArithExpr>),
-    /// Subtraction
+    ///  Subtraction
     Sub(Box<ArithExpr>, Box<ArithExpr>),
-    /// Multiplication
+    ///  Multiplication
     Mul(Box<ArithExpr>, Box<ArithExpr>),
-    /// Integer division (truncating toward zero)
+    ///  Integer division (truncating toward zero)
     Div(Box<ArithExpr>, Box<ArithExpr>),
-    /// Integer modulo
+    ///  Integer modulo
     Mod(Box<ArithExpr>, Box<ArithExpr>),
-    /// Array index: arrays[arr_idx][index_expr]
+    ///  Array index: arrays[arr_idx][index_expr]
     Index(nat, Box<ArithExpr>),
-    /// Comparison: returns 1 if true, 0 if false
+    ///  Comparison: returns 1 if true, 0 if false
     Cmp(CmpOp, Box<ArithExpr>, Box<ArithExpr>),
-    /// Arithmetic right shift: a >> b (for fixed-point: (a * b) >> N).
-    /// Non-negative operands: equivalent to a / 2^b.
+    ///  Arithmetic right shift: a >> b (for fixed-point: (a * b) >> N).
+    ///  Non-negative operands: equivalent to a / 2^b.
     Shr(Box<ArithExpr>, Box<ArithExpr>),
-    /// Summation reduction: Reduce(var, bound, body) = Σ_{var=0}^{bound-1} body
-    /// `var` is the variable index, `bound` is evaluated, body is evaluated
-    /// with env[var] set to each value 0..bound-1.
+    ///  Summation reduction: Reduce(var, bound, body) = Σ_{var=0}^{bound-1} body
+    ///  `var` is the variable index, `bound` is evaluated, body is evaluated
+    ///  with env[var] set to each value 0..bound-1.
     Reduce(nat, Box<ArithExpr>, Box<ArithExpr>),
 }
 
-/// Evaluate a comparison operator.
+///  Evaluate a comparison operator.
 pub open spec fn cmp_eval(op: &CmpOp, a: int, b: int) -> int {
     match op {
         CmpOp::Lt => if a < b { 1 } else { 0 },
@@ -55,7 +55,7 @@ pub open spec fn cmp_eval(op: &CmpOp, a: int, b: int) -> int {
     }
 }
 
-/// Update env[var] = val, extending with zeros if needed.
+///  Update env[var] = val, extending with zeros if needed.
 pub open spec fn env_with(env: Seq<int>, var: nat, val: int) -> Seq<int> {
     if (var as int) < env.len() {
         env.update(var as int, val)
@@ -68,7 +68,7 @@ pub open spec fn env_with(env: Seq<int>, var: nat, val: int) -> Seq<int> {
     }
 }
 
-/// Summation spec: Σ_{i=0}^{n-1} arith_eval(body, env[var := i])
+///  Summation spec: Σ_{i=0}^{n-1} arith_eval(body, env[var := i])
 pub open spec fn reduce_sum(var: nat, n: int, body: &ArithExpr, env: Seq<int>) -> int
     decreases body, (if n > 0 { n } else { 0 }),
 {
@@ -79,7 +79,7 @@ pub open spec fn reduce_sum(var: nat, n: int, body: &ArithExpr, env: Seq<int>) -
     }
 }
 
-/// Summation with arrays: Σ_{i=0}^{n-1} arith_eval_with_arrays(body, env[var := i], arrays)
+///  Summation with arrays: Σ_{i=0}^{n-1} arith_eval_with_arrays(body, env[var := i], arrays)
 pub open spec fn reduce_sum_arrays(
     var: nat, n: int, body: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
 ) -> int
@@ -92,14 +92,14 @@ pub open spec fn reduce_sum_arrays(
     }
 }
 
-/// Arithmetic right shift spec: a >> b = a / 2^b for non-negative b, 0 for negative b.
+///  Arithmetic right shift spec: a >> b = a / 2^b for non-negative b, 0 for negative b.
 pub open spec fn shr_spec(a: int, b: int) -> int {
     if b <= 0 { a }
     else { a / crate::swizzle::pow2(b as nat) as int }
 }
 
-/// Evaluate an arithmetic expression.
-/// - `env`: scalar variable bindings (for Var)
+///  Evaluate an arithmetic expression.
+///  - `env`: scalar variable bindings (for Var)
 pub open spec fn arith_eval(expr: &ArithExpr, env: Seq<int>) -> int
     decreases expr, 0int,
 {
@@ -129,7 +129,7 @@ pub open spec fn arith_eval(expr: &ArithExpr, env: Seq<int>) -> int
     }
 }
 
-/// Evaluate with full array support: arrays[arr_idx][eval(idx_expr)].
+///  Evaluate with full array support: arrays[arr_idx][eval(idx_expr)].
 pub open spec fn arith_eval_with_arrays(
     expr: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
 ) -> int
@@ -171,14 +171,14 @@ pub open spec fn arith_eval_with_arrays(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// ArithExpr constructors for CuTe operations
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  ArithExpr constructors for CuTe operations
+//  ══════════════════════════════════════════════════════════════
 
-/// Build an ArithExpr for: (x / prefix_product) % shape_i
-/// This is delinearize(x, shape)[i] — extracting coordinate i from linear index x.
+///  Build an ArithExpr for: (x / prefix_product) % shape_i
+///  This is delinearize(x, shape)[i] — extracting coordinate i from linear index x.
 pub open spec fn delinearize_coord_expr(
-    x_var: nat,          // variable index for x
+    x_var: nat,          //  variable index for x
     shape: Seq<nat>,
     i: nat,
 ) -> ArithExpr
@@ -195,7 +195,7 @@ pub open spec fn delinearize_coord_expr(
     )
 }
 
-/// Prefix product: product of shape[0..i].
+///  Prefix product: product of shape[0..i].
 pub open spec fn shape_prefix_product(shape: Seq<nat>, i: nat) -> nat
     decreases i,
 {
@@ -203,8 +203,8 @@ pub open spec fn shape_prefix_product(shape: Seq<nat>, i: nat) -> nat
     else { shape[(i - 1) as int] * shape_prefix_product(shape, (i - 1) as nat) }
 }
 
-/// Build an ArithExpr for: sum_i (coord_i * stride_i)
-/// This is the dot product of delinearized coordinates with strides — i.e., layout.offset(x).
+///  Build an ArithExpr for: sum_i (coord_i * stride_i)
+///  This is the dot product of delinearized coordinates with strides — i.e., layout.offset(x).
 pub open spec fn offset_expr(
     x_var: nat,
     shape: Seq<nat>,
@@ -232,7 +232,7 @@ pub open spec fn offset_expr(
     }
 }
 
-/// Helper: offset expression starting from mode `start`.
+///  Helper: offset expression starting from mode `start`.
 pub open spec fn offset_expr_skip(
     x_var: nat,
     shape: Seq<nat>,
@@ -261,32 +261,32 @@ pub open spec fn offset_expr_skip(
     }
 }
 
-/// GEMM A-index expression: i*K + k (row-major addressing).
-/// Variables: 0=i, 1=j, 2=k.
+///  GEMM A-index expression: i*K + k (row-major addressing).
+///  Variables: 0=i, 1=j, 2=k.
 pub open spec fn gemm_a_index_expr(k_size: nat) -> ArithExpr {
     ArithExpr::Add(
         Box::new(ArithExpr::Mul(
-            Box::new(ArithExpr::Var(0)),        // i
+            Box::new(ArithExpr::Var(0)),        //  i
             Box::new(ArithExpr::Const(k_size as int)),
         )),
-        Box::new(ArithExpr::Var(2)),            // k
+        Box::new(ArithExpr::Var(2)),            //  k
     )
 }
 
-/// GEMM B-index expression: k*N + j (row-major addressing).
-/// Variables: 0=i, 1=j, 2=k.
+///  GEMM B-index expression: k*N + j (row-major addressing).
+///  Variables: 0=i, 1=j, 2=k.
 pub open spec fn gemm_b_index_expr(n: nat) -> ArithExpr {
     ArithExpr::Add(
         Box::new(ArithExpr::Mul(
-            Box::new(ArithExpr::Var(2)),        // k
+            Box::new(ArithExpr::Var(2)),        //  k
             Box::new(ArithExpr::Const(n as int)),
         )),
-        Box::new(ArithExpr::Var(1)),            // j
+        Box::new(ArithExpr::Var(1)),            //  j
     )
 }
 
-/// GEMM MAC expression: A[i*K+k] * B[k*N+j].
-/// Array 0 = A, Array 1 = B. Variables: 0=i, 1=j, 2=k.
+///  GEMM MAC expression: A[i*K+k] * B[k*N+j].
+///  Array 0 = A, Array 1 = B. Variables: 0=i, 1=j, 2=k.
 pub open spec fn gemm_mac_expr(k_size: nat, n: nat) -> ArithExpr {
     ArithExpr::Mul(
         Box::new(ArithExpr::Index(0, Box::new(gemm_a_index_expr(k_size)))),
@@ -294,23 +294,23 @@ pub open spec fn gemm_mac_expr(k_size: nat, n: nat) -> ArithExpr {
     )
 }
 
-// ══════════════════════════════════════════════════════════════
-// Correctness proofs: ArithExpr matches CuTe operations
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Correctness proofs: ArithExpr matches CuTe operations
+//  ══════════════════════════════════════════════════════════════
 
-/// shape_prefix_product(shape, 0) == 1.
+///  shape_prefix_product(shape, 0) == 1.
 pub proof fn lemma_prefix_product_base(shape: Seq<nat>)
     ensures shape_prefix_product(shape, 0) == 1nat,
 {}
 
-/// shape_prefix_product is the product of shape[0..i].
+///  shape_prefix_product is the product of shape[0..i].
 pub proof fn lemma_prefix_product_step(shape: Seq<nat>, i: nat)
     requires i > 0, i <= shape.len(),
     ensures shape_prefix_product(shape, i) == shape[(i - 1) as int] * shape_prefix_product(shape, (i - 1) as nat),
 {}
 
-/// Helper: arith_eval of Mod(Div(Var(v), Const(d)), Const(m)) = (env[v] / d) % m.
-/// This isolates the ArithExpr unfolding so z3 doesn't have to unfold 5 levels deep.
+///  Helper: arith_eval of Mod(Div(Var(v), Const(d)), Const(m)) = (env[v] / d) % m.
+///  This isolates the ArithExpr unfolding so z3 doesn't have to unfold 5 levels deep.
 proof fn lemma_arith_eval_mod_div(v: nat, d: int, m: int, env: Seq<int>)
     requires
         (v as int) < env.len(),
@@ -325,7 +325,7 @@ proof fn lemma_arith_eval_mod_div(v: nat, d: int, m: int, env: Seq<int>)
             Box::new(ArithExpr::Const(m)),
         ), env) == (env[v as int] / d) % m,
 {
-    // Unfold step by step:
+    //  Unfold step by step:
     let inner_div = ArithExpr::Div(
         Box::new(ArithExpr::Var(v)),
         Box::new(ArithExpr::Const(d)),
@@ -336,10 +336,10 @@ proof fn lemma_arith_eval_mod_div(v: nat, d: int, m: int, env: Seq<int>)
     assert(arith_eval(&ArithExpr::Const(m), env) == m);
 }
 
-/// Delinearize coordinate expr is correct:
-/// arith_eval(delinearize_coord_expr(0, shape, i), [x]) == delinearize(x, shape)[i].
+///  Delinearize coordinate expr is correct:
+///  arith_eval(delinearize_coord_expr(0, shape, i), [x]) == delinearize(x, shape)[i].
 ///
-/// The mixed-radix identity: delinearize(x, shape)[i] = (x / prefix_product(i)) % shape[i].
+///  The mixed-radix identity: delinearize(x, shape)[i] = (x / prefix_product(i)) % shape[i].
 pub proof fn lemma_delinearize_coord_expr_correct(
     shape: Seq<nat>, i: nat, x: nat,
 )
@@ -367,17 +367,17 @@ pub proof fn lemma_delinearize_coord_expr_correct(
         };
         crate::proof::shape_lemmas::lemma_delinearize_len(x, shape);
 
-        // x / shape[0] < shape_size(rest)
+        //  x / shape[0] < shape_size(rest)
         crate::runtime::shape_helpers::lemma_shape_size_split(shape, 1);
         assert(shape.take(1) =~= seq![shape.first()]);
         crate::proof::shape_lemmas::lemma_shape_size_single(shape.first());
         crate::proof::shape_lemmas::lemma_shape_size_positive(rest);
         crate::proof::integer_helpers::lemma_div_upper_bound(x, shape.first(), shape_size(rest));
 
-        // IH on rest
+        //  IH on rest
         lemma_delinearize_coord_expr_correct(rest, (i - 1) as nat, x / shape.first());
 
-        // pp(shape, i) == shape[0] * pp(rest, i-1), then div_div
+        //  pp(shape, i) == shape[0] * pp(rest, i-1), then div_div
         let pp_rest = shape_prefix_product(rest, (i - 1) as nat);
         lemma_prefix_product_positive(rest, (i - 1) as nat);
         lemma_prefix_product_split(shape, i);
@@ -389,7 +389,7 @@ pub proof fn lemma_delinearize_coord_expr_correct(
 
         assert(rest[(i - 1) as int] == shape[i as int]);
 
-        // ArithExpr evaluation and delinearize connection
+        //  ArithExpr evaluation and delinearize connection
         lemma_arith_eval_mod_div(0, pp as int, shape[i as int] as int, seq![x as int]);
         lemma_arith_eval_mod_div(0, pp_rest as int, rest[(i - 1) as int] as int, seq![(x / shape.first()) as int]);
         crate::proof::shape_lemmas::lemma_delinearize_concat(x, seq![shape.first()], rest);
@@ -400,8 +400,8 @@ pub proof fn lemma_delinearize_coord_expr_correct(
     }
 }
 
-/// Prefix product splits: pp(shape, i) == shape[0] * pp(skip(1), i-1) for i >= 1.
-/// This connects the whole-shape prefix product to the rest-shape prefix product.
+///  Prefix product splits: pp(shape, i) == shape[0] * pp(skip(1), i-1) for i >= 1.
+///  This connects the whole-shape prefix product to the rest-shape prefix product.
 proof fn lemma_prefix_product_split(shape: Seq<nat>, i: nat)
     requires
         shape_valid(shape),
@@ -413,32 +413,32 @@ proof fn lemma_prefix_product_split(shape: Seq<nat>, i: nat)
     decreases i,
 {
     if i == 1 {
-        // pp(shape, 1) = shape[0] * pp(shape, 0) = shape[0] * 1
-        // shape[0] * pp(rest, 0) = shape[0] * 1
-        // Both equal shape[0].
+        //  pp(shape, 1) = shape[0] * pp(shape, 0) = shape[0] * 1
+        //  shape[0] * pp(rest, 0) = shape[0] * 1
+        //  Both equal shape[0].
         assert(shape_prefix_product(shape, 0) == 1nat);
         assert(shape_prefix_product(shape.skip(1), 0) == 1nat);
         assert(shape[(1 - 1) as int] == shape.first());
-        // pp(shape, 1) = shape.first() * 1 = shape.first()
-        // shape.first() * pp(rest, 0) = shape.first() * 1 = shape.first()
+        //  pp(shape, 1) = shape.first() * 1 = shape.first()
+        //  shape.first() * pp(rest, 0) = shape.first() * 1 = shape.first()
         assert(shape.first() * 1nat == shape.first()) by (nonlinear_arith)
             requires shape.first() >= 0;
     } else {
-        // pp(shape, i) = shape[i-1] * pp(shape, i-1)
-        // By IH: pp(shape, i-1) = shape[0] * pp(rest, i-2)
-        // So pp(shape, i) = shape[i-1] * shape[0] * pp(rest, i-2)
-        //                 = shape[0] * (shape[i-1] * pp(rest, i-2))
-        //                 = shape[0] * pp(rest, i-1)  [since rest[i-2] = shape[i-1]]
+        //  pp(shape, i) = shape[i-1] * pp(shape, i-1)
+        //  By IH: pp(shape, i-1) = shape[0] * pp(rest, i-2)
+        //  So pp(shape, i) = shape[i-1] * shape[0] * pp(rest, i-2)
+        //                  = shape[0] * (shape[i-1] * pp(rest, i-2))
+        //                  = shape[0] * pp(rest, i-1)  [since rest[i-2] = shape[i-1]]
         lemma_prefix_product_split(shape, (i - 1) as nat);
         let rest = shape.skip(1);
         assert(shape_valid(rest)) by {
             assert forall|j: int| 0 <= j < rest.len() implies #[trigger] rest[j] > 0
             by { assert(rest[j] == shape[j + 1]); };
         };
-        // pp(rest, i-1) = rest[i-2] * pp(rest, i-2) = shape[i-1] * pp(rest, i-2)
+        //  pp(rest, i-1) = rest[i-2] * pp(rest, i-2) = shape[i-1] * pp(rest, i-2)
         assert(rest[(i - 2) as int] == shape[(i - 1) as int]);
-        // pp(shape, i) = shape[i-1] * pp(shape, i-1) = shape[i-1] * (shape[0] * pp(rest, i-2))
-        //             = shape[0] * (shape[i-1] * pp(rest, i-2)) = shape[0] * pp(rest, i-1)
+        //  pp(shape, i) = shape[i-1] * pp(shape, i-1) = shape[i-1] * (shape[0] * pp(rest, i-2))
+        //              = shape[0] * (shape[i-1] * pp(rest, i-2)) = shape[0] * pp(rest, i-1)
         assert(shape_prefix_product(shape, i)
             == shape.first() * shape_prefix_product(rest, (i - 1) as nat))
             by (nonlinear_arith)
@@ -450,7 +450,7 @@ proof fn lemma_prefix_product_split(shape: Seq<nat>, i: nat)
     }
 }
 
-/// Prefix product is always positive for valid shapes.
+///  Prefix product is always positive for valid shapes.
 proof fn lemma_prefix_product_positive(shape: Seq<nat>, i: nat)
     requires shape_valid(shape), i <= shape.len(),
     ensures shape_prefix_product(shape, i) > 0,
@@ -468,12 +468,12 @@ proof fn lemma_prefix_product_positive(shape: Seq<nat>, i: nat)
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Bridge: shape_prefix_product ↔ shape_size ↔ shape_prefix_products ↔ column_major_strides
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Bridge: shape_prefix_product ↔ shape_size ↔ shape_prefix_products ↔ column_major_strides
+//  ══════════════════════════════════════════════════════════════
 
-/// shape_prefix_product(shape, i) == shape_size(shape.take(i)).
-/// This is the fundamental identity connecting prefix products to shape_size.
+///  shape_prefix_product(shape, i) == shape_size(shape.take(i)).
+///  This is the fundamental identity connecting prefix products to shape_size.
 pub proof fn lemma_prefix_product_eq_shape_size(shape: Seq<nat>, i: nat)
     requires
         shape_valid(shape),
@@ -492,10 +492,10 @@ pub proof fn lemma_prefix_product_eq_shape_size(shape: Seq<nat>, i: nat)
             seq![shape[(i - 1) as int]],
         );
         crate::proof::shape_lemmas::lemma_shape_size_single(shape[(i - 1) as int]);
-        // pp(shape, i) = shape[i-1] * pp(shape, i-1)
-        // shape_size(take(i)) = shape_size(take(i-1)) * shape[i-1]
-        // = pp(shape, i-1) * shape[i-1] (by IH)
-        // Commutativity: a * b == b * a
+        //  pp(shape, i) = shape[i-1] * pp(shape, i-1)
+        //  shape_size(take(i)) = shape_size(take(i-1)) * shape[i-1]
+        //  = pp(shape, i-1) * shape[i-1] (by IH)
+        //  Commutativity: a * b == b * a
         assert(shape_prefix_product(shape, i) == shape_size(shape.take(i as int)))
             by (nonlinear_arith)
             requires
@@ -506,7 +506,7 @@ pub proof fn lemma_prefix_product_eq_shape_size(shape: Seq<nat>, i: nat)
     }
 }
 
-/// shape_prefix_product(shape, i) == shape_prefix_products(shape)[i].
+///  shape_prefix_product(shape, i) == shape_prefix_products(shape)[i].
 pub proof fn lemma_prefix_product_eq_prefix_products(shape: Seq<nat>, i: nat)
     requires
         shape_valid(shape),
@@ -518,7 +518,7 @@ pub proof fn lemma_prefix_product_eq_prefix_products(shape: Seq<nat>, i: nat)
     crate::proof::inverse_lemmas::lemma_prefix_products_value(shape, i);
 }
 
-/// shape_prefix_product(shape, i) as int == column_major_strides(shape)[i] for i < shape.len().
+///  shape_prefix_product(shape, i) as int == column_major_strides(shape)[i] for i < shape.len().
 pub proof fn lemma_prefix_product_eq_cm_stride(shape: Seq<nat>, i: nat)
     requires
         shape_valid(shape),
@@ -531,35 +531,35 @@ pub proof fn lemma_prefix_product_eq_cm_stride(shape: Seq<nat>, i: nat)
     if i == 0 {
         crate::proof::inverse_lemmas::lemma_column_major_strides_first(shape);
     } else {
-        // cm(shape)[i] = shape[0] * cm(shape.skip(1))[i-1]  (from cm recursive def + scale)
-        // pp(shape, i) = shape[i-1] * pp(shape, i-1)
-        // By IH on shape.skip(1) with index i-1:
-        //   pp(skip(1), i-1) as int == cm(skip(1))[i-1]
-        // pp_split: pp(shape, i) == shape[0] * pp(skip(1), i-1)
+        //  cm(shape)[i] = shape[0] * cm(shape.skip(1))[i-1]  (from cm recursive def + scale)
+        //  pp(shape, i) = shape[i-1] * pp(shape, i-1)
+        //  By IH on shape.skip(1) with index i-1:
+        //    pp(skip(1), i-1) as int == cm(skip(1))[i-1]
+        //  pp_split: pp(shape, i) == shape[0] * pp(skip(1), i-1)
         let rest = shape.skip(1);
         assert(shape_valid(rest)) by {
             assert forall|j: int| 0 <= j < rest.len() implies #[trigger] rest[j] > 0
             by { assert(rest[j] == shape[j + 1]); };
         };
         lemma_prefix_product_split(shape, i);
-        // pp(shape, i) == shape[0] * pp(rest, i-1)
+        //  pp(shape, i) == shape[0] * pp(rest, i-1)
         lemma_prefix_product_eq_cm_stride(rest, (i - 1) as nat);
-        // pp(rest, i-1) as int == cm(rest)[i-1]
-        // So pp(shape, i) as int == shape[0] * cm(rest)[i-1] (as int)
-        // Need: cm(shape)[i] == shape[0] * cm(rest)[i-1]
-        // This follows from the cm definition: cm(shape) = [1] ++ scale(cm(rest), shape[0])
-        // cm(shape)[i] = scale(cm(rest), shape[0])[i-1] = shape[0] * cm(rest)[i-1]
+        //  pp(rest, i-1) as int == cm(rest)[i-1]
+        //  So pp(shape, i) as int == shape[0] * cm(rest)[i-1] (as int)
+        //  Need: cm(shape)[i] == shape[0] * cm(rest)[i-1]
+        //  This follows from the cm definition: cm(shape) = [1] ++ scale(cm(rest), shape[0])
+        //  cm(shape)[i] = scale(cm(rest), shape[0])[i-1] = shape[0] * cm(rest)[i-1]
         crate::proof::injectivity_lemmas::lemma_column_major_strides_len(rest);
         assert(column_major_strides(shape)[i as int]
             == (shape.first() as int) * column_major_strides(rest)[(i - 1) as int]);
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// General Box-unfolding helpers for arith_eval
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  General Box-unfolding helpers for arith_eval
+//  ══════════════════════════════════════════════════════════════
 
-/// Helper: arith_eval of Mul(Const(c), expr) = c * arith_eval(expr, env).
+///  Helper: arith_eval of Mul(Const(c), expr) = c * arith_eval(expr, env).
 pub proof fn lemma_arith_eval_const_mul_expr(c: int, expr: &ArithExpr, env: Seq<int>)
     ensures
         arith_eval(&ArithExpr::Mul(Box::new(ArithExpr::Const(c)), Box::new(*expr)), env)
@@ -568,7 +568,7 @@ pub proof fn lemma_arith_eval_const_mul_expr(c: int, expr: &ArithExpr, env: Seq<
     assert(arith_eval(&ArithExpr::Const(c), env) == c);
 }
 
-/// Helper: arith_eval of Mul(expr, Const(c)) = arith_eval(expr, env) * c.
+///  Helper: arith_eval of Mul(expr, Const(c)) = arith_eval(expr, env) * c.
 proof fn lemma_arith_eval_mul_expr_const(expr: &ArithExpr, c: int, env: Seq<int>)
     ensures
         arith_eval(&ArithExpr::Mul(Box::new(*expr), Box::new(ArithExpr::Const(c))), env)
@@ -577,55 +577,55 @@ proof fn lemma_arith_eval_mul_expr_const(expr: &ArithExpr, c: int, env: Seq<int>
     assert(arith_eval(&ArithExpr::Const(c), env) == c);
 }
 
-/// Helper: arith_eval of Add(a, b) = arith_eval(a, env) + arith_eval(b, env).
+///  Helper: arith_eval of Add(a, b) = arith_eval(a, env) + arith_eval(b, env).
 proof fn lemma_arith_eval_add(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     ensures
         arith_eval(&ArithExpr::Add(Box::new(*a), Box::new(*b)), env)
             == arith_eval(a, env) + arith_eval(b, env),
 {}
 
-/// Helper: arith_eval_with_arrays of Add(a, b).
+///  Helper: arith_eval_with_arrays of Add(a, b).
 pub proof fn lemma_eval_with_arrays_add(a: &ArithExpr, b: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>)
     ensures
         arith_eval_with_arrays(&ArithExpr::Add(Box::new(*a), Box::new(*b)), env, arrays)
             == arith_eval_with_arrays(a, env, arrays) + arith_eval_with_arrays(b, env, arrays),
 {}
 
-/// Helper: arith_eval of Sub(a, b) = arith_eval(a, env) - arith_eval(b, env).
+///  Helper: arith_eval of Sub(a, b) = arith_eval(a, env) - arith_eval(b, env).
 proof fn lemma_arith_eval_sub(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     ensures
         arith_eval(&ArithExpr::Sub(Box::new(*a), Box::new(*b)), env)
             == arith_eval(a, env) - arith_eval(b, env),
 {}
 
-/// Helper: arith_eval of Mul(a, b) = arith_eval(a, env) * arith_eval(b, env).
+///  Helper: arith_eval of Mul(a, b) = arith_eval(a, env) * arith_eval(b, env).
 proof fn lemma_arith_eval_mul(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     ensures
         arith_eval(&ArithExpr::Mul(Box::new(*a), Box::new(*b)), env)
             == arith_eval(a, env) * arith_eval(b, env),
 {}
 
-/// Helper: arith_eval of Index(arr, idx) = arith_eval(idx, env).
+///  Helper: arith_eval of Index(arr, idx) = arith_eval(idx, env).
 proof fn lemma_arith_eval_index(arr: nat, idx: &ArithExpr, env: Seq<int>)
     ensures
         arith_eval(&ArithExpr::Index(arr, Box::new(*idx)), env) == arith_eval(idx, env),
 {}
 
-/// Helper: arith_eval of Reduce(var, bound, body).
+///  Helper: arith_eval of Reduce(var, bound, body).
 pub proof fn lemma_arith_eval_reduce(var: nat, bound: &ArithExpr, body: &ArithExpr, env: Seq<int>)
     ensures
         arith_eval(&ArithExpr::Reduce(var, Box::new(*bound), Box::new(*body)), env)
             == reduce_sum(var, arith_eval(bound, env), body, env),
 {}
 
-/// Helper: arith_eval of Shr(a, b).
+///  Helper: arith_eval of Shr(a, b).
 pub proof fn lemma_arith_eval_shr(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     ensures
         arith_eval(&ArithExpr::Shr(Box::new(*a), Box::new(*b)), env)
             == shr_spec(arith_eval(a, env), arith_eval(b, env)),
 {}
 
-/// Helper: arith_eval_fits_i64 for a Shr node.
+///  Helper: arith_eval_fits_i64 for a Shr node.
 proof fn lemma_fits_i64_shr(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     requires arith_eval_fits_i64(&ArithExpr::Shr(Box::new(*a), Box::new(*b)), env),
     ensures
@@ -635,14 +635,14 @@ proof fn lemma_fits_i64_shr(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
         shr_spec(arith_eval(a, env), arith_eval(b, env)) <= i64::MAX as int,
 {}
 
-/// Helper: arith_eval of Cmp(op, a, b).
+///  Helper: arith_eval of Cmp(op, a, b).
 pub proof fn lemma_arith_eval_cmp(op: &CmpOp, a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     ensures
         arith_eval(&ArithExpr::Cmp(*op, Box::new(*a), Box::new(*b)), env)
             == cmp_eval(op, arith_eval(a, env), arith_eval(b, env)),
 {}
 
-/// Helper: arith_eval_with_arrays of Cmp(op, a, b).
+///  Helper: arith_eval_with_arrays of Cmp(op, a, b).
 pub proof fn lemma_eval_with_arrays_cmp(
     op: &CmpOp, a: &ArithExpr, b: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
 )
@@ -652,7 +652,7 @@ pub proof fn lemma_eval_with_arrays_cmp(
                              arith_eval_with_arrays(b, env, arrays)),
 {}
 
-/// Helper: arith_eval_with_arrays of Sub(a, b).
+///  Helper: arith_eval_with_arrays of Sub(a, b).
 pub proof fn lemma_eval_with_arrays_sub(
     a: &ArithExpr, b: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
 )
@@ -661,7 +661,7 @@ pub proof fn lemma_eval_with_arrays_sub(
             == arith_eval_with_arrays(a, env, arrays) - arith_eval_with_arrays(b, env, arrays),
 {}
 
-/// Helper: arith_eval of Div(a, b) — handles both zero and nonzero denom.
+///  Helper: arith_eval of Div(a, b) — handles both zero and nonzero denom.
 proof fn lemma_arith_eval_div(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     ensures
         arith_eval(b, env) != 0 ==> arith_eval(&ArithExpr::Div(Box::new(*a), Box::new(*b)), env)
@@ -669,7 +669,7 @@ proof fn lemma_arith_eval_div(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
         arith_eval(b, env) == 0 ==> arith_eval(&ArithExpr::Div(Box::new(*a), Box::new(*b)), env) == 0,
 {}
 
-/// Helper: arith_eval of Mod(a, b) — handles both zero and nonzero denom.
+///  Helper: arith_eval of Mod(a, b) — handles both zero and nonzero denom.
 proof fn lemma_arith_eval_mod(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     ensures
         arith_eval(b, env) != 0 ==> arith_eval(&ArithExpr::Mod(Box::new(*a), Box::new(*b)), env)
@@ -677,7 +677,7 @@ proof fn lemma_arith_eval_mod(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
         arith_eval(b, env) == 0 ==> arith_eval(&ArithExpr::Mod(Box::new(*a), Box::new(*b)), env) == 0,
 {}
 
-/// Helper: arith_eval_fits_i64 for an Add node.
+///  Helper: arith_eval_fits_i64 for an Add node.
 proof fn lemma_fits_i64_add(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     requires arith_eval_fits_i64(&ArithExpr::Add(Box::new(*a), Box::new(*b)), env),
     ensures
@@ -687,7 +687,7 @@ proof fn lemma_fits_i64_add(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
         arith_eval(a, env) + arith_eval(b, env) <= i64::MAX as int,
 {}
 
-/// Helper: arith_eval_fits_i64 for a Sub node.
+///  Helper: arith_eval_fits_i64 for a Sub node.
 proof fn lemma_fits_i64_sub(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     requires arith_eval_fits_i64(&ArithExpr::Sub(Box::new(*a), Box::new(*b)), env),
     ensures
@@ -697,7 +697,7 @@ proof fn lemma_fits_i64_sub(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
         arith_eval(a, env) - arith_eval(b, env) <= i64::MAX as int,
 {}
 
-/// Helper: arith_eval_fits_i64 for a Mul node.
+///  Helper: arith_eval_fits_i64 for a Mul node.
 proof fn lemma_fits_i64_mul(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     requires arith_eval_fits_i64(&ArithExpr::Mul(Box::new(*a), Box::new(*b)), env),
     ensures
@@ -707,7 +707,7 @@ proof fn lemma_fits_i64_mul(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
         arith_eval(a, env) * arith_eval(b, env) <= i64::MAX as int,
 {}
 
-/// Helper: arith_eval_fits_i64 for a Div node.
+///  Helper: arith_eval_fits_i64 for a Div node.
 proof fn lemma_fits_i64_div(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     requires arith_eval_fits_i64(&ArithExpr::Div(Box::new(*a), Box::new(*b)), env),
     ensures
@@ -719,7 +719,7 @@ proof fn lemma_fits_i64_div(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
         arith_eval(&ArithExpr::Div(Box::new(*a), Box::new(*b)), env) <= i64::MAX as int,
 {}
 
-/// Helper: arith_eval_fits_i64 for a Mod node.
+///  Helper: arith_eval_fits_i64 for a Mod node.
 proof fn lemma_fits_i64_mod(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
     requires arith_eval_fits_i64(&ArithExpr::Mod(Box::new(*a), Box::new(*b)), env),
     ensures
@@ -731,11 +731,11 @@ proof fn lemma_fits_i64_mod(a: &ArithExpr, b: &ArithExpr, env: Seq<int>)
         arith_eval(&ArithExpr::Mod(Box::new(*a), Box::new(*b)), env) <= i64::MAX as int,
 {}
 
-// ══════════════════════════════════════════════════════════════
-// GEMM index expression correctness
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  GEMM index expression correctness
+//  ══════════════════════════════════════════════════════════════
 
-/// Helper: eval of Mul(Var(v), Const(c)) = env[v] * c.
+///  Helper: eval of Mul(Var(v), Const(c)) = env[v] * c.
 proof fn lemma_arith_eval_mul_var_const(v: nat, c: int, env: Seq<int>)
     requires (v as int) < env.len(),
     ensures arith_eval(&ArithExpr::Mul(
@@ -746,7 +746,7 @@ proof fn lemma_arith_eval_mul_var_const(v: nat, c: int, env: Seq<int>)
     assert(arith_eval(&ArithExpr::Const(c), env) == c);
 }
 
-/// Helper: eval of Add(a, Var(v)) = eval(a) + env[v].
+///  Helper: eval of Add(a, Var(v)) = eval(a) + env[v].
 proof fn lemma_arith_eval_add_var(a: &ArithExpr, v: nat, env: Seq<int>)
     requires (v as int) < env.len(),
     ensures arith_eval(&ArithExpr::Add(
@@ -756,7 +756,7 @@ proof fn lemma_arith_eval_add_var(a: &ArithExpr, v: nat, env: Seq<int>)
     assert(arith_eval(&ArithExpr::Var(v), env) == env[v as int]);
 }
 
-/// Helper: eval of Add(Mul(Var(v1), Const(c)), Var(v2)) = env[v1]*c + env[v2].
+///  Helper: eval of Add(Mul(Var(v1), Const(c)), Var(v2)) = env[v1]*c + env[v2].
 proof fn lemma_arith_eval_linear_index(v1: nat, c: int, v2: nat, env: Seq<int>)
     requires
         (v1 as int) < env.len(),
@@ -777,7 +777,7 @@ proof fn lemma_arith_eval_linear_index(v1: nat, c: int, v2: nat, env: Seq<int>)
     lemma_arith_eval_add_var(&mul_expr, v2, env);
 }
 
-/// GEMM A-index is correct: evaluates to i*K + k.
+///  GEMM A-index is correct: evaluates to i*K + k.
 pub proof fn lemma_gemm_a_index_correct(k_size: nat, i: int, j: int, k: int)
     ensures
         arith_eval(&gemm_a_index_expr(k_size), seq![i, j, k]) == i * (k_size as int) + k,
@@ -785,7 +785,7 @@ pub proof fn lemma_gemm_a_index_correct(k_size: nat, i: int, j: int, k: int)
     lemma_arith_eval_linear_index(0, k_size as int, 2, seq![i, j, k]);
 }
 
-/// GEMM B-index is correct: evaluates to k*N + j.
+///  GEMM B-index is correct: evaluates to k*N + j.
 pub proof fn lemma_gemm_b_index_correct(n: nat, i: int, j: int, k: int)
     ensures
         arith_eval(&gemm_b_index_expr(n), seq![i, j, k]) == k * (n as int) + j,
@@ -793,7 +793,7 @@ pub proof fn lemma_gemm_b_index_correct(n: nat, i: int, j: int, k: int)
     lemma_arith_eval_linear_index(2, n as int, 1, seq![i, j, k]);
 }
 
-/// Helper: for a linear index expr (Add(Mul(Var,Const),Var)), eval_with_arrays == arith_eval.
+///  Helper: for a linear index expr (Add(Mul(Var,Const),Var)), eval_with_arrays == arith_eval.
 pub proof fn lemma_eval_with_arrays_linear_index(v1: nat, c: int, v2: nat, env: Seq<int>, arrays: Seq<Seq<int>>)
     requires (v1 as int) < env.len(), (v2 as int) < env.len(),
     ensures
@@ -804,7 +804,7 @@ pub proof fn lemma_eval_with_arrays_linear_index(v1: nat, c: int, v2: nat, env: 
             Box::new(ArithExpr::Var(v2)),
         ), env, arrays) == env[v1 as int] * c + env[v2 as int],
 {
-    // eval_with_arrays for Var and Const is the same as arith_eval
+    //  eval_with_arrays for Var and Const is the same as arith_eval
     assert(arith_eval_with_arrays(&ArithExpr::Var(v1), env, arrays) == env[v1 as int]);
     assert(arith_eval_with_arrays(&ArithExpr::Const(c), env, arrays) == c);
     assert(arith_eval_with_arrays(&ArithExpr::Var(v2), env, arrays) == env[v2 as int]);
@@ -812,7 +812,7 @@ pub proof fn lemma_eval_with_arrays_linear_index(v1: nat, c: int, v2: nat, env: 
     assert(arith_eval_with_arrays(&mul_expr, env, arrays) == env[v1 as int] * c);
 }
 
-/// Helper: eval_with_arrays of Index(arr, idx_expr) = arrays[arr][eval_with_arrays(idx_expr)].
+///  Helper: eval_with_arrays of Index(arr, idx_expr) = arrays[arr][eval_with_arrays(idx_expr)].
 pub proof fn lemma_eval_with_arrays_index(
     arr: nat, idx_expr: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
     expected_idx: int,
@@ -828,7 +828,7 @@ pub proof fn lemma_eval_with_arrays_index(
         ) == arrays[arr as int][expected_idx],
 {}
 
-/// Helper: eval_with_arrays of Mul(a, b) = eval(a) * eval(b).
+///  Helper: eval_with_arrays of Mul(a, b) = eval(a) * eval(b).
 pub proof fn lemma_eval_with_arrays_mul(
     a: &ArithExpr, b: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
 )
@@ -838,8 +838,8 @@ pub proof fn lemma_eval_with_arrays_mul(
         ) == arith_eval_with_arrays(a, env, arrays) * arith_eval_with_arrays(b, env, arrays),
 {}
 
-/// GEMM MAC expression is correct with arrays:
-/// evaluates to A[i*K+k] * B[k*N+j].
+///  GEMM MAC expression is correct with arrays:
+///  evaluates to A[i*K+k] * B[k*N+j].
 pub proof fn lemma_gemm_mac_correct(
     k_size: nat, n: nat,
     a_data: Seq<int>, b_data: Seq<int>,
@@ -865,32 +865,32 @@ pub proof fn lemma_gemm_mac_correct(
     let a_idx_val = (i as int) * (k_size as int) + (k as int);
     let b_idx_val = (k as int) * (n as int) + (j as int);
 
-    // Establish that eval_with_arrays of the index exprs gives the expected values
+    //  Establish that eval_with_arrays of the index exprs gives the expected values
     lemma_eval_with_arrays_linear_index(0, k_size as int, 2, env, arrays);
     assert(arith_eval_with_arrays(&a_idx_expr, env, arrays) == a_idx_val);
     lemma_eval_with_arrays_linear_index(2, n as int, 1, env, arrays);
     assert(arith_eval_with_arrays(&b_idx_expr, env, arrays) == b_idx_val);
 
-    // Step 1: Index(0, a_idx_expr) evaluates to a_data[i*K+k]
+    //  Step 1: Index(0, a_idx_expr) evaluates to a_data[i*K+k]
     lemma_eval_with_arrays_index(0, &a_idx_expr, env, arrays, a_idx_val);
     let idx_a = ArithExpr::Index(0, Box::new(a_idx_expr));
 
-    // Step 2: Index(1, b_idx_expr) evaluates to b_data[k*N+j]
+    //  Step 2: Index(1, b_idx_expr) evaluates to b_data[k*N+j]
     lemma_eval_with_arrays_index(1, &b_idx_expr, env, arrays, b_idx_val);
     let idx_b = ArithExpr::Index(1, Box::new(b_idx_expr));
 
-    // Step 3: Mul(idx_a, idx_b) = a_data[i*K+k] * b_data[k*N+j]
+    //  Step 3: Mul(idx_a, idx_b) = a_data[i*K+k] * b_data[k*N+j]
     lemma_eval_with_arrays_mul(&idx_a, &idx_b, env, arrays);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Offset expression correctness
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Offset expression correctness
+//  ══════════════════════════════════════════════════════════════
 
-/// Inductive helper: offset_expr_skip evaluates to the tail dot product.
+///  Inductive helper: offset_expr_skip evaluates to the tail dot product.
 ///
-/// arith_eval(offset_expr_skip(0, shape, stride, start), [x])
-///     == dot_product_nat_int(delinearize(x, shape).skip(start), stride.skip(start))
+///  arith_eval(offset_expr_skip(0, shape, stride, start), [x])
+///      == dot_product_nat_int(delinearize(x, shape).skip(start), stride.skip(start))
 proof fn lemma_offset_expr_skip_correct(
     shape: Seq<nat>, stride: Seq<int>, x: nat, start: nat,
 )
@@ -912,19 +912,19 @@ proof fn lemma_offset_expr_skip_correct(
     crate::proof::shape_lemmas::lemma_delinearize_len(x, shape);
 
     if start >= shape.len() {
-        // offset_expr_skip = Const(0), coords/stride tails are empty
+        //  offset_expr_skip = Const(0), coords/stride tails are empty
         let tail_c = coords.skip(start as int);
         let tail_s = stride.skip(start as int);
         assert(tail_c.len() == 0);
         assert(tail_s.len() == 0);
         crate::proof::offset_lemmas::lemma_dot_product_empty(tail_s);
     } else {
-        // arith_eval of coord_expr == delinearize(x, shape)[start]
+        //  arith_eval of coord_expr == delinearize(x, shape)[start]
         lemma_delinearize_coord_expr_correct(shape, start, x);
         let coord_expr = delinearize_coord_expr(0, shape, start);
         let coord_val = coords[start as int];
 
-        // Mul(coord_expr, Const(stride[start])) evaluates to coord_val * stride[start]
+        //  Mul(coord_expr, Const(stride[start])) evaluates to coord_val * stride[start]
         lemma_arith_eval_mul_expr_const(&coord_expr, stride[start as int], env);
         let term = ArithExpr::Mul(
             Box::new(coord_expr),
@@ -933,7 +933,7 @@ proof fn lemma_offset_expr_skip_correct(
         let term_val = (coord_val as int) * stride[start as int];
         assert(arith_eval(&term, env) == term_val);
 
-        // Dot product decomposition: skip(start) has coords[start] as first element
+        //  Dot product decomposition: skip(start) has coords[start] as first element
         let tail_coords = coords.skip(start as int);
         let tail_stride = stride.skip(start as int);
         assert(tail_coords.len() > 0);
@@ -942,49 +942,49 @@ proof fn lemma_offset_expr_skip_correct(
         assert(tail_coords.skip(1) =~= coords.skip((start + 1) as int));
         assert(tail_stride.skip(1) =~= stride.skip((start + 1) as int));
 
-        // dot_product(tail, tail) = first*first + dot_product(rest, rest) by definition
+        //  dot_product(tail, tail) = first*first + dot_product(rest, rest) by definition
         let dp_rest = dot_product_nat_int(
             coords.skip((start + 1) as int),
             stride.skip((start + 1) as int),
         );
 
         if start + 1 >= shape.len() {
-            // Last mode: offset_expr_skip = term (just the Mul)
+            //  Last mode: offset_expr_skip = term (just the Mul)
             assert(coords.skip((start + 1) as int).len() == 0);
             assert(stride.skip((start + 1) as int).len() == 0);
             crate::proof::offset_lemmas::lemma_dot_product_empty(
                 stride.skip((start + 1) as int),
             );
             assert(dp_rest == 0);
-            // Connect: offset_expr_skip produces `term`, eval = term_val = dp
+            //  Connect: offset_expr_skip produces `term`, eval = term_val = dp
             assert(dot_product_nat_int(tail_coords, tail_stride)
                 == term_val + dp_rest);
         } else {
-            // offset_expr_skip = Add(term, offset_expr_skip(start+1))
-            // By IH: offset_expr_skip(start+1) evaluates to the remaining dot product
+            //  offset_expr_skip = Add(term, offset_expr_skip(start+1))
+            //  By IH: offset_expr_skip(start+1) evaluates to the remaining dot product
             lemma_offset_expr_skip_correct(shape, stride, x, start + 1);
             let rest_expr = offset_expr_skip(0, shape, stride, start + 1);
             assert(arith_eval(&rest_expr, env) == dp_rest);
 
-            // Add unfolding: eval(Add(term, rest)) = eval(term) + eval(rest)
+            //  Add unfolding: eval(Add(term, rest)) = eval(term) + eval(rest)
             lemma_arith_eval_add(&term, &rest_expr, env);
             assert(arith_eval(
                 &ArithExpr::Add(Box::new(term), Box::new(rest_expr)), env,
             ) == term_val + dp_rest);
 
-            // dot_product connection
+            //  dot_product connection
             assert(dot_product_nat_int(tail_coords, tail_stride)
                 == term_val + dp_rest);
         }
     }
 }
 
-/// The offset expression correctly computes layout.offset(x):
-/// arith_eval(offset_expr(0, shape, stride), [x]) == LayoutSpec{shape, stride}.offset(x).
+///  The offset expression correctly computes layout.offset(x):
+///  arith_eval(offset_expr(0, shape, stride), [x]) == LayoutSpec{shape, stride}.offset(x).
 ///
-/// This is the key theorem connecting ArithExpr to CuTe layout offsets.
-/// Combined with lemma_delinearize_coord_expr_correct, it proves that
-/// the entire index computation pipeline is faithfully represented in ArithExpr.
+///  This is the key theorem connecting ArithExpr to CuTe layout offsets.
+///  Combined with lemma_delinearize_coord_expr_correct, it proves that
+///  the entire index computation pipeline is faithfully represented in ArithExpr.
 pub proof fn lemma_offset_expr_correct(
     shape: Seq<nat>, stride: Seq<int>, x: nat,
 )
@@ -999,26 +999,26 @@ pub proof fn lemma_offset_expr_correct(
     let coords = delinearize(x, shape);
     crate::proof::shape_lemmas::lemma_delinearize_len(x, shape);
 
-    // offset_expr(0, shape, stride) == offset_expr_skip(0, shape, stride, 0)
-    // for all cases (empty, single, multi-mode). Verus can see this from the specs.
+    //  offset_expr(0, shape, stride) == offset_expr_skip(0, shape, stride, 0)
+    //  for all cases (empty, single, multi-mode). Verus can see this from the specs.
 
-    // Use the inductive helper with start=0
+    //  Use the inductive helper with start=0
     lemma_offset_expr_skip_correct(shape, stride, x, 0);
 
-    // skip(0) is identity
+    //  skip(0) is identity
     assert(coords.skip(0) =~= coords);
     assert(stride.skip(0) =~= stride);
 
-    // offset(x) = dot_product(delinearize(x, shape), stride) by definition
+    //  offset(x) = dot_product(delinearize(x, shape), stride) by definition
 }
 
-// ══════════════════════════════════════════════════════════════
-// Foundational properties of ArithExpr evaluation
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Foundational properties of ArithExpr evaluation
+//  ══════════════════════════════════════════════════════════════
 
-// --- env_with properties ---
+//  --- env_with properties ---
 
-/// env_with sets the target variable.
+///  env_with sets the target variable.
 pub proof fn lemma_env_with_at(env: Seq<int>, var: nat, val: int)
     ensures env_with(env, var, val)[var as int] == val,
 {
@@ -1034,7 +1034,7 @@ pub proof fn lemma_env_with_at(env: Seq<int>, var: nat, val: int)
     }
 }
 
-/// env_with preserves other variables (within original env length).
+///  env_with preserves other variables (within original env length).
 pub proof fn lemma_env_with_other(env: Seq<int>, var: nat, val: int, other: nat)
     requires other != var, (other as int) < env.len(),
     ensures env_with(env, var, val)[other as int] == env[other as int],
@@ -1051,20 +1051,20 @@ pub proof fn lemma_env_with_other(env: Seq<int>, var: nat, val: int, other: nat)
     }
 }
 
-/// env_with length is at least var + 1.
+///  env_with length is at least var + 1.
 pub proof fn lemma_env_with_len(env: Seq<int>, var: nat, val: int)
     ensures env_with(env, var, val).len() >= var + 1,
          env_with(env, var, val).len() >= env.len(),
 {}
 
-// --- cmp_eval properties ---
+//  --- cmp_eval properties ---
 
-/// Cmp always returns exactly 0 or 1.
+///  Cmp always returns exactly 0 or 1.
 pub proof fn lemma_cmp_returns_01(op: &CmpOp, a: int, b: int)
     ensures cmp_eval(op, a, b) == 0 || cmp_eval(op, a, b) == 1,
 {}
 
-/// Mul(Cmp, Cmp) is boolean AND: result is 1 iff both comparisons are true.
+///  Mul(Cmp, Cmp) is boolean AND: result is 1 iff both comparisons are true.
 pub proof fn lemma_cmp_mul_is_and(
     op1: &CmpOp, a1: int, b1: int,
     op2: &CmpOp, a2: int, b2: int,
@@ -1079,21 +1079,21 @@ pub proof fn lemma_cmp_mul_is_and(
     lemma_cmp_returns_01(op2, a2, b2);
 }
 
-// --- reduce_sum base cases ---
+//  --- reduce_sum base cases ---
 
-/// Reduce with bound 0 is 0.
+///  Reduce with bound 0 is 0.
 pub proof fn lemma_reduce_sum_zero(var: nat, body: &ArithExpr, env: Seq<int>)
     ensures reduce_sum(var, 0, body, env) == 0,
 {}
 
-/// Reduce with bound 0 is 0 (arrays version).
+///  Reduce with bound 0 is 0 (arrays version).
 pub proof fn lemma_reduce_sum_arrays_zero(
     var: nat, body: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
 )
     ensures reduce_sum_arrays(var, 0, body, env, arrays) == 0,
 {}
 
-/// Reduce with bound 1 is a single evaluation.
+///  Reduce with bound 1 is a single evaluation.
 pub proof fn lemma_reduce_sum_one(var: nat, body: &ArithExpr, env: Seq<int>)
     ensures reduce_sum(var, 1, body, env)
         == arith_eval(body, env_with(env, var, 0)),
@@ -1101,7 +1101,7 @@ pub proof fn lemma_reduce_sum_one(var: nat, body: &ArithExpr, env: Seq<int>)
     assert(reduce_sum(var, 0, body, env) == 0int);
 }
 
-/// Reduce with bound 1 is a single evaluation (arrays version).
+///  Reduce with bound 1 is a single evaluation (arrays version).
 pub proof fn lemma_reduce_sum_arrays_one(
     var: nat, body: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
 )
@@ -1111,12 +1111,12 @@ pub proof fn lemma_reduce_sum_arrays_one(
     assert(reduce_sum_arrays(var, 0, body, env, arrays) == 0int);
 }
 
-// --- reduce_sum splitting (THE key lemma for tiled schedules) ---
+//  --- reduce_sum splitting (THE key lemma for tiled schedules) ---
 
-/// Reduce splitting: Σ_{i=0}^{a+b-1} f(i) == Σ_{i=0}^{a-1} f(i) + Σ_{i=0}^{b-1} f(a+i)
+///  Reduce splitting: Σ_{i=0}^{a+b-1} f(i) == Σ_{i=0}^{a-1} f(i) + Σ_{i=0}^{b-1} f(a+i)
 ///
-/// This is the foundational lemma for all tiled schedule transformations.
-/// Tiling = splitting a sum into blocks, each computed in shared memory or by a workgroup.
+///  This is the foundational lemma for all tiled schedule transformations.
+///  Tiling = splitting a sum into blocks, each computed in shared memory or by a workgroup.
 pub proof fn lemma_reduce_sum_split(
     var: nat, a: nat, b: nat, body: &ArithExpr, env: Seq<int>,
 )
@@ -1128,17 +1128,17 @@ pub proof fn lemma_reduce_sum_split(
 {
     if b == 0 {
     } else {
-        // reduce_sum(var, a+b, body, env)
-        //   = reduce_sum(var, a+b-1, body, env) + eval(body, env[var := a+b-1])
-        //   = (by IH with b-1) reduce_sum(var, a, body, env) + reduce_sum_shifted(var, a, b-1, body, env)
-        //     + eval(body, env[var := a+b-1])
-        //   = reduce_sum(var, a, body, env) + reduce_sum_shifted(var, a, b, body, env)
-        //     (because reduce_sum_shifted(var, a, b) = reduce_sum_shifted(var, a, b-1) + eval(body, env[var := a+b-1]))
+        //  reduce_sum(var, a+b, body, env)
+        //    = reduce_sum(var, a+b-1, body, env) + eval(body, env[var := a+b-1])
+        //    = (by IH with b-1) reduce_sum(var, a, body, env) + reduce_sum_shifted(var, a, b-1, body, env)
+        //      + eval(body, env[var := a+b-1])
+        //    = reduce_sum(var, a, body, env) + reduce_sum_shifted(var, a, b, body, env)
+        //      (because reduce_sum_shifted(var, a, b) = reduce_sum_shifted(var, a, b-1) + eval(body, env[var := a+b-1]))
         lemma_reduce_sum_split(var, a, (b - 1) as nat, body, env);
     }
 }
 
-/// Shifted summation: Σ_{i=0}^{n-1} f(offset + i)
+///  Shifted summation: Σ_{i=0}^{n-1} f(offset + i)
 pub open spec fn reduce_sum_shifted(
     var: nat, offset: nat, n: int, body: &ArithExpr, env: Seq<int>,
 ) -> int
@@ -1151,7 +1151,7 @@ pub open spec fn reduce_sum_shifted(
     }
 }
 
-/// Reduce splitting (arrays version).
+///  Reduce splitting (arrays version).
 pub proof fn lemma_reduce_sum_arrays_split(
     var: nat, a: nat, b: nat, body: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
 )
@@ -1167,7 +1167,7 @@ pub proof fn lemma_reduce_sum_arrays_split(
     }
 }
 
-/// Shifted summation (arrays version).
+///  Shifted summation (arrays version).
 pub open spec fn reduce_sum_arrays_shifted(
     var: nat, offset: nat, n: int, body: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
 ) -> int
@@ -1180,9 +1180,9 @@ pub open spec fn reduce_sum_arrays_shifted(
     }
 }
 
-// --- reduce algebraic properties ---
+//  --- reduce algebraic properties ---
 
-/// Reduce over constant: Σ_{i=0}^{n-1} c == n * c.
+///  Reduce over constant: Σ_{i=0}^{n-1} c == n * c.
 pub proof fn lemma_reduce_sum_const(var: nat, n: nat, c: int, env: Seq<int>)
     ensures reduce_sum(var, n as int, &ArithExpr::Const(c), env) == (n as int) * c,
     decreases n,
@@ -1194,13 +1194,13 @@ pub proof fn lemma_reduce_sum_const(var: nat, n: nat, c: int, env: Seq<int>)
         return;
     }
     lemma_reduce_sum_const(var, (n - 1) as nat, c, env);
-    // Step term: arith_eval(Const(c), env_with(...)) == c
+    //  Step term: arith_eval(Const(c), env_with(...)) == c
     let ext = env_with(env, var, (n - 1) as int);
     assert(arith_eval(&ArithExpr::Const(c), ext) == c);
     assert(((n - 1) as int) * c + c == (n as int) * c) by (nonlinear_arith);
 }
 
-/// Reduce linearity: Σ (f(i) + g(i)) == Σ f(i) + Σ g(i).
+///  Reduce linearity: Σ (f(i) + g(i)) == Σ f(i) + Σ g(i).
 pub proof fn lemma_reduce_sum_linear(
     var: nat, n: nat,
     f: &ArithExpr, g: &ArithExpr, env: Seq<int>,
@@ -1220,7 +1220,7 @@ pub proof fn lemma_reduce_sum_linear(
     }
 }
 
-/// Reduce scalar factor: Σ c * f(i) == c * Σ f(i).
+///  Reduce scalar factor: Σ c * f(i) == c * Σ f(i).
 pub proof fn lemma_reduce_sum_scalar(
     var: nat, n: nat,
     c: int, f: &ArithExpr, env: Seq<int>,
@@ -1240,7 +1240,7 @@ pub proof fn lemma_reduce_sum_scalar(
     {
         lemma_reduce_sum_scalar(var, (n - 1) as nat, c, f, env);
         let ext = env_with(env, var, (n - 1) as int);
-        // Step term: Mul(Const(c), f) at ext = c * f(ext)
+        //  Step term: Mul(Const(c), f) at ext = c * f(ext)
         lemma_arith_eval_const_mul_expr(c, f, ext);
         assert(c * reduce_sum(var, (n - 1) as int, f, env) + c * arith_eval(f, ext)
             == c * (reduce_sum(var, (n - 1) as int, f, env) + arith_eval(f, ext)))
@@ -1248,10 +1248,10 @@ pub proof fn lemma_reduce_sum_scalar(
     }
 }
 
-// --- index_free and eval equivalence ---
+//  --- index_free and eval equivalence ---
 
-/// Predicate: expression contains no Index nodes.
-/// When true, arith_eval and arith_eval_with_arrays agree.
+///  Predicate: expression contains no Index nodes.
+///  When true, arith_eval and arith_eval_with_arrays agree.
 pub open spec fn index_free(expr: &ArithExpr) -> bool
     decreases expr,
 {
@@ -1266,7 +1266,7 @@ pub open spec fn index_free(expr: &ArithExpr) -> bool
     }
 }
 
-/// arith_eval == arith_eval_with_arrays for index-free expressions.
+///  arith_eval == arith_eval_with_arrays for index-free expressions.
 pub proof fn lemma_eval_equiv_no_index(
     expr: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
 )
@@ -1285,7 +1285,7 @@ pub proof fn lemma_eval_equiv_no_index(
             lemma_eval_equiv_no_index(a, env, arrays);
             lemma_eval_equiv_no_index(b, env, arrays);
         },
-        ArithExpr::Index(_, _) => {}, // unreachable: index_free is false
+        ArithExpr::Index(_, _) => {}, //  unreachable: index_free is false
         ArithExpr::Reduce(var, bound, body) => {
             lemma_eval_equiv_no_index(bound, env, arrays);
             let n = arith_eval(bound, env);
@@ -1294,7 +1294,7 @@ pub proof fn lemma_eval_equiv_no_index(
     }
 }
 
-/// Helper: reduce_sum == reduce_sum_arrays for index-free body.
+///  Helper: reduce_sum == reduce_sum_arrays for index-free body.
 proof fn lemma_reduce_equiv_no_index(
     var: nat, n: int, body: &ArithExpr,
     env: Seq<int>, arrays: Seq<Seq<int>>,
@@ -1311,9 +1311,9 @@ proof fn lemma_reduce_equiv_no_index(
     }
 }
 
-// --- free variables and evaluation independence ---
+//  --- free variables and evaluation independence ---
 
-/// Predicate: expression does not reference Var(k).
+///  Predicate: expression does not reference Var(k).
 pub open spec fn free_of_var(expr: &ArithExpr, k: nat) -> bool
     decreases expr,
 {
@@ -1330,7 +1330,7 @@ pub open spec fn free_of_var(expr: &ArithExpr, k: nat) -> bool
     }
 }
 
-/// If expr is free of Var(k), changing env[k] doesn't affect evaluation.
+///  If expr is free of Var(k), changing env[k] doesn't affect evaluation.
 pub proof fn lemma_eval_independent_of_unused_var(
     expr: &ArithExpr, env1: Seq<int>, env2: Seq<int>, k: nat,
 )
@@ -1370,7 +1370,7 @@ pub proof fn lemma_eval_independent_of_unused_var(
     }
 }
 
-/// Helper: reduce_sum independent of unused var.
+///  Helper: reduce_sum independent of unused var.
 proof fn lemma_reduce_independent_helper(
     var: nat, n: int, body: &ArithExpr,
     env1: Seq<int>, env2: Seq<int>, k: nat,
@@ -1390,11 +1390,11 @@ proof fn lemma_reduce_independent_helper(
         let ext1 = env_with(env1, var, n - 1);
         let ext2 = env_with(env2, var, n - 1);
         if var == k {
-            // Both envs set var=k to n-1, agree on everything else.
+            //  Both envs set var=k to n-1, agree on everything else.
             assert(ext1 =~= ext2);
         } else {
-            // free_of_var(body, k). ext1 and ext2 still differ only at k.
-            // Need: ext1 and ext2 agree on all j != k, have same length.
+            //  free_of_var(body, k). ext1 and ext2 still differ only at k.
+            //  Need: ext1 and ext2 agree on all j != k, have same length.
             lemma_env_with_len(env1, var, n - 1);
             lemma_env_with_len(env2, var, n - 1);
             assert(ext1.len() == ext2.len()) by {
@@ -1419,9 +1419,9 @@ proof fn lemma_reduce_independent_helper(
     }
 }
 
-// --- nested reduce interchange ---
+//  --- nested reduce interchange ---
 
-/// Helper: if every term is zero, the sum is zero.
+///  Helper: if every term is zero, the sum is zero.
 proof fn lemma_reduce_all_zero_terms(
     var: nat, n: nat,
     inner: &ArithExpr, env: Seq<int>,
@@ -1441,11 +1441,11 @@ proof fn lemma_reduce_all_zero_terms(
     }
 }
 
-/// Helper: peel the last term from the inner reduce and move it outside.
-/// Σ_{j=0}^{n-1} (Σ_{i=0}^{m} body) == Σ_{j=0}^{n-1} (Σ_{i=0}^{m-1} body) + Σ_{j=0}^{n-1} body(m-1, j)
+///  Helper: peel the last term from the inner reduce and move it outside.
+///  Σ_{j=0}^{n-1} (Σ_{i=0}^{m} body) == Σ_{j=0}^{n-1} (Σ_{i=0}^{m-1} body) + Σ_{j=0}^{n-1} body(m-1, j)
 ///
-/// This is reduce linearity applied to the outer sum, where the inner sum
-/// is split as: Σ_{i=0}^{m} = Σ_{i=0}^{m-1} + term(m-1).
+///  This is reduce linearity applied to the outer sum, where the inner sum
+///  is split as: Σ_{i=0}^{m} = Σ_{i=0}^{m-1} + term(m-1).
 proof fn lemma_peel_inner_last(
     var_i: nat, var_j: nat,
     m: nat, n: nat,
@@ -1469,19 +1469,19 @@ proof fn lemma_peel_inner_last(
     if n == 0 {
     } else {
         lemma_peel_inner_last(var_i, var_j, m, (n - 1) as nat, body, env);
-        // For the n-1'th term:
-        // arith_eval(inner_m, env_with(env, var_j, n-1))
-        //   = reduce_sum(var_i, m, body, env_with(env, var_j, n-1))
-        //   = reduce_sum(var_i, m-1, body, ...) + arith_eval(body, env_with(..., var_i, m-1))
+        //  For the n-1'th term:
+        //  arith_eval(inner_m, env_with(env, var_j, n-1))
+        //    = reduce_sum(var_i, m, body, env_with(env, var_j, n-1))
+        //    = reduce_sum(var_i, m-1, body, ...) + arith_eval(body, env_with(..., var_i, m-1))
         let ext_j = env_with(env, var_j, (n - 1) as int);
         lemma_arith_eval_reduce(var_i, &ArithExpr::Const(m as int), body, ext_j);
         lemma_arith_eval_reduce(var_i, &ArithExpr::Const((m - 1) as int), body, ext_j);
-        // reduce_sum(var_i, m, body, ext_j) = reduce_sum(var_i, m-1, body, ext_j) + arith_eval(body, env_with(ext_j, var_i, m-1))
+        //  reduce_sum(var_i, m, body, ext_j) = reduce_sum(var_i, m-1, body, ext_j) + arith_eval(body, env_with(ext_j, var_i, m-1))
     }
 }
 
-/// Helper spec: the "peeled" term — Σ_{j=0}^{n-1} body(m_val, j)
-/// where var_i is set to m_val in the body's env.
+///  Helper spec: the "peeled" term — Σ_{j=0}^{n-1} body(m_val, j)
+///  where var_i is set to m_val in the body's env.
 pub open spec fn reduce_sum_peeled(
     var_j: nat, var_i: nat,
     n: nat, m_val: nat,
@@ -1496,10 +1496,10 @@ pub open spec fn reduce_sum_peeled(
     }
 }
 
-/// The peeled term equals the inner sum with swapped variable binding order.
-/// Σ_{j=0}^{n-1} body(m_val, j) where we set var_j then var_i
-/// == reduce_sum(var_j, n, body_with_i_fixed, env)
-/// This connects the peeled term to a standard reduce_sum.
+///  The peeled term equals the inner sum with swapped variable binding order.
+///  Σ_{j=0}^{n-1} body(m_val, j) where we set var_j then var_i
+///  == reduce_sum(var_j, n, body_with_i_fixed, env)
+///  This connects the peeled term to a standard reduce_sum.
 proof fn lemma_peeled_eq_reduce(
     var_j: nat, var_i: nat,
     n: nat, m_val: nat,
@@ -1514,9 +1514,9 @@ proof fn lemma_peeled_eq_reduce(
     if n == 0 {
     } else {
         lemma_peeled_eq_reduce(var_j, var_i, (n - 1) as nat, m_val, body, env);
-        // Term: arith_eval(body, env_with(env_with(env, var_j, n-1), var_i, m_val))
-        // == arith_eval(body, env_with(env_with(env, var_i, m_val), var_j, n-1))
-        // These are equal if env_with commutes for distinct vars.
+        //  Term: arith_eval(body, env_with(env_with(env, var_j, n-1), var_i, m_val))
+        //  == arith_eval(body, env_with(env_with(env, var_i, m_val), var_j, n-1))
+        //  These are equal if env_with commutes for distinct vars.
         let ext_ji = env_with(env_with(env, var_j, (n - 1) as int), var_i, m_val as int);
         let ext_ij = env_with(env_with(env, var_i, m_val as int), var_j, (n - 1) as int);
         lemma_env_with_commutes(env, var_i, m_val as int, var_j, (n - 1) as int);
@@ -1524,7 +1524,7 @@ proof fn lemma_peeled_eq_reduce(
     }
 }
 
-/// env_with commutes for distinct variables.
+///  env_with commutes for distinct variables.
 pub proof fn lemma_env_with_commutes(
     env: Seq<int>, var1: nat, val1: int, var2: nat, val2: int,
 )
@@ -1535,8 +1535,8 @@ pub proof fn lemma_env_with_commutes(
 {
     let e12 = env_with(env_with(env, var1, val1), var2, val2);
     let e21 = env_with(env_with(env, var2, val2), var1, val1);
-    // Both produce a seq of the same length with the same values at each index.
-    // var1 -> val1, var2 -> val2, other -> env[other].
+    //  Both produce a seq of the same length with the same values at each index.
+    //  var1 -> val1, var2 -> val2, other -> env[other].
     let max_len = if var1 > var2 { var1 + 1 } else { var2 + 1 };
     let base_len = if env.len() > max_len as int { env.len() as nat } else { max_len };
 
@@ -1546,9 +1546,9 @@ pub proof fn lemma_env_with_commutes(
         lemma_env_with_at(env_with(env, var2, val2), var1, val1);
         if j == var2 as int {
             lemma_env_with_at(env_with(env, var1, val1), var2, val2);
-            // e12[var2] = val2
-            // e21[var2]: env_with(env_with(env, var2, val2), var1, val1)[var2]
-            //   var1 != var2, so this is env_with(env, var2, val2)[var2] = val2
+            //  e12[var2] = val2
+            //  e21[var2]: env_with(env_with(env, var2, val2), var1, val1)[var2]
+            //    var1 != var2, so this is env_with(env, var2, val2)[var2] = val2
             lemma_env_with_len(env, var2, val2);
             if (var2 as int) < env_with(env, var2, val2).len() {
                 lemma_env_with_other(env_with(env, var2, val2), var1, val1, var2);
@@ -1562,13 +1562,13 @@ pub proof fn lemma_env_with_commutes(
                 lemma_env_with_at(env, var1, val1);
             }
         } else {
-            // j != var1, j != var2: both return env[j] (or 0 if extended)
+            //  j != var1, j != var2: both return env[j] (or 0 if extended)
         }
     };
 }
 
-/// Nested reduce interchange: Σ_i Σ_j f(i,j) == Σ_j Σ_i f(i,j).
-/// Fundamental for loop reordering schedule transformations.
+///  Nested reduce interchange: Σ_i Σ_j f(i,j) == Σ_j Σ_i f(i,j).
+///  Fundamental for loop reordering schedule transformations.
 pub proof fn lemma_reduce_sum_interchange(
     var_i: nat, var_j: nat,
     m: nat, n: nat,
@@ -1590,34 +1590,34 @@ pub proof fn lemma_reduce_sum_interchange(
     let inner_i = ArithExpr::Reduce(var_i, Box::new(ArithExpr::Const(m as int)), Box::new(*body));
 
     if m == 0 {
-        // LHS = 0. RHS: each inner reduce has bound 0, so also 0.
+        //  LHS = 0. RHS: each inner reduce has bound 0, so also 0.
         lemma_reduce_all_zero_terms(var_j, n, &inner_i, env, var_i, body);
     } else {
-        // IH
+        //  IH
         lemma_reduce_sum_interchange(var_i, var_j, (m - 1) as nat, n, body, env);
 
-        // Peel: Σ_j Σ_{i=0}^{m-1} body = Σ_j Σ_{i=0}^{m-2} body + Σ_j body(m-1, j)
+        //  Peel: Σ_j Σ_{i=0}^{m-1} body = Σ_j Σ_{i=0}^{m-2} body + Σ_j body(m-1, j)
         lemma_peel_inner_last(var_i, var_j, m, n, body, env);
 
-        // The peeled term: Σ_j body(m-1, j) = reduce_sum(var_j, n, body, env_with(env, var_i, m-1))
+        //  The peeled term: Σ_j body(m-1, j) = reduce_sum(var_j, n, body, env_with(env, var_i, m-1))
         lemma_peeled_eq_reduce(var_j, var_i, n, (m - 1) as nat, body, env);
 
-        // LHS = reduce_sum(var_i, m-1, inner_j, env) + arith_eval(inner_j, env_with(env, var_i, m-1))
-        //      = (by IH) reduce_sum(var_j, n, inner_i_m1, env) + reduce_sum(var_j, n, body, env_with(env, var_i, m-1))
-        // And reduce_sum(var_j, n, body, env_with(env, var_i, m-1)) = peeled term
-        // RHS = reduce_sum(var_j, n, inner_i_m, env)
-        //     = (by peel) reduce_sum(var_j, n, inner_i_m1, env) + peeled term
-        // So LHS = RHS. ✓
+        //  LHS = reduce_sum(var_i, m-1, inner_j, env) + arith_eval(inner_j, env_with(env, var_i, m-1))
+        //       = (by IH) reduce_sum(var_j, n, inner_i_m1, env) + reduce_sum(var_j, n, body, env_with(env, var_i, m-1))
+        //  And reduce_sum(var_j, n, body, env_with(env, var_i, m-1)) = peeled term
+        //  RHS = reduce_sum(var_j, n, inner_i_m, env)
+        //      = (by peel) reduce_sum(var_j, n, inner_i_m1, env) + peeled term
+        //  So LHS = RHS. ✓
         let ext_i = env_with(env, var_i, (m - 1) as int);
         lemma_arith_eval_reduce(var_j, &ArithExpr::Const(n as int), body, ext_i);
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Runtime ArithExpr: exec-mode type mirroring ArithExpr with i64/u32
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Runtime ArithExpr: exec-mode type mirroring ArithExpr with i64/u32
+//  ══════════════════════════════════════════════════════════════
 
-/// Runtime comparison operator.
+///  Runtime comparison operator.
 pub enum RuntimeCmpOp {
     Lt, Le, Gt, Ge, Eq, Ne,
 }
@@ -1635,7 +1635,7 @@ impl RuntimeCmpOp {
     }
 }
 
-/// Runtime arithmetic expression with concrete integer types for exec code.
+///  Runtime arithmetic expression with concrete integer types for exec code.
 pub enum RuntimeArithExpr {
     Const(i64),
     Var(u32),
@@ -1651,7 +1651,7 @@ pub enum RuntimeArithExpr {
 }
 
 impl RuntimeArithExpr {
-    /// Map to spec ArithExpr.
+    ///  Map to spec ArithExpr.
     pub open spec fn view_spec(&self) -> ArithExpr
         decreases self,
     {
@@ -1671,10 +1671,10 @@ impl RuntimeArithExpr {
     }
 }
 
-/// All intermediate results of evaluating expr with env fit in i64.
-/// For Div/Mod: requires non-negative dividend and positive divisor,
-/// matching GPU/shader truncating division semantics (which agrees with
-/// Verus Euclidean int division for non-negative operands).
+///  All intermediate results of evaluating expr with env fit in i64.
+///  For Div/Mod: requires non-negative dividend and positive divisor,
+///  matching GPU/shader truncating division semantics (which agrees with
+///  Verus Euclidean int division for non-negative operands).
 pub open spec fn arith_eval_fits_i64(expr: &ArithExpr, env: Seq<int>) -> bool
     decreases expr,
 {
@@ -1684,8 +1684,8 @@ pub open spec fn arith_eval_fits_i64(expr: &ArithExpr, env: Seq<int>) -> bool
         ArithExpr::Const(_) | ArithExpr::Var(_) => true,
         ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b) =>
             arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env),
-        // Shr: non-negative operands (matches GPU fixed-point semantics;
-        // Euclidean and truncating division agree for non-negative values)
+        //  Shr: non-negative operands (matches GPU fixed-point semantics;
+        //  Euclidean and truncating division agree for non-negative values)
         ArithExpr::Shr(a, b) =>
             arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env)
             && arith_eval(a, env) >= 0 && arith_eval(b, env) >= 0,
@@ -1695,21 +1695,21 @@ pub open spec fn arith_eval_fits_i64(expr: &ArithExpr, env: Seq<int>) -> bool
         ArithExpr::Index(_, idx) => arith_eval_fits_i64(idx, env),
         ArithExpr::Cmp(_, a, b) =>
             arith_eval_fits_i64(a, env) && arith_eval_fits_i64(b, env),
-        // Reduce: check the bound expression fits. Body bounds are data-dependent
-        // (sum of n terms can grow arbitrarily) so they must be checked by the
-        // caller for the specific kernel. The top-level result bound is still
-        // checked by the enclosing i64::MIN <= arith_eval(...) <= i64::MAX.
+        //  Reduce: check the bound expression fits. Body bounds are data-dependent
+        //  (sum of n terms can grow arbitrarily) so they must be checked by the
+        //  caller for the specific kernel. The top-level result bound is still
+        //  checked by the enclosing i64::MIN <= arith_eval(...) <= i64::MAX.
         ArithExpr::Reduce(_, bound, _) => arith_eval_fits_i64(bound, env),
     }
 }
 
-/// Convert i64 sequence to int sequence.
+///  Convert i64 sequence to int sequence.
 pub open spec fn i64_seq_to_int(s: Seq<i64>) -> Seq<int> {
     Seq::new(s.len(), |i: int| s[i] as int)
 }
 
-/// Helper: verified i64 division for non-negative operands.
-/// Non-negative inputs ensure Euclidean (Verus int) and truncating (Rust i64) agree.
+///  Helper: verified i64 division for non-negative operands.
+///  Non-negative inputs ensure Euclidean (Verus int) and truncating (Rust i64) agree.
 fn nonneg_i64_div(a: i64, b: i64) -> (result: i64)
     requires
         a >= 0,
@@ -1721,7 +1721,7 @@ fn nonneg_i64_div(a: i64, b: i64) -> (result: i64)
     a / b
 }
 
-/// Helper: verified i64 modulo for non-negative operands.
+///  Helper: verified i64 modulo for non-negative operands.
 fn nonneg_i64_mod(a: i64, b: i64) -> (result: i64)
     requires
         a >= 0,
@@ -1732,8 +1732,8 @@ fn nonneg_i64_mod(a: i64, b: i64) -> (result: i64)
     a % b
 }
 
-/// Predicate: expression contains no Reduce nodes.
-/// Used as precondition for runtime_arith_eval's correctness proof.
+///  Predicate: expression contains no Reduce nodes.
+///  Used as precondition for runtime_arith_eval's correctness proof.
 pub open spec fn no_reduce(expr: &ArithExpr) -> bool
     decreases expr,
 {
@@ -1748,7 +1748,7 @@ pub open spec fn no_reduce(expr: &ArithExpr) -> bool
     }
 }
 
-/// Compute 2^n as i128, for 0 < n < 64.
+///  Compute 2^n as i128, for 0 < n < 64.
 fn exec_pow2_i128(n: u32) -> (result: i128)
     requires 0 < n < 64,
     ensures result == crate::swizzle::pow2(n as nat) as int, result > 0,
@@ -1762,7 +1762,7 @@ fn exec_pow2_i128(n: u32) -> (result: i128)
     proof {
         crate::proof::swizzle_lemmas::lemma_pow2_positive((n - 1) as nat);
         assert(crate::swizzle::pow2(n as nat) == 2 * crate::swizzle::pow2((n - 1) as nat));
-        // half = pow2(n-1) <= pow2(62) < 2^63 << i128::MAX/2
+        //  half = pow2(n-1) <= pow2(62) < 2^63 << i128::MAX/2
         crate::proof::swizzle_lemmas::lemma_pow2_monotone((n - 1) as nat, 62);
         assert(crate::swizzle::pow2(62) == 0x4000000000000000int) by (compute_only);
         assert(half <= 0x4000000000000000i128);
@@ -1864,8 +1864,8 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
             if vb <= 0 {
                 return va;
             } else if vb >= 63 {
-                // va >= 0, pow2(vb) >= pow2(63) > i64::MAX >= va
-                // So va / pow2(vb) == 0
+                //  va >= 0, pow2(vb) >= pow2(63) > i64::MAX >= va
+                //  So va / pow2(vb) == 0
                 proof {
                     crate::proof::swizzle_lemmas::lemma_pow2_monotone(63, vb as nat);
                     assert(crate::swizzle::pow2(63) == 0x8000000000000000int) by (compute_only);
@@ -1879,9 +1879,9 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
                 }
                 return 0i64;
             } else {
-                // 0 < vb < 63, va >= 0: use nonneg_i64_div with exec pow2
+                //  0 < vb < 63, va >= 0: use nonneg_i64_div with exec pow2
                 let divisor_i128 = exec_pow2_i128(vb as u32);
-                // pow2(vb) < pow2(63) = 2^63, fits in i64
+                //  pow2(vb) < pow2(63) = 2^63, fits in i64
                 proof {
                     crate::proof::swizzle_lemmas::lemma_pow2_monotone(vb as nat, 62);
                     assert(crate::swizzle::pow2(62) == 0x4000000000000000int) by (compute_only);
@@ -1909,12 +1909,12 @@ pub fn runtime_arith_eval(expr: &RuntimeArithExpr, env: &Vec<i64>) -> (result: i
             return r;
         },
         RuntimeArithExpr::Reduce(_var, _bound, _body) => {
-            // Unreachable under no_reduce precondition.
-            // Correct implementation exists but postcondition proof is deferred.
+            //  Unreachable under no_reduce precondition.
+            //  Correct implementation exists but postcondition proof is deferred.
             proof { assert(false); }
             return 0i64;
         },
     }
 }
 
-} // verus!
+} //  verus!

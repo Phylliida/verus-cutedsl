@@ -3,17 +3,17 @@ use crate::predication::*;
 
 verus! {
 
-/// Ceiling division at runtime.
+///  Ceiling division at runtime.
 pub fn ceil_div_exec(a: u64, b: u64) -> (result: u64)
     requires b > 0, a as nat + b as nat - 1 <= u64::MAX as nat,
     ensures result as nat == ceil_div(a as nat, b as nat),
 {
     let wide: u128 = (a as u128) + (b as u128) - 1;
-    // wide fits in u64 by precondition
+    //  wide fits in u64 by precondition
     (wide as u64) / b
 }
 
-/// Padded size at runtime: next multiple of tile_size >= total_size.
+///  Padded size at runtime: next multiple of tile_size >= total_size.
 pub fn padded_size_exec(m: u64, n: u64) -> (result: u64)
     requires
         n > 0,
@@ -23,12 +23,12 @@ pub fn padded_size_exec(m: u64, n: u64) -> (result: u64)
 {
     let q = ceil_div_exec(m, n);
     proof {
-        // q * n == padded_size(m, n) which fits in u64 by precondition
+        //  q * n == padded_size(m, n) which fits in u64 by precondition
     }
     q * n
 }
 
-/// Number of tiles needed to cover total_size elements.
+///  Number of tiles needed to cover total_size elements.
 pub fn num_tiles_ceil_exec(total_size: u64, tile_size: u64) -> (result: u64)
     requires
         tile_size > 0,
@@ -38,7 +38,7 @@ pub fn num_tiles_ceil_exec(total_size: u64, tile_size: u64) -> (result: u64)
     ceil_div_exec(total_size, tile_size)
 }
 
-/// Check if a specific element within a tile is valid.
+///  Check if a specific element within a tile is valid.
 pub fn tile_element_valid_exec(tile_idx: u64, tile_size: u64, elem_idx: u64, total_size: u64) -> (result: bool)
     requires
         tile_size > 0,
@@ -52,7 +52,7 @@ pub fn tile_element_valid_exec(tile_idx: u64, tile_size: u64, elem_idx: u64, tot
     tile_idx * tile_size + elem_idx < total_size
 }
 
-/// Count valid elements in a given tile.
+///  Count valid elements in a given tile.
 pub fn tile_valid_count_exec(tile_idx: u64, tile_size: u64, total_size: u64) -> (result: u64)
     requires
         tile_size > 0,
@@ -75,8 +75,8 @@ pub fn tile_valid_count_exec(tile_idx: u64, tile_size: u64, total_size: u64) -> 
     }
 }
 
-/// Generate predicate mask for a tile at runtime.
-/// Returns Vec<bool> where result[i] == tile_element_valid(tile_idx, tile_size, i, total_size).
+///  Generate predicate mask for a tile at runtime.
+///  Returns Vec<bool> where result[i] == tile_element_valid(tile_idx, tile_size, i, total_size).
 pub fn tile_predicate_mask_exec(
     tile_idx: u64, tile_size: u64, total_size: u64,
 ) -> (result: Vec<bool>)
@@ -110,7 +110,7 @@ pub fn tile_predicate_mask_exec(
     mask
 }
 
-/// Count valid elements in a mask at runtime.
+///  Count valid elements in a mask at runtime.
 pub fn mask_popcount_exec(mask: &Vec<bool>) -> (result: u64)
     requires mask.len() <= u64::MAX as nat,
     ensures result as nat == mask_popcount(mask@),
@@ -144,7 +144,7 @@ pub fn mask_popcount_exec(mask: &Vec<bool>) -> (result: u64)
     count
 }
 
-/// Check if a write index is safe under predication.
+///  Check if a write index is safe under predication.
 pub fn store_predication_safe_exec(
     tile_idx: u64, tile_size: u64, total_size: u64, write_idx: u64,
 ) -> (result: bool)
@@ -162,7 +162,7 @@ pub fn store_predication_safe_exec(
     }
 }
 
-/// Compute the global index for a tile element (for bounds-checked store).
+///  Compute the global index for a tile element (for bounds-checked store).
 pub fn tile_global_index_exec(
     tile_idx: u64, tile_size: u64, elem_idx: u64,
 ) -> (result: u64)
@@ -179,7 +179,7 @@ pub fn tile_global_index_exec(
     tile_idx * tile_size + elem_idx
 }
 
-/// Helper: mask_popcount of an empty prefix is 0.
+///  Helper: mask_popcount of an empty prefix is 0.
 proof fn lemma_mask_popcount_zero_prefix(s: Seq<bool>, n: nat)
     requires n == 0,
     ensures mask_popcount(s.take(n as int)) == 0,
@@ -188,7 +188,7 @@ proof fn lemma_mask_popcount_zero_prefix(s: Seq<bool>, n: nat)
     assert(Seq::<bool>::empty().len() == 0);
 }
 
-/// Helper: mask_popcount step — extending by one element.
+///  Helper: mask_popcount step — extending by one element.
 proof fn lemma_mask_popcount_step(s: Seq<bool>, k: nat)
     requires k < s.len(),
     ensures
@@ -204,4 +204,4 @@ proof fn lemma_mask_popcount_step(s: Seq<bool>, k: nat)
     assert(prefix.drop_last() =~= s.take(k as int));
 }
 
-} // verus!
+} //  verus!

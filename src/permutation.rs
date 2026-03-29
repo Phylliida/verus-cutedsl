@@ -4,7 +4,7 @@ use crate::layout::*;
 
 verus! {
 
-/// A permutation is valid if it's a bijection on [0, n).
+///  A permutation is valid if it's a bijection on [0, n).
 pub open spec fn is_valid_permutation(perm: Seq<nat>, n: nat) -> bool {
     &&& perm.len() == n
     &&& forall|i: nat| i < n ==> #[trigger] perm[i as int] < n
@@ -12,21 +12,21 @@ pub open spec fn is_valid_permutation(perm: Seq<nat>, n: nat) -> bool {
         ==> perm[i as int] != perm[j as int]
 }
 
-/// Apply a permutation to a sequence of nat.
+///  Apply a permutation to a sequence of nat.
 pub open spec fn apply_perm_nat(s: Seq<nat>, perm: Seq<nat>) -> Seq<nat>
     recommends s.len() == perm.len(),
 {
     Seq::new(perm.len(), |i: int| s[perm[i] as int])
 }
 
-/// Apply a permutation to a sequence of int.
+///  Apply a permutation to a sequence of int.
 pub open spec fn apply_perm_int(s: Seq<int>, perm: Seq<nat>) -> Seq<int>
     recommends s.len() == perm.len(),
 {
     Seq::new(perm.len(), |i: int| s[perm[i] as int])
 }
 
-/// Permute the modes of a layout: reorder both shape and stride by the permutation.
+///  Permute the modes of a layout: reorder both shape and stride by the permutation.
 pub open spec fn permute_modes(layout: LayoutSpec, perm: Seq<nat>) -> LayoutSpec
     recommends
         layout.shape.len() == perm.len(),
@@ -38,12 +38,12 @@ pub open spec fn permute_modes(layout: LayoutSpec, perm: Seq<nat>) -> LayoutSpec
     }
 }
 
-/// The identity permutation on [0, n).
+///  The identity permutation on [0, n).
 pub open spec fn identity_permutation(n: nat) -> Seq<nat> {
     Seq::new(n as nat, |i: int| i as nat)
 }
 
-/// Adjacent transposition: swap positions i and i+1, leaving all others fixed.
+///  Adjacent transposition: swap positions i and i+1, leaving all others fixed.
 pub open spec fn swap_permutation(n: nat, i: nat) -> Seq<nat>
     recommends i + 1 < n,
 {
@@ -54,11 +54,11 @@ pub open spec fn swap_permutation(n: nat, i: nat) -> Seq<nat>
     )
 }
 
-/// Compose two permutations: (p1 ∘ p2)(i) = p1(p2(i)).
+///  Compose two permutations: (p1 ∘ p2)(i) = p1(p2(i)).
 pub open spec fn compose_permutations(p1: Seq<nat>, p2: Seq<nat>) -> Seq<nat>
     recommends p1.len() == p2.len(),
 {
     Seq::new(p1.len(), |i: int| p1[p2[i] as int])
 }
 
-} // verus!
+} //  verus!

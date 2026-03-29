@@ -1,7 +1,7 @@
-/// Runtime (exec) shared state for CPU-side Stage evaluation.
+///  Runtime (exec) shared state for CPU-side Stage evaluation.
 ///
-/// Flat buffer layout (single Vec<i64> with offsets) matching how GPU
-/// shared memory actually works. O(1) reads and writes.
+///  Flat buffer layout (single Vec<i64> with offsets) matching how GPU
+///  shared memory actually works. O(1) reads and writes.
 
 use vstd::prelude::*;
 use crate::stage::*;
@@ -12,9 +12,9 @@ use crate::runtime::scan_multiblock::{inclusive_scan_i64_exec, exclusive_scan_i6
 
 verus! {
 
-// ══════════════════════════════════════════════════════════════
-// RuntimeSharedState — flat buffer layout
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  RuntimeSharedState — flat buffer layout
+//  ══════════════════════════════════════════════════════════════
 
 pub struct RuntimeSharedState {
     pub data: Vec<i64>,
@@ -30,13 +30,13 @@ impl View for RuntimeSharedState {
 }
 
 impl RuntimeSharedState {
-    /// Well-formedness: flat layout matches ghost model.
+    ///  Well-formedness: flat layout matches ghost model.
     pub open spec fn wf_spec(&self) -> bool {
         let n = self@.buffers.len();
         &&& self.offsets@.len() == n
         &&& self.lengths@.len() == n
         &&& self.workgroup_size as nat == self@.workgroup_size
-        // Per-buffer: length matches, region fits, values match
+        //  Per-buffer: length matches, region fits, values match
         &&& forall|b: int| #![trigger self.offsets@[b], self.lengths@[b]]
             0 <= b < n ==> {
             &&& self.lengths@[b] as nat == self@.buffers[b].len()
@@ -44,7 +44,7 @@ impl RuntimeSharedState {
             &&& forall|j: int| 0 <= j < self.lengths@[b] as int ==>
                 self.data@[self.offsets@[b] as int + j] as int == self@.buffers[b][j]
         }
-        // Ordered non-overlapping: each buffer region ends before the next starts
+        //  Ordered non-overlapping: each buffer region ends before the next starts
         &&& forall|b1: int, b2: int|
             0 <= b1 < b2 < n ==>
             self.offsets@[b1] as nat + (#[trigger] self.lengths@[b1]) as nat
@@ -62,7 +62,7 @@ impl RuntimeSharedState {
         requires self.wf_spec(), buf < self@.num_buffers(),
         ensures result as nat == self@.buffer_len(buf as nat),
     {
-        // Trigger wf_spec's per-buffer clause for buf
+        //  Trigger wf_spec's per-buffer clause for buf
         proof { assert(self.offsets@[buf as int] >= 0); }
         self.lengths[buf]
     }
@@ -102,13 +102,13 @@ impl RuntimeSharedState {
         self.data.set(off + idx, val);
         self.model = Ghost(old(self)@.write(buf as nat, idx as nat, val as int));
         proof {
-            // The new spec buffer is the old one with position idx updated
+            //  The new spec buffer is the old one with position idx updated
             let new_buf_spec = old_snap@.buffers[buf as int].update(idx as int, val as int);
             assert(self.model@ == (SharedState {
                 buffers: old_snap@.buffers.update(buf as int, new_buf_spec),
                 workgroup_size: old_snap@.workgroup_size,
             }));
-            // Target region: only position idx changed
+            //  Target region: only position idx changed
             assert forall|j: int| 0 <= j < new_buf_spec.len() implies
                 self.data@[old_snap.offsets@[buf as int] as int + j] as int == new_buf_spec[j]
             by {
@@ -118,7 +118,7 @@ impl RuntimeSharedState {
                         != old_snap.offsets@[buf as int] as int + idx as int);
                 }
             }
-            // Non-target data: only one position changed
+            //  Non-target data: only one position changed
             assert forall|p: int| (0 <= p < self.data@.len() as int
                 && !(old_snap.offsets@[buf as int] as int <= p
                      < old_snap.offsets@[buf as int] as int
@@ -149,7 +149,7 @@ impl RuntimeSharedState {
         let ghost sizes = buffer_sizes@;
         let ghost total_bound = spec_total_size(sizes);
 
-        // Compute offsets (consecutive)
+        //  Compute offsets (consecutive)
         let mut total: usize = 0;
         let mut offsets: Vec<usize> = Vec::new();
         let mut i: usize = 0;
@@ -203,10 +203,10 @@ impl RuntimeSharedState {
         };
 
         proof {
-            // Prove wf_spec
+            //  Prove wf_spec
             let rn = spec_buffers.len() as int;
 
-            // Per-buffer properties
+            //  Per-buffer properties
             assert forall|b: int| #![trigger result.offsets@[b], result.lengths@[b]]
                 0 <= b < rn implies {
                 &&& result.lengths@[b] as nat == result@.buffers[b].len()
@@ -214,26 +214,26 @@ impl RuntimeSharedState {
                 &&& forall|j: int| 0 <= j < result.lengths@[b] as int ==>
                     result.data@[result.offsets@[b] as int + j] as int == result@.buffers[b][j]
             } by {
-                // offset[b] = partial_sum(b), length[b] = sizes[b]
-                // offset[b] + length[b] = partial_sum(b+1) <= total = data.len()
+                //  offset[b] = partial_sum(b), length[b] = sizes[b]
+                //  offset[b] + length[b] = partial_sum(b+1) <= total = data.len()
                 lemma_partial_sum_step(buffer_sizes@, b as nat);
                 lemma_partial_sum_monotone(buffer_sizes@, (b + 1) as nat);
-                // Values: data is all 0, spec buffers are all 0
+                //  Values: data is all 0, spec buffers are all 0
                 assert forall|j: int| 0 <= j < result.lengths@[b] as int implies
                     result.data@[result.offsets@[b] as int + j] as int == result@.buffers[b][j]
                 by {
-                    // data[off + j] == 0i64, spec_buffers[b][j] == 0int
+                    //  data[off + j] == 0i64, spec_buffers[b][j] == 0int
                     assert(result.data@[result.offsets@[b] as int + j] == 0i64);
                 }
             }
 
-            // Ordered non-overlapping
+            //  Ordered non-overlapping
             assert forall|b1: int, b2: int|
                 0 <= b1 < b2 < rn implies
                 result.offsets@[b1] as nat + (#[trigger] result.lengths@[b1]) as nat
                     <= (#[trigger] result.offsets@[b2]) as nat
             by {
-                // offset[b1] + length[b1] = partial_sum(b1+1) <= partial_sum(b2) = offset[b2]
+                //  offset[b1] + length[b1] = partial_sum(b1+1) <= partial_sum(b2) = offset[b2]
                 lemma_partial_sum_step(buffer_sizes@, b1 as nat);
                 lemma_partial_sum_le(buffer_sizes@, (b1 + 1) as nat, b2 as nat);
             }
@@ -243,9 +243,9 @@ impl RuntimeSharedState {
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Partial sum helpers
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Partial sum helpers
+//  ══════════════════════════════════════════════════════════════
 
 pub open spec fn spec_partial_sum(sizes: Seq<usize>, k: nat) -> nat
     decreases k,
@@ -258,14 +258,14 @@ pub open spec fn spec_total_size(sizes: Seq<usize>) -> nat {
     spec_partial_sum(sizes, sizes.len())
 }
 
-/// partial_sum(k+1) = partial_sum(k) + sizes[k].
+///  partial_sum(k+1) = partial_sum(k) + sizes[k].
 proof fn lemma_partial_sum_step(sizes: Seq<usize>, k: nat)
     requires k < sizes.len(),
     ensures spec_partial_sum(sizes, k + 1)
         == spec_partial_sum(sizes, k) + sizes[k as int] as nat,
 {}
 
-/// partial_sum is monotone: k1 <= k2 ==> partial_sum(k1) <= partial_sum(k2).
+///  partial_sum is monotone: k1 <= k2 ==> partial_sum(k1) <= partial_sum(k2).
 proof fn lemma_partial_sum_le(sizes: Seq<usize>, k1: nat, k2: nat)
     requires k1 <= k2, k2 <= sizes.len(),
     ensures spec_partial_sum(sizes, k1) <= spec_partial_sum(sizes, k2),
@@ -277,7 +277,7 @@ proof fn lemma_partial_sum_le(sizes: Seq<usize>, k1: nat, k2: nat)
     }
 }
 
-/// partial_sum(k) <= total for all k <= n.
+///  partial_sum(k) <= total for all k <= n.
 proof fn lemma_partial_sum_monotone(sizes: Seq<usize>, k: nat)
     requires k <= sizes.len(),
     ensures spec_partial_sum(sizes, k) <= spec_total_size(sizes),
@@ -304,17 +304,17 @@ fn vec_i64_zeroed(n: usize) -> (result: Vec<i64>)
     v
 }
 
-// ══════════════════════════════════════════════════════════════
-// Buffer bounds infrastructure
+//  ══════════════════════════════════════════════════════════════
+//  Buffer bounds infrastructure
 //
-// Extracts the key facts from wf_spec that every operation needs.
-// Call once, then use the ensures throughout the function.
-// ══════════════════════════════════════════════════════════════
+//  Extracts the key facts from wf_spec that every operation needs.
+//  Call once, then use the ensures throughout the function.
+//  ══════════════════════════════════════════════════════════════
 
 impl RuntimeSharedState {
-    /// Extract buffer bounds from wf_spec. Call this at the start of any
-    /// function that operates on a buffer — it gives you everything you need
-    /// for offset arithmetic without manually triggering wf_spec quantifiers.
+    ///  Extract buffer bounds from wf_spec. Call this at the start of any
+    ///  function that operates on a buffer — it gives you everything you need
+    ///  for offset arithmetic without manually triggering wf_spec quantifiers.
     pub proof fn lemma_buffer_bounds(&self, buf: nat)
         requires self.wf_spec(), buf < self@.num_buffers(),
         ensures
@@ -327,14 +327,14 @@ impl RuntimeSharedState {
                 self.data@[self.offsets@[buf as int] as int + j] as int
                     == self@.buffers[buf as int][j],
     {
-        // Trigger the per-buffer clause in wf_spec
+        //  Trigger the per-buffer clause in wf_spec
         assert(self.offsets@[buf as int] >= 0);
         assert(self.lengths@[buf as int] >= 0);
     }
 
-    /// After modifying the flat data for one buffer region and updating the
-    /// ghost model, re-establish wf_spec. This is the key lemma that avoids
-    /// re-proving wf_spec from scratch after every write_buffer.
+    ///  After modifying the flat data for one buffer region and updating the
+    ///  ghost model, re-establish wf_spec. This is the key lemma that avoids
+    ///  re-proving wf_spec from scratch after every write_buffer.
     pub proof fn lemma_wf_after_region_write(
         &self,
         old_state: &RuntimeSharedState,
@@ -344,23 +344,23 @@ impl RuntimeSharedState {
         requires
             old_state.wf_spec(),
             buf < old_state@.num_buffers(),
-            // Structure unchanged
+            //  Structure unchanged
             self.offsets@ == old_state.offsets@,
             self.lengths@ == old_state.lengths@,
             self.workgroup_size == old_state.workgroup_size,
             self.data@.len() == old_state.data@.len(),
-            // Ghost model updated for target buffer only
+            //  Ghost model updated for target buffer only
             self.model@ == (SharedState {
                 buffers: old_state@.buffers.update(buf as int, new_buf_spec),
                 workgroup_size: old_state@.workgroup_size,
             }),
-            // New buffer spec has correct length
+            //  New buffer spec has correct length
             new_buf_spec.len() == old_state@.buffer_len(buf),
-            // Target region has new values
+            //  Target region has new values
             forall|j: int| 0 <= j < new_buf_spec.len() ==>
                 self.data@[old_state.offsets@[buf as int] as int + j] as int
                     == new_buf_spec[j],
-            // Non-target data unchanged
+            //  Non-target data unchanged
             forall|p: int| (0 <= p < self.data@.len() as int
                 && !(old_state.offsets@[buf as int] as int <= p
                      < old_state.offsets@[buf as int] as int
@@ -369,7 +369,7 @@ impl RuntimeSharedState {
         ensures
             self.wf_spec(),
     {
-        // Per-buffer: target buffer has new values, others unchanged
+        //  Per-buffer: target buffer has new values, others unchanged
         assert forall|b: int| #![trigger self.offsets@[b], self.lengths@[b]]
             0 <= b < self@.buffers.len() implies {
             &&& self.lengths@[b] as nat == self@.buffers[b].len()
@@ -377,19 +377,19 @@ impl RuntimeSharedState {
             &&& forall|j: int| 0 <= j < self.lengths@[b] as int ==>
                 self.data@[self.offsets@[b] as int + j] as int == self@.buffers[b][j]
         } by {
-            // Trigger old wf_spec for buffer b
+            //  Trigger old wf_spec for buffer b
             assert(old_state.offsets@[b] >= 0);
             if b == buf as int {
-                // Target buffer: new values from new_buf_spec
+                //  Target buffer: new values from new_buf_spec
             } else {
-                // Other buffer: data unchanged in its region
-                // (by non-overlap, its region doesn't intersect the target region)
+                //  Other buffer: data unchanged in its region
+                //  (by non-overlap, its region doesn't intersect the target region)
                 assert forall|j: int| 0 <= j < self.lengths@[b] as int implies
                     self.data@[self.offsets@[b] as int + j] as int == self@.buffers[b][j]
                 by {
                     let p = self.offsets@[b] as int + j;
-                    // p is in buffer b's region, not in target buffer's region
-                    // by non-overlap from old wf_spec
+                    //  p is in buffer b's region, not in target buffer's region
+                    //  by non-overlap from old wf_spec
                     if b < buf as int {
                         assert(old_state.offsets@[b] as nat + old_state.lengths@[b] as nat
                             <= old_state.offsets@[buf as int] as nat);
@@ -398,15 +398,15 @@ impl RuntimeSharedState {
                             + old_state.lengths@[buf as int] as nat
                             <= old_state.offsets@[b] as nat);
                     }
-                    // So p is outside target region → data unchanged
+                    //  So p is outside target region → data unchanged
                     assert(self.data@[p] == old_state.data@[p]);
-                    // old data matches old spec
+                    //  old data matches old spec
                     assert(old_state.data@[p] as int == old_state@.buffers[b][j]);
                 }
             }
         }
 
-        // Non-overlap preserved (offsets/lengths unchanged)
+        //  Non-overlap preserved (offsets/lengths unchanged)
         assert forall|b1: int, b2: int|
             0 <= b1 < b2 < self@.buffers.len() as int implies
             self.offsets@[b1] as nat + (#[trigger] self.lengths@[b1]) as nat
@@ -418,12 +418,12 @@ impl RuntimeSharedState {
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Exec scan: run_scan
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Exec scan: run_scan
+//  ══════════════════════════════════════════════════════════════
 
 impl RuntimeSharedState {
-    /// Extract a logical buffer as a Vec<i64> (copy out from flat layout).
+    ///  Extract a logical buffer as a Vec<i64> (copy out from flat layout).
     pub fn extract_buffer(&self, buf: usize) -> (result: Vec<i64>)
         requires
             self.wf_spec(),
@@ -456,7 +456,7 @@ impl RuntimeSharedState {
         result
     }
 
-    /// Write a Vec<i64> back into a logical buffer.
+    ///  Write a Vec<i64> back into a logical buffer.
     pub fn write_buffer(&mut self, buf: usize, new_data: &Vec<i64>)
         requires
             old(self).wf_spec(),
@@ -511,9 +511,9 @@ impl RuntimeSharedState {
         }
     }
 
-    /// Execute a scan operation on a logical buffer.
-    /// Ensures result matches eval_scan spec.
-    /// Execute an inclusive scan on a buffer.
+    ///  Execute a scan operation on a logical buffer.
+    ///  Ensures result matches eval_scan spec.
+    ///  Execute an inclusive scan on a buffer.
     pub fn run_inclusive_scan(&mut self, buf: usize)
         requires
             old(self).wf_spec(),
@@ -528,7 +528,7 @@ impl RuntimeSharedState {
             self@.buffer_len(buf as nat) == old(self)@.buffer_len(buf as nat),
             forall|b: int| 0 <= b < old(self)@.buffers.len() && b != buf as int ==>
                 self@.buffers[b] == old(self)@.buffers[b],
-            // Result values match inclusive_scan_int
+            //  Result values match inclusive_scan_int
             forall|i: int| 0 <= i < old(self)@.buffer_len(buf as nat) as int ==>
                 self@.buffers[buf as int][i]
                     == inclusive_scan_int(old(self).extract_buffer_spec(buf as nat))[i],
@@ -537,7 +537,7 @@ impl RuntimeSharedState {
         let data = self.extract_buffer(buf);
         proof { assert(data@ =~= old_spec); }
         let scanned = inclusive_scan_i64_exec(&data);
-        // scanned[i] as int == inclusive_scan_int(data@)[i] == inclusive_scan_int(old_spec)[i]
+        //  scanned[i] as int == inclusive_scan_int(data@)[i] == inclusive_scan_int(old_spec)[i]
         proof {
             assert(data@ =~= old_spec);
             assert forall|i: int| 0 <= i < scanned@.len() implies
@@ -547,11 +547,11 @@ impl RuntimeSharedState {
             }
         }
         self.write_buffer(buf, &scanned);
-        // self@.buffers[buf][i] == scanned[i] as int == inclusive_scan_int(old_spec)[i]
+        //  self@.buffers[buf][i] == scanned[i] as int == inclusive_scan_int(old_spec)[i]
     }
 }
 
-/// Spec helper: the i64 data for a logical buffer (for preconditions).
+///  Spec helper: the i64 data for a logical buffer (for preconditions).
 impl RuntimeSharedState {
     pub open spec fn extract_buffer_spec(&self, buf: nat) -> Seq<i64> {
         Seq::new(self.lengths@[buf as int] as nat, |i: int|
@@ -559,11 +559,11 @@ impl RuntimeSharedState {
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// #1: Full scan exec↔spec bridge
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  #1: Full scan exec↔spec bridge
+//  ══════════════════════════════════════════════════════════════
 
-/// Bridge: as_int_seq of extract_buffer_spec equals the spec-level buffer.
+///  Bridge: as_int_seq of extract_buffer_spec equals the spec-level buffer.
 pub proof fn lemma_as_int_seq_extract_equals_spec(state: &RuntimeSharedState, buf: nat)
     requires state.wf_spec(), buf < state@.num_buffers(),
     ensures as_int_seq(state.extract_buffer_spec(buf)) =~= state@.buffers[buf as int],
@@ -571,7 +571,7 @@ pub proof fn lemma_as_int_seq_extract_equals_spec(state: &RuntimeSharedState, bu
     state.lemma_buffer_bounds(buf);
 }
 
-/// Full bridge: if run_inclusive_scan's ensures hold, the result equals eval_scan.
+///  Full bridge: if run_inclusive_scan's ensures hold, the result equals eval_scan.
 pub proof fn lemma_run_inclusive_scan_matches_eval_scan(
     old_state: &RuntimeSharedState,
     new_state: &RuntimeSharedState,
@@ -594,15 +594,15 @@ pub proof fn lemma_run_inclusive_scan_matches_eval_scan(
 {
     let scan_result = inclusive_scan::<int>(old_state@.buffers[buf as int]);
     lemma_as_int_seq_extract_equals_spec(old_state, buf);
-    // inclusive_scan_int(extract) = inclusive_scan::<int>(as_int_seq(extract))
-    // as_int_seq(extract) =~= spec_buf  (from bridge lemma)
-    // So scan_result =~= inclusive_scan_int(extract)
+    //  inclusive_scan_int(extract) = inclusive_scan::<int>(as_int_seq(extract))
+    //  as_int_seq(extract) =~= spec_buf  (from bridge lemma)
+    //  So scan_result =~= inclusive_scan_int(extract)
     let extract = old_state.extract_buffer_spec(buf);
     assert(as_int_seq(extract) =~= old_state@.buffers[buf as int]);
-    // inclusive_scan_int(extract) == inclusive_scan::<int>(as_int_seq(extract))
-    //                             =~= inclusive_scan::<int>(spec_buf) = scan_result
-    // inclusive_scan_int(extract) = inclusive_scan::<int>(as_int_seq(extract)) by definition
-    // as_int_seq(extract) =~= spec_buf, so their inclusive_scans agree pointwise
+    //  inclusive_scan_int(extract) == inclusive_scan::<int>(as_int_seq(extract))
+    //                              =~= inclusive_scan::<int>(spec_buf) = scan_result
+    //  inclusive_scan_int(extract) = inclusive_scan::<int>(as_int_seq(extract)) by definition
+    //  as_int_seq(extract) =~= spec_buf, so their inclusive_scans agree pointwise
     assert(inclusive_scan::<int>(as_int_seq(extract))
         =~= inclusive_scan::<int>(old_state@.buffers[buf as int]));
     assert forall|i: int| 0 <= i < scan_result.len() implies
@@ -616,9 +616,9 @@ pub proof fn lemma_run_inclusive_scan_matches_eval_scan(
     assert(new_state@.buffers =~= old_state@.set_buffer(buf, scan_result).buffers);
 }
 
-// ══════════════════════════════════════════════════════════════
-// #2: run_exclusive_scan
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  #2: run_exclusive_scan
+//  ══════════════════════════════════════════════════════════════
 
 impl RuntimeSharedState {
     pub fn run_exclusive_scan(&mut self, buf: usize)
@@ -654,12 +654,12 @@ impl RuntimeSharedState {
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// #3: 2D thread env injectivity
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  #3: 2D thread env injectivity
+//  ══════════════════════════════════════════════════════════════
 
-/// For 2D dispatch, distinct linear thread IDs produce distinct environments.
-/// env(t) = [t % width, t / width] — the mixed-radix decomposition is injective.
+///  For 2D dispatch, distinct linear thread IDs produce distinct environments.
+///  env(t) = [t % width, t / width] — the mixed-radix decomposition is injective.
 pub proof fn lemma_dim2d_env_injective(t1: nat, t2: nat, width: nat, height: nat)
     requires
         width > 0,
@@ -670,26 +670,26 @@ pub proof fn lemma_dim2d_env_injective(t1: nat, t2: nat, width: nat, height: nat
         thread_env_for_dim(&ThreadDim::Dim2D { width, height }, t1)
             != thread_env_for_dim(&ThreadDim::Dim2D { width, height }, t2),
 {
-    // If envs were equal: t1 % w == t2 % w AND t1 / w == t2 / w
-    // Then t1 == (t1/w)*w + t1%w == (t2/w)*w + t2%w == t2. Contradiction.
+    //  If envs were equal: t1 % w == t2 % w AND t1 / w == t2 / w
+    //  Then t1 == (t1/w)*w + t1%w == (t2/w)*w + t2%w == t2. Contradiction.
     if t1 % width == t2 % width && t1 / width == t2 / width {
-        // t == (t / w) * w + t % w is the Euclidean division identity
+        //  t == (t / w) * w + t % w is the Euclidean division identity
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(t1 as int, width as int);
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(t2 as int, width as int);
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Full exec↔spec↔Hillis-Steele chain
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Full exec↔spec↔Hillis-Steele chain
+//  ══════════════════════════════════════════════════════════════
 
-/// THE FULL CHAIN: exec run_inclusive_scan produces the same result as
-/// k rounds of Hillis-Steele Map+Barrier stages (when pow2(k) >= n).
+///  THE FULL CHAIN: exec run_inclusive_scan produces the same result as
+///  k rounds of Hillis-Steele Map+Barrier stages (when pow2(k) >= n).
 ///
-/// exec i64 scan → inclusive_scan_int → inclusive_scan::<int> → eval_scan
-///     = Hillis-Steele multi-round (theorem_eval_scan_equals_hillis_steele)
+///  exec i64 scan → inclusive_scan_int → inclusive_scan::<int> → eval_scan
+///      = Hillis-Steele multi-round (theorem_eval_scan_equals_hillis_steele)
 ///
-/// This connects real i64 computation to the self-bootstrapping proof.
+///  This connects real i64 computation to the self-bootstrapping proof.
 pub proof fn theorem_exec_scan_equals_hillis_steele(
     old_state: &RuntimeSharedState,
     new_state: &RuntimeSharedState,
@@ -707,7 +707,7 @@ pub proof fn theorem_exec_scan_equals_hillis_steele(
         old_state@.buffer_len(buf) == n,
         old_state@.workgroup_size == n,
         pow2(k) >= n,
-        // new_state is the result of run_inclusive_scan
+        //  new_state is the result of run_inclusive_scan
         new_state.wf_spec(),
         new_state@.workgroup_size == old_state@.workgroup_size,
         new_state@.buffers.len() == old_state@.buffers.len(),
@@ -718,23 +718,23 @@ pub proof fn theorem_exec_scan_equals_hillis_steele(
             new_state@.buffers[buf as int][i]
                 == inclusive_scan_int(old_state.extract_buffer_spec(buf))[i],
     ensures
-        // The exec result matches eval_scan (atomic spec)
+        //  The exec result matches eval_scan (atomic spec)
         new_state@ == eval_scan(buf, ScanOp::InclusiveSum, old_state@),
 {
     lemma_run_inclusive_scan_matches_eval_scan(old_state, new_state, buf);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Exec Map for identity-scatter, single-output kernels
+//  ══════════════════════════════════════════════════════════════
+//  Exec Map for identity-scatter, single-output kernels
 //
-// Uses a callback function instead of RuntimeArithExpr with arrays.
-// The callback computes the output value for each thread.
-// A ghost proof obligation connects it to the KernelSpec.
-// ══════════════════════════════════════════════════════════════
+//  Uses a callback function instead of RuntimeArithExpr with arrays.
+//  The callback computes the output value for each thread.
+//  A ghost proof obligation connects it to the KernelSpec.
+//  ══════════════════════════════════════════════════════════════
 
-/// Trait for a Map compute callback.
-/// The callback captures its input data and just takes a thread ID.
-/// The ghost spec ties the exec result to the spec-level computation.
+///  Trait for a Map compute callback.
+///  The callback captures its input data and just takes a thread ID.
+///  The ghost spec ties the exec result to the spec-level computation.
 pub trait MapCallback {
     spec fn ghost_result(&self, tid: nat) -> int;
 
@@ -743,11 +743,11 @@ pub trait MapCallback {
 }
 
 impl RuntimeSharedState {
-    /// Execute a single-output, identity-scatter Map via callback.
-    /// Each thread t in [0, n_active) writes callback(t) to output_buf[t].
+    ///  Execute a single-output, identity-scatter Map via callback.
+    ///  Each thread t in [0, n_active) writes callback(t) to output_buf[t].
     ///
-    /// The callback should capture input data (via extract_buffer) before
-    /// this call, so it reads from a snapshot, not the mutating state.
+    ///  The callback should capture input data (via extract_buffer) before
+    ///  this call, so it reads from a snapshot, not the mutating state.
     pub fn run_map_identity<F: MapCallback>(
         &mut self, callback: &F, output_buf: usize, n_active: usize,
     )
@@ -791,18 +791,18 @@ impl RuntimeSharedState {
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// RuntimeStage: exec mirror of Stage for the CPU interpreter
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  RuntimeStage: exec mirror of Stage for the CPU interpreter
+//  ══════════════════════════════════════════════════════════════
 
 use crate::arith_expr::*;
 use crate::runtime::arith_eval_arrays::*;
 
-/// Exec-level Stage tree. Mirrors the spec Stage enum but with
-/// RuntimeArithExpr and concrete types for exec dispatch.
+///  Exec-level Stage tree. Mirrors the spec Stage enum but with
+///  RuntimeArithExpr and concrete types for exec dispatch.
 pub enum RuntimeStage {
     Noop,
-    /// Map: single-output, identity-scatter, evaluated via runtime_eval_with_arrays.
+    ///  Map: single-output, identity-scatter, evaluated via runtime_eval_with_arrays.
     Map {
         guard: RuntimeArithExpr,
         compute: RuntimeArithExpr,
@@ -810,19 +810,19 @@ pub enum RuntimeStage {
         output_buf: usize,
         n_threads: usize,
     },
-    /// Inclusive or exclusive scan on a buffer.
+    ///  Inclusive or exclusive scan on a buffer.
     Scan {
         buffer: usize,
-        inclusive: bool,  // true = inclusive, false = exclusive
+        inclusive: bool,  //  true = inclusive, false = exclusive
     },
-    /// No-op barrier.
+    ///  No-op barrier.
     Barrier,
-    /// Sequential: first then second.
+    ///  Sequential: first then second.
     Seq {
         first: Box<RuntimeStage>,
         then: Box<RuntimeStage>,
     },
-    /// Bounded loop.
+    ///  Bounded loop.
     Loop {
         bound: usize,
         body: Box<RuntimeStage>,
@@ -830,7 +830,7 @@ pub enum RuntimeStage {
 }
 
 impl RuntimeSharedState {
-    /// Execute a loop body `bound` times.
+    ///  Execute a loop body `bound` times.
     fn run_loop(&mut self, body: &RuntimeStage, bound: usize)
         requires old(self).wf_spec(),
         ensures self.wf_spec(),
@@ -841,8 +841,8 @@ impl RuntimeSharedState {
         self.run_loop(body, bound - 1);
     }
 
-    /// Execute a RuntimeStage tree.
-    /// This is the full CPU interpreter for Stage trees.
+    ///  Execute a RuntimeStage tree.
+    ///  This is the full CPU interpreter for Stage trees.
     pub fn run_staged(&mut self, stage: &RuntimeStage)
         requires old(self).wf_spec(),
         ensures self.wf_spec(),
@@ -852,7 +852,7 @@ impl RuntimeSharedState {
             RuntimeStage::Noop => {},
             RuntimeStage::Barrier => {},
             RuntimeStage::Map { guard, compute, input_bufs, output_buf, n_threads } => {
-                // Extract inputs as snapshot
+                //  Extract inputs as snapshot
                 let mut input_data: Vec<Vec<i64>> = Vec::new();
                 let n_inputs = input_bufs.len();
                 let mut j: usize = 0;
@@ -875,7 +875,7 @@ impl RuntimeSharedState {
                     }
                     j = j + 1;
                 }
-                // Iterate threads, evaluate and write
+                //  Iterate threads, evaluate and write
                 let mut t: usize = 0;
                 while t < *n_threads
                     invariant
@@ -888,17 +888,17 @@ impl RuntimeSharedState {
                     if *output_buf < self.num_buffers() && t < self.buffer_len(*output_buf) {
                         let mut env: Vec<i64> = Vec::new();
                         env.push(t as i64);
-                        // Only eval if fits preconditions are met (skip otherwise)
-                        // In a production version, the caller proves these hold.
-                        self.write(*output_buf, t, 0i64); // placeholder write
+                        //  Only eval if fits preconditions are met (skip otherwise)
+                        //  In a production version, the caller proves these hold.
+                        self.write(*output_buf, t, 0i64); //  placeholder write
                     }
                     t = t + 1;
                 }
             },
             RuntimeStage::Scan { buffer, inclusive } => {
                 if *buffer < self.num_buffers() && self.buffer_len(*buffer) > 0 {
-                    // Note: caller must ensure all_partial_sums_bounded
-                    // and buffer_len <= i64::MAX. Skipped here for simplicity.
+                    //  Note: caller must ensure all_partial_sums_bounded
+                    //  and buffer_len <= i64::MAX. Skipped here for simplicity.
                 }
             },
             RuntimeStage::Seq { first, then } => {
@@ -912,10 +912,10 @@ impl RuntimeSharedState {
     }
 }
 
-// NOTE on 2D scatter: Var(0) scatter is NOT injective for 2D dispatch
-// because env[0] = t % width (gid_x), and threads in different rows share
-// the same gid_x. For 2D kernels, scatter must linearize:
-//   scatter = Add(Var(0), Mul(Var(1), Const(width)))
-// The lemma_identity_scatter_injective in stage_lemmas.rs works for 1D only.
+//  NOTE on 2D scatter: Var(0) scatter is NOT injective for 2D dispatch
+//  because env[0] = t % width (gid_x), and threads in different rows share
+//  the same gid_x. For 2D kernels, scatter must linearize:
+//    scatter = Add(Var(0), Mul(Var(1), Const(width)))
+//  The lemma_identity_scatter_injective in stage_lemmas.rs works for 1D only.
 
-} // verus!
+} //  verus!

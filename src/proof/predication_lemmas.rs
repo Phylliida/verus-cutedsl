@@ -5,35 +5,35 @@ use crate::proof::integer_helpers::*;
 
 verus! {
 
-// ══════════════════════════════════════════════════════════════
-// Arithmetic properties of ceil_div and padded_size
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Arithmetic properties of ceil_div and padded_size
+//  ══════════════════════════════════════════════════════════════
 
-/// Helper: (m + n - 1) as nat / n = q implies q * n >= m.
+///  Helper: (m + n - 1) as nat / n = q implies q * n >= m.
 pub proof fn lemma_ceil_div_mul_ge(m: nat, n: nat)
     requires n > 0,
     ensures ceil_div(m, n) * n >= m,
 {
     let total = (m + n - 1) as nat;
     let q = total / n;
-    // fundamental: total = n * q + r, 0 <= r < n
+    //  fundamental: total = n * q + r, 0 <= r < n
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(total as int, n as int);
     vstd::arithmetic::div_mod::lemma_mod_pos_bound(total as int, n as int);
     let r: int = (total as int) % (n as int);
-    // total = n * q + r
-    // m + n - 1 = n * q + r
-    // m = n * q + r - n + 1 = n * q - (n - 1 - r)
-    // Since 0 <= r < n, n - 1 - r >= 0, so m <= n * q
+    //  total = n * q + r
+    //  m + n - 1 = n * q + r
+    //  m = n * q + r - n + 1 = n * q - (n - 1 - r)
+    //  Since 0 <= r < n, n - 1 - r >= 0, so m <= n * q
     assert(total as int == (n as int) * (q as int) + r);
     assert(r >= 0 && r < n as int);
     assert((n as int) * (q as int) == total as int - r);
     assert((n as int) * (q as int) >= m as int);
-    // n * q == q * n
+    //  n * q == q * n
     vstd::arithmetic::mul::lemma_mul_is_commutative(n as int, q as int);
     assert((q as int) * (n as int) >= m as int);
 }
 
-/// Helper: padded_size(m, n) - m < n.
+///  Helper: padded_size(m, n) - m < n.
 pub proof fn lemma_ceil_div_tight(m: nat, n: nat)
     requires n > 0,
     ensures (ceil_div(m, n) * n) as int - (m as int) < (n as int),
@@ -44,14 +44,14 @@ pub proof fn lemma_ceil_div_tight(m: nat, n: nat)
     vstd::arithmetic::div_mod::lemma_mod_pos_bound(total as int, n as int);
     let r: int = (total as int) % (n as int);
     assert(total as int == (n as int) * (q as int) + r);
-    // q * n = m + n - 1 - r
-    // q * n - m = n - 1 - r < n
+    //  q * n = m + n - 1 - r
+    //  q * n - m = n - 1 - r < n
     vstd::arithmetic::mul::lemma_mul_is_commutative(n as int, q as int);
     assert((q as int) * (n as int) == total as int - r);
     assert((q as int) * (n as int) - m as int == (n as int) - 1 - r);
 }
 
-/// ceil_div(m, n) >= m / n (ceiling >= floor).
+///  ceil_div(m, n) >= m / n (ceiling >= floor).
 pub proof fn lemma_ceil_div_ge_floor(m: nat, n: nat)
     requires n > 0,
     ensures ceil_div(m, n) >= m / n,
@@ -60,7 +60,7 @@ pub proof fn lemma_ceil_div_ge_floor(m: nat, n: nat)
     vstd::arithmetic::div_mod::lemma_div_is_ordered(m as int, (m + n - 1) as int, n as int);
 }
 
-/// padded_size(m, n) >= m.
+///  padded_size(m, n) >= m.
 pub proof fn lemma_padded_size_ge(m: nat, n: nat)
     requires n > 0,
     ensures padded_size(m, n) >= m,
@@ -68,7 +68,7 @@ pub proof fn lemma_padded_size_ge(m: nat, n: nat)
     lemma_ceil_div_mul_ge(m, n);
 }
 
-/// padded_size(m, n) is divisible by n.
+///  padded_size(m, n) is divisible by n.
 pub proof fn lemma_padded_size_divisible(m: nat, n: nat)
     requires n > 0,
     ensures padded_size(m, n) % n == 0,
@@ -77,7 +77,7 @@ pub proof fn lemma_padded_size_divisible(m: nat, n: nat)
     vstd::arithmetic::div_mod::lemma_mod_multiples_basic(q as int, n as int);
 }
 
-/// The padding is at most n - 1: padded_size(m, n) - m < n.
+///  The padding is at most n - 1: padded_size(m, n) - m < n.
 pub proof fn lemma_padded_size_tight(m: nat, n: nat)
     requires n > 0,
     ensures padded_size(m, n) as int - (m as int) < (n as int),
@@ -85,30 +85,30 @@ pub proof fn lemma_padded_size_tight(m: nat, n: nat)
     lemma_ceil_div_tight(m, n);
 }
 
-/// When m is divisible by n, ceil_div equals floor div.
+///  When m is divisible by n, ceil_div equals floor div.
 pub proof fn lemma_ceil_div_exact(m: nat, n: nat)
     requires n > 0, m % n == 0,
     ensures ceil_div(m, n) == m / n,
 {
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m as int, n as int);
-    // m = n * (m/n) + 0 = n * (m/n)
+    //  m = n * (m/n) + 0 = n * (m/n)
     let q = m / n;
     vstd::arithmetic::mul::lemma_mul_is_commutative(n as int, q as int);
-    // m = q * n
-    // (m + n - 1) = q * n + (n - 1)
-    // Since n - 1 < n: (q*n + (n-1)) / n = q
+    //  m = q * n
+    //  (m + n - 1) = q * n + (n - 1)
+    //  Since n - 1 < n: (q*n + (n-1)) / n = q
     assert((m + n - 1) as nat == q * n + (n - 1) as nat);
     lemma_div_mod_decompose((n - 1) as nat, q, n);
-    // ((n-1) + n * q) / n == q
+    //  ((n-1) + n * q) / n == q
     vstd::arithmetic::mul::lemma_mul_is_commutative(n as int, q as int);
     assert(q * n + (n - 1) as nat == (n - 1) as nat + n * q);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Tile validity properties
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Tile validity properties
+//  ══════════════════════════════════════════════════════════════
 
-/// Full tiles (not the last) have all elements valid.
+///  Full tiles (not the last) have all elements valid.
 pub proof fn lemma_full_tile_all_valid(tile_idx: nat, tile_size: nat, total_size: nat)
     requires
         tile_size > 0,
@@ -118,7 +118,7 @@ pub proof fn lemma_full_tile_all_valid(tile_idx: nat, tile_size: nat, total_size
         forall|e: nat| e < tile_size ==>
             tile_element_valid(tile_idx, tile_size, e, total_size),
 {
-    // tile_idx * tile_size < (tile_idx + 1) * tile_size <= total_size
+    //  tile_idx * tile_size < (tile_idx + 1) * tile_size <= total_size
     vstd::arithmetic::mul::lemma_mul_is_distributive_add(tile_size as int, tile_idx as int, 1int);
     vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, tile_idx as int);
     vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, (tile_idx + 1) as int);
@@ -131,7 +131,7 @@ pub proof fn lemma_full_tile_all_valid(tile_idx: nat, tile_size: nat, total_size
     };
 }
 
-/// The last partial tile has total_size - tile_idx * tile_size valid elements.
+///  The last partial tile has total_size - tile_idx * tile_size valid elements.
 pub proof fn lemma_partial_tile_count(tile_idx: nat, tile_size: nat, total_size: nat)
     requires
         tile_size > 0,
@@ -150,7 +150,7 @@ pub proof fn lemma_partial_tile_count(tile_idx: nat, tile_size: nat, total_size:
     assert((tile_idx + 1) * tile_size == tile_idx * tile_size + tile_size);
 }
 
-/// Tiles beyond num_tiles_ceil have 0 valid elements.
+///  Tiles beyond num_tiles_ceil have 0 valid elements.
 pub proof fn lemma_out_of_range_tiles_empty(tile_idx: nat, tile_size: nat, total_size: nat)
     requires
         tile_size > 0,
@@ -160,14 +160,14 @@ pub proof fn lemma_out_of_range_tiles_empty(tile_idx: nat, tile_size: nat, total
 {
     lemma_padded_size_ge(total_size, tile_size);
     let ntiles = num_tiles_ceil(total_size, tile_size);
-    // ntiles * tile_size >= total_size (from padded_size_ge)
-    // tile_idx >= ntiles, so tile_idx * tile_size >= ntiles * tile_size >= total_size
+    //  ntiles * tile_size >= total_size (from padded_size_ge)
+    //  tile_idx >= ntiles, so tile_idx * tile_size >= ntiles * tile_size >= total_size
     vstd::arithmetic::mul::lemma_mul_inequality(ntiles as int, tile_idx as int, tile_size as int);
     vstd::arithmetic::mul::lemma_mul_is_commutative(ntiles as int, tile_size as int);
     vstd::arithmetic::mul::lemma_mul_is_commutative(tile_idx as int, tile_size as int);
 }
 
-/// The sum of tile_valid_counts over all tiles equals total_size.
+///  The sum of tile_valid_counts over all tiles equals total_size.
 pub proof fn lemma_total_valid_elements(total_size: nat, tile_size: nat)
     requires tile_size > 0, total_size > 0,
     ensures
@@ -175,15 +175,15 @@ pub proof fn lemma_total_valid_elements(total_size: nat, tile_size: nat)
 {
     let n = num_tiles_ceil(total_size, tile_size);
     lemma_total_valid_elements_inductive(n, tile_size, total_size);
-    // At k = n: if n * tile_size <= total_size then sum = n * tile_size, else sum = total_size
-    // But n = ceil_div(total_size, tile_size), so padded_size = n * tile_size >= total_size
-    // We need: sum = total_size
-    // Case 1: n * tile_size <= total_size AND n * tile_size >= total_size => n * tile_size == total_size => sum = total_size ✓
-    // Case 2: n * tile_size > total_size => sum = total_size ✓
+    //  At k = n: if n * tile_size <= total_size then sum = n * tile_size, else sum = total_size
+    //  But n = ceil_div(total_size, tile_size), so padded_size = n * tile_size >= total_size
+    //  We need: sum = total_size
+    //  Case 1: n * tile_size <= total_size AND n * tile_size >= total_size => n * tile_size == total_size => sum = total_size ✓
+    //  Case 2: n * tile_size > total_size => sum = total_size ✓
     lemma_padded_size_ge(total_size, tile_size);
 }
 
-/// Inductive helper: sum_valid_counts(k) == min(k * tile_size, total_size).
+///  Inductive helper: sum_valid_counts(k) == min(k * tile_size, total_size).
 proof fn lemma_total_valid_elements_inductive(k: nat, tile_size: nat, total_size: nat)
     requires
         tile_size > 0,
@@ -197,34 +197,34 @@ proof fn lemma_total_valid_elements_inductive(k: nat, tile_size: nat, total_size
     if k == 0 {
     } else {
         let prev = (k - 1) as nat;
-        // Arithmetic: k * tile_size == prev * tile_size + tile_size
+        //  Arithmetic: k * tile_size == prev * tile_size + tile_size
         vstd::arithmetic::mul::lemma_mul_is_distributive_add(tile_size as int, prev as int, 1int);
         vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, prev as int);
         vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, k as int);
 
-        // prev <= k <= num_tiles_ceil, so IH applies
+        //  prev <= k <= num_tiles_ceil, so IH applies
         lemma_total_valid_elements_inductive(prev, tile_size, total_size);
 
         if prev * tile_size >= total_size {
-            // tile_valid_count(prev) = 0 since prev * tile_size >= total_size
-            // sum(k) = sum(k-1) + 0 = total_size
+            //  tile_valid_count(prev) = 0 since prev * tile_size >= total_size
+            //  sum(k) = sum(k-1) + 0 = total_size
         } else if k * tile_size <= total_size {
-            // Full tile
+            //  Full tile
             lemma_full_tile_all_valid(prev, tile_size, total_size);
-            // sum(k) = prev * tile_size + tile_size = k * tile_size
+            //  sum(k) = prev * tile_size + tile_size = k * tile_size
         } else {
-            // Partial tile: prev * tile_size < total_size, k * tile_size > total_size
+            //  Partial tile: prev * tile_size < total_size, k * tile_size > total_size
             lemma_partial_tile_count(prev, tile_size, total_size);
-            // sum(k) = prev * tile_size + (total_size - prev * tile_size) = total_size
+            //  sum(k) = prev * tile_size + (total_size - prev * tile_size) = total_size
         }
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Integration with divide
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Integration with divide
+//  ══════════════════════════════════════════════════════════════
 
-/// padded_size properties: > 0 and divisible by tile_size.
+///  padded_size properties: > 0 and divisible by tile_size.
 pub proof fn lemma_padded_size_complement_admissible(total_size: nat, tile_size: nat)
     requires padded_divide_admissible(total_size, tile_size),
     ensures
@@ -235,14 +235,14 @@ pub proof fn lemma_padded_size_complement_admissible(total_size: nat, tile_size:
     lemma_padded_size_divisible(total_size, tile_size);
 }
 
-/// num_tiles_ceil(m, n) * n == padded_size(m, n) — definitional.
+///  num_tiles_ceil(m, n) * n == padded_size(m, n) — definitional.
 pub proof fn lemma_num_tiles_is_padded(total_size: nat, tile_size: nat)
     requires tile_size > 0,
     ensures num_tiles_ceil(total_size, tile_size) * tile_size == padded_size(total_size, tile_size),
 {
 }
 
-/// When total_size is divisible by tile_size, padded_size == total_size.
+///  When total_size is divisible by tile_size, padded_size == total_size.
 pub proof fn lemma_padded_size_exact(total_size: nat, tile_size: nat)
     requires tile_size > 0, total_size % tile_size == 0,
     ensures padded_size(total_size, tile_size) == total_size,
@@ -252,11 +252,11 @@ pub proof fn lemma_padded_size_exact(total_size: nat, tile_size: nat)
     vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, (total_size / tile_size) as int);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Predicated copy correctness
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Predicated copy correctness
+//  ══════════════════════════════════════════════════════════════
 
-/// tile_for_index(idx) < num_tiles_ceil when idx < original_size.
+///  tile_for_index(idx) < num_tiles_ceil when idx < original_size.
 pub proof fn lemma_tile_for_index_bound(idx: nat, tile_size: nat, original_size: nat)
     requires
         tile_size > 0,
@@ -264,20 +264,20 @@ pub proof fn lemma_tile_for_index_bound(idx: nat, tile_size: nat, original_size:
     ensures
         tile_for_index(idx, tile_size) < num_tiles_ceil(original_size, tile_size),
 {
-    // idx < original_size <= padded_size = ntiles * tile_size
+    //  idx < original_size <= padded_size = ntiles * tile_size
     lemma_padded_size_ge(original_size, tile_size);
     let ntiles = num_tiles_ceil(original_size, tile_size);
     let ps = padded_size(original_size, tile_size);
     assert(ps == ntiles * tile_size);
     assert(idx < ps);
-    // idx / tile_size < ntiles because idx < ntiles * tile_size
-    // Use: a < b * c ==> a / c < b (when c > 0)
+    //  idx / tile_size < ntiles because idx < ntiles * tile_size
+    //  Use: a < b * c ==> a / c < b (when c > 0)
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(idx as int, tile_size as int);
     vstd::arithmetic::div_mod::lemma_mod_pos_bound(idx as int, tile_size as int);
-    // idx = tile_size * (idx / tile_size) + (idx % tile_size)
-    // idx < ntiles * tile_size
-    // tile_size * (idx / tile_size) <= idx < ntiles * tile_size
-    // So idx / tile_size < ntiles
+    //  idx = tile_size * (idx / tile_size) + (idx % tile_size)
+    //  idx < ntiles * tile_size
+    //  tile_size * (idx / tile_size) <= idx < ntiles * tile_size
+    //  So idx / tile_size < ntiles
     let q = idx / tile_size;
     vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, q as int);
     assert(q * tile_size <= idx) by {
@@ -291,7 +291,7 @@ pub proof fn lemma_tile_for_index_bound(idx: nat, tile_size: nat, original_size:
     {};
 }
 
-/// elem_in_tile(idx) < tile_size.
+///  elem_in_tile(idx) < tile_size.
 pub proof fn lemma_elem_in_tile_bound(idx: nat, tile_size: nat)
     requires
         tile_size > 0,
@@ -301,7 +301,7 @@ pub proof fn lemma_elem_in_tile_bound(idx: nat, tile_size: nat)
     vstd::arithmetic::div_mod::lemma_mod_pos_bound(idx as int, tile_size as int);
 }
 
-/// Every valid element is covered: tile * tile_size + elem == x < original_size.
+///  Every valid element is covered: tile * tile_size + elem == x < original_size.
 pub proof fn lemma_predicated_coverage_unique(original_size: nat, tile_size: nat)
     requires
         padded_divide_admissible(original_size, tile_size),
@@ -315,16 +315,16 @@ pub proof fn lemma_predicated_coverage_unique(original_size: nat, tile_size: nat
         elem_in_tile(x, tile_size),
         original_size,
     ) by {
-        // tile_for_index(x) * tile_size + elem_in_tile(x) == x
+        //  tile_for_index(x) * tile_size + elem_in_tile(x) == x
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int, tile_size as int);
         vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, (x / tile_size) as int);
-        // x = tile_size * (x / tile_size) + x % tile_size
-        //   = (x / tile_size) * tile_size + x % tile_size
-        // So (x / tile_size) * tile_size + (x % tile_size) == x < original_size
+        //  x = tile_size * (x / tile_size) + x % tile_size
+        //    = (x / tile_size) * tile_size + x % tile_size
+        //  So (x / tile_size) * tile_size + (x % tile_size) == x < original_size
     };
 }
 
-/// Distinct tile-element pairs map to distinct global indices (no double counting).
+///  Distinct tile-element pairs map to distinct global indices (no double counting).
 pub proof fn lemma_predicated_no_double_count(
     tile_size: nat,
     t1: nat, e1: nat,
@@ -339,11 +339,11 @@ pub proof fn lemma_predicated_no_double_count(
         t1 * tile_size + e1 != t2 * tile_size + e2,
 {
     if t1 == t2 {
-        // e1 != e2, same tile, so sums differ
+        //  e1 != e2, same tile, so sums differ
     } else {
-        // WLOG t1 != t2. If t1 < t2:
-        //   t1 * tile_size + e1 < (t1 + 1) * tile_size <= t2 * tile_size <= t2 * tile_size + e2
-        // Symmetric for t2 < t1.
+        //  WLOG t1 != t2. If t1 < t2:
+        //    t1 * tile_size + e1 < (t1 + 1) * tile_size <= t2 * tile_size <= t2 * tile_size + e2
+        //  Symmetric for t2 < t1.
         if t1 < t2 {
             vstd::arithmetic::mul::lemma_mul_is_distributive_add(tile_size as int, t1 as int, 1int);
             vstd::arithmetic::mul::lemma_mul_is_commutative(tile_size as int, t1 as int);
@@ -362,8 +362,8 @@ pub proof fn lemma_predicated_no_double_count(
     }
 }
 
-/// Predicated divide is injective on valid elements: distinct valid indices
-/// have distinct offsets.
+///  Predicated divide is injective on valid elements: distinct valid indices
+///  have distinct offsets.
 pub proof fn lemma_predicated_divide_injective_on_valid(
     original_size: nat, tile_size: nat,
 )
@@ -381,7 +381,7 @@ pub proof fn lemma_predicated_divide_injective_on_valid(
     implies predicated_divide(original_size, tile_size).layout.offset(x)
         != predicated_divide(original_size, tile_size).layout.offset(y)
     by {
-        // offset(x) == x and offset(y) == y by identity
+        //  offset(x) == x and offset(y) == y by identity
         let ps = padded_size(original_size, tile_size);
         assert(x < ps);
         assert(y < ps);
@@ -391,15 +391,15 @@ pub proof fn lemma_predicated_divide_injective_on_valid(
         crate::proof::tiling_lemmas::lemma_predicated_divide_offset_identity(
             original_size, tile_size, y,
         );
-        // offset(x) == x, offset(y) == y, x != y
+        //  offset(x) == x, offset(y) == y, x != y
     };
 }
 
-// ══════════════════════════════════════════════════════════════
-// Predication boundary masking proofs (Feature 2 Round 2)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Predication boundary masking proofs (Feature 2 Round 2)
+//  ══════════════════════════════════════════════════════════════
 
-/// Full tiles have all-true masks.
+///  Full tiles have all-true masks.
 pub proof fn lemma_full_tile_mask(tile_idx: nat, tile_size: nat, total_size: nat)
     requires
         tile_size > 0,
@@ -415,7 +415,7 @@ pub proof fn lemma_full_tile_mask(tile_idx: nat, tile_size: nat, total_size: nat
     };
 }
 
-/// Boundary tile mask is contiguous: first valid_count true, rest false.
+///  Boundary tile mask is contiguous: first valid_count true, rest false.
 pub proof fn lemma_boundary_tile_mask_contiguous(
     tile_idx: nat, tile_size: nat, total_size: nat,
 )
@@ -436,26 +436,26 @@ pub proof fn lemma_boundary_tile_mask_contiguous(
     assert(mask.len() == tile_size);
     assert(vc <= tile_size);
 
-    // For i < vc: tile_idx * tile_size + i < total_size → valid → true
+    //  For i < vc: tile_idx * tile_size + i < total_size → valid → true
     assert forall|i: nat| i < vc implies #[trigger] mask[i as int] == true
     by {
-        // vc == total_size - tile_idx * tile_size
-        // i < vc → tile_idx * tile_size + i < total_size
+        //  vc == total_size - tile_idx * tile_size
+        //  i < vc → tile_idx * tile_size + i < total_size
         assert(tile_idx * tile_size + i < total_size);
         assert(tile_element_valid(tile_idx, tile_size, i, total_size));
     };
 
-    // For i >= vc: tile_idx * tile_size + i >= total_size → invalid → false
+    //  For i >= vc: tile_idx * tile_size + i >= total_size → invalid → false
     assert forall|i: nat| vc <= i && i < mask.len() implies #[trigger] mask[i as int] == false
     by {
-        // i >= vc == total_size - tile_idx * tile_size
-        // tile_idx * tile_size + i >= total_size
+        //  i >= vc == total_size - tile_idx * tile_size
+        //  tile_idx * tile_size + i >= total_size
         assert(tile_idx * tile_size + i >= total_size);
         assert(!tile_element_valid(tile_idx, tile_size, i, total_size));
     };
 }
 
-/// Store predication implies in-bounds write.
+///  Store predication implies in-bounds write.
 pub proof fn lemma_store_predication_in_bounds(
     tile_idx: nat, tile_size: nat, total_size: nat, write_idx: nat,
 )
@@ -465,12 +465,12 @@ pub proof fn lemma_store_predication_in_bounds(
     ensures
         tile_idx * tile_size + write_idx < total_size,
 {
-    // Unfold: store_predication_safe means mask[write_idx] == true
-    // mask[write_idx] == tile_element_valid(tile_idx, tile_size, write_idx, total_size)
-    // == tile_idx * tile_size + write_idx < total_size
+    //  Unfold: store_predication_safe means mask[write_idx] == true
+    //  mask[write_idx] == tile_element_valid(tile_idx, tile_size, write_idx, total_size)
+    //  == tile_idx * tile_size + write_idx < total_size
 }
 
-/// Masked load preserves valid data, zeros padding.
+///  Masked load preserves valid data, zeros padding.
 pub proof fn lemma_masked_load_correct(
     tile_idx: nat, tile_size: nat, total_size: nat, elem_idx: nat,
 )
@@ -483,10 +483,10 @@ pub proof fn lemma_masked_load_correct(
         !tile_element_valid(tile_idx, tile_size, elem_idx, total_size) ==>
             tile_predicate_mask(tile_idx, tile_size, total_size)[elem_idx as int] == false,
 {
-    // Direct from tile_predicate_mask definition — mask[i] == tile_element_valid(...)
+    //  Direct from tile_predicate_mask definition — mask[i] == tile_element_valid(...)
 }
 
-/// Mask popcount for full tiles equals tile_size.
+///  Mask popcount for full tiles equals tile_size.
 pub proof fn lemma_mask_popcount_full(tile_idx: nat, tile_size: nat, total_size: nat)
     requires
         tile_size > 0,
@@ -496,12 +496,12 @@ pub proof fn lemma_mask_popcount_full(tile_idx: nat, tile_size: nat, total_size:
 {
     lemma_full_tile_all_valid(tile_idx, tile_size, total_size);
     let mask = tile_predicate_mask(tile_idx, tile_size, total_size);
-    // All true → popcount == len == tile_size
+    //  All true → popcount == len == tile_size
     lemma_mask_popcount_all_true(mask, tile_size);
-    // tile_valid_count == tile_size for full tiles
+    //  tile_valid_count == tile_size for full tiles
 }
 
-/// Helper: popcount of all-true mask of length n is n.
+///  Helper: popcount of all-true mask of length n is n.
 proof fn lemma_mask_popcount_all_true(mask: Seq<bool>, n: nat)
     requires
         mask.len() == n,
@@ -525,7 +525,7 @@ proof fn lemma_mask_popcount_all_true(mask: Seq<bool>, n: nat)
     }
 }
 
-/// Mask popcount for boundary tiles.
+///  Mask popcount for boundary tiles.
 pub proof fn lemma_mask_popcount_boundary(tile_idx: nat, tile_size: nat, total_size: nat)
     requires
         tile_size > 0,
@@ -539,11 +539,11 @@ pub proof fn lemma_mask_popcount_boundary(tile_idx: nat, tile_size: nat, total_s
     lemma_partial_tile_count(tile_idx, tile_size, total_size);
     let vc = tile_valid_count(tile_idx, tile_size, total_size);
     let mask = tile_predicate_mask(tile_idx, tile_size, total_size);
-    // mask is contiguous: first vc true, rest false
+    //  mask is contiguous: first vc true, rest false
     lemma_mask_popcount_contiguous(mask, vc);
 }
 
-/// Helper: popcount of a contiguous mask with vc true bits is vc.
+///  Helper: popcount of a contiguous mask with vc true bits is vc.
 proof fn lemma_mask_popcount_contiguous(mask: Seq<bool>, vc: nat)
     requires
         mask_contiguous(mask, vc),
@@ -556,11 +556,11 @@ proof fn lemma_mask_popcount_contiguous(mask: Seq<bool>, vc: nat)
     } else {
         let n = mask.len() as nat;
         if vc < n {
-            // Last element is false (n-1 >= vc)
+            //  Last element is false (n-1 >= vc)
             assert(mask[(n - 1) as int] == false);
             assert(mask.last() == false);
             let prev = mask.drop_last();
-            // prev is contiguous with same vc
+            //  prev is contiguous with same vc
             assert(prev.len() == (n - 1) as nat);
             assert(mask_contiguous(prev, vc)) by {
                 assert(vc <= prev.len());
@@ -575,7 +575,7 @@ proof fn lemma_mask_popcount_contiguous(mask: Seq<bool>, vc: nat)
             };
             lemma_mask_popcount_contiguous(prev, vc);
         } else {
-            // vc == n, all true
+            //  vc == n, all true
             assert(mask.last() == true) by {
                 assert(mask[(n - 1) as int] == true);
             };
@@ -586,11 +586,11 @@ proof fn lemma_mask_popcount_contiguous(mask: Seq<bool>, vc: nat)
                 by {
                     assert(mask[i as int] == true);
                 };
-                // No false range since vc-1 == prev.len()
+                //  No false range since vc-1 == prev.len()
             };
             lemma_mask_popcount_contiguous(prev, (vc - 1) as nat);
         }
     }
 }
 
-} // verus!
+} //  verus!

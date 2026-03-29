@@ -335,7 +335,7 @@ implements the operation, we axiomatize its behavior.
 Per-kernel proofs compose Layer 1 and Layer 2:
 
 ```
-// Example: verified tiled GEMM outline
+//  Example: verified tiled GEMM outline
 fn gemm_kernel<T: Ring>(A: Tensor<T>, B: Tensor<T>, C: &mut Tensor<T>)
     requires
         A.layout.shape == seq![M, K],
@@ -438,9 +438,9 @@ where each logical mode starts in the flat representation.
 
 ```rust
 pub struct DividedLayout {
-    pub layout: LayoutSpec,       // flat layout with all modes
-    pub tile_modes: nat,          // first tile_modes modes are the "tile"
-                                  // remaining modes are the "rest"
+    pub layout: LayoutSpec,       //  flat layout with all modes
+    pub tile_modes: nat,          //  first tile_modes modes are the "tile"
+                                  //  remaining modes are the "rest"
 }
 ```
 
@@ -499,15 +499,15 @@ impl RuntimeLayout {
         requires self.wf_spec(), (idx as nat) < self@.size(),
         ensures out as int == self@.offset(idx as nat),
     {
-        // exec implementation: delinearize then dot product
-        // or direct iterative computation
+        //  exec implementation: delinearize then dot product
+        //  or direct iterative computation
     }
 
     pub fn size(&self) -> (out: usize)
         requires self.wf_spec(),
         ensures out as nat == self@.size(),
     {
-        // product of shape elements
+        //  product of shape elements
     }
 }
 ```
@@ -767,7 +767,7 @@ pub fn global_load<T>(buf: &[T], layout: &RuntimeLayout, idx: usize) -> (out: T)
         layout@.offset(idx as nat) < buf@.len(),
     ensures
         out == buf@[layout@.offset(idx as nat) as int],
-{ unimplemented!() }  // body replaced by codegen
+{ unimplemented!() }  //  body replaced by codegen
 ```
 
 This is the same pattern as verus-cad's `RuntimeRational::add` -- the exec body is

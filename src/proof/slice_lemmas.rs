@@ -6,11 +6,11 @@ use crate::proof::shape_lemmas::*;
 
 verus! {
 
-// ══════════════════════════════════════════════════════════════
-// Slice rank
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Slice rank
+//  ══════════════════════════════════════════════════════════════
 
-/// Slicing reduces the rank by 1.
+///  Slicing reduces the rank by 1.
 pub proof fn lemma_slice_rank(layout: &LayoutSpec, mode: nat, coord: nat)
     requires
         layout.valid(),
@@ -24,11 +24,11 @@ pub proof fn lemma_slice_rank(layout: &LayoutSpec, mode: nat, coord: nat)
 {
 }
 
-// ══════════════════════════════════════════════════════════════
-// Slice validity
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Slice validity
+//  ══════════════════════════════════════════════════════════════
 
-/// The sliced layout has a valid shape (all entries > 0).
+///  The sliced layout has a valid shape (all entries > 0).
 pub proof fn lemma_slice_shape_valid(layout: &LayoutSpec, mode: nat, coord: nat)
     requires
         layout.valid(),
@@ -47,7 +47,7 @@ pub proof fn lemma_slice_shape_valid(layout: &LayoutSpec, mode: nat, coord: nat)
     }
 }
 
-/// The sliced layout is valid.
+///  The sliced layout is valid.
 pub proof fn lemma_slice_valid(layout: &LayoutSpec, mode: nat, coord: nat)
     requires
         layout.valid(),
@@ -60,11 +60,11 @@ pub proof fn lemma_slice_valid(layout: &LayoutSpec, mode: nat, coord: nat)
     lemma_slice_shape_valid(layout, mode, coord);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Dice rank and validity
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Dice rank and validity
+//  ══════════════════════════════════════════════════════════════
 
-/// Dicing produces a rank-1 layout.
+///  Dicing produces a rank-1 layout.
 pub proof fn lemma_dice_rank(layout: &LayoutSpec, mode: nat)
     requires
         layout.valid(),
@@ -75,7 +75,7 @@ pub proof fn lemma_dice_rank(layout: &LayoutSpec, mode: nat)
 {
 }
 
-/// The diced layout is valid.
+///  The diced layout is valid.
 pub proof fn lemma_dice_valid(layout: &LayoutSpec, mode: nat)
     requires
         layout.valid(),
@@ -85,11 +85,11 @@ pub proof fn lemma_dice_valid(layout: &LayoutSpec, mode: nat)
 {
 }
 
-// ══════════════════════════════════════════════════════════════
-// Dice size
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Dice size
+//  ══════════════════════════════════════════════════════════════
 
-/// Dice size equals the mode's extent.
+///  Dice size equals the mode's extent.
 pub proof fn lemma_dice_size(layout: &LayoutSpec, mode: nat)
     requires
         layout.valid(),
@@ -104,11 +104,11 @@ pub proof fn lemma_dice_size(layout: &LayoutSpec, mode: nat)
     vstd::arithmetic::mul::lemma_mul_basics(d.shape.first() as int);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Slice at mode 0: simplest case
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Slice at mode 0: simplest case
+//  ══════════════════════════════════════════════════════════════
 
-/// Slicing at mode 0 removes the first element of shape and stride.
+///  Slicing at mode 0 removes the first element of shape and stride.
 pub proof fn lemma_slice_mode0(layout: &LayoutSpec, coord: nat)
     requires
         layout.valid(),
@@ -133,11 +133,11 @@ pub proof fn lemma_slice_mode0(layout: &LayoutSpec, coord: nat)
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Slice at last mode: also simple
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Slice at last mode: also simple
+//  ══════════════════════════════════════════════════════════════
 
-/// Slicing at the last mode removes the last element of shape and stride.
+///  Slicing at the last mode removes the last element of shape and stride.
 pub proof fn lemma_slice_last_mode(layout: &LayoutSpec, coord: nat)
     requires
         layout.valid(),
@@ -161,4 +161,4 @@ pub proof fn lemma_slice_last_mode(layout: &LayoutSpec, coord: nat)
     }
 }
 
-} // verus!
+} //  verus!

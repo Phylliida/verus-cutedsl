@@ -1,12 +1,12 @@
-/// Proof lemmas for Stage-based kernel composition.
+///  Proof lemmas for Stage-based kernel composition.
 ///
-/// Key theorems:
-/// - Loop invariant induction: if inv holds initially and is preserved
-///   by each iteration, it holds after the loop.
-/// - Loop unrolling / concatenation.
-/// - Seq associativity and identity.
-/// - Barrier invariant chaining (Hoare-logic-style).
-/// - Stage substitution under equivalence.
+///  Key theorems:
+///  - Loop invariant induction: if inv holds initially and is preserved
+///    by each iteration, it holds after the loop.
+///  - Loop unrolling / concatenation.
+///  - Seq associativity and identity.
+///  - Barrier invariant chaining (Hoare-logic-style).
+///  - Stage substitution under equivalence.
 
 use vstd::prelude::*;
 use crate::stage::*;
@@ -17,12 +17,12 @@ use verus_algebra::summation::*;
 
 verus! {
 
-// ══════════════════════════════════════════════════════════════
-// Loop invariant induction
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Loop invariant induction
+//  ══════════════════════════════════════════════════════════════
 
-/// Core induction: if inv holds at iteration `iter` and each step preserves it,
-/// then inv holds after all remaining iterations.
+///  Core induction: if inv holds at iteration `iter` and each step preserves it,
+///  then inv holds after all remaining iterations.
 pub proof fn lemma_loop_inv_induction(
     body: &Stage,
     state: SharedState,
@@ -48,8 +48,8 @@ pub proof fn lemma_loop_inv_induction(
     }
 }
 
-/// Top-level loop invariant theorem: if inv holds initially (at iter 0)
-/// and body preserves it, then it holds after the full loop.
+///  Top-level loop invariant theorem: if inv holds initially (at iter 0)
+///  and body preserves it, then it holds after the full loop.
 pub proof fn lemma_loop_inv(
     body: &Stage,
     state: SharedState,
@@ -67,11 +67,11 @@ pub proof fn lemma_loop_inv(
     lemma_loop_inv_induction(body, state, bound, 0, inv);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Loop unrolling
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Loop unrolling
+//  ══════════════════════════════════════════════════════════════
 
-/// Peeling one iteration off the front of a loop.
+///  Peeling one iteration off the front of a loop.
 pub proof fn lemma_loop_unroll_one(
     body: &Stage, state: SharedState, bound: nat, iter: nat,
 )
@@ -81,11 +81,11 @@ pub proof fn lemma_loop_unroll_one(
             == eval_loop(body, staged_eval(body, state), bound, iter + 1),
 {}
 
-// ══════════════════════════════════════════════════════════════
-// Seq associativity and identity
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Seq associativity and identity
+//  ══════════════════════════════════════════════════════════════
 
-/// Seq is associative: Seq(a, Seq(b, c)) ≡ Seq(Seq(a, b), c).
+///  Seq is associative: Seq(a, Seq(b, c)) ≡ Seq(Seq(a, b), c).
 pub proof fn lemma_seq_assoc(a: Stage, b: Stage, c: Stage, state: SharedState)
     ensures
         staged_eval(
@@ -102,19 +102,19 @@ pub proof fn lemma_seq_assoc(a: Stage, b: Stage, c: Stage, state: SharedState)
             state,
         ),
 {
-    // Help Z3 unfold through the Box layers
+    //  Help Z3 unfold through the Box layers
     let mid_a = staged_eval(&a, state);
     let mid_ab = staged_eval(&b, mid_a);
     let final_abc = staged_eval(&c, mid_ab);
-    // LHS: Seq(a, Seq(b, c))
+    //  LHS: Seq(a, Seq(b, c))
     lemma_seq_compose(a, Stage::Seq { first: Box::new(b), then: Box::new(c) }, state);
     lemma_seq_compose(b, c, mid_a);
-    // RHS: Seq(Seq(a, b), c)
+    //  RHS: Seq(Seq(a, b), c)
     lemma_seq_compose(Stage::Seq { first: Box::new(a), then: Box::new(b) }, c, state);
     lemma_seq_compose(a, b, state);
 }
 
-/// Noop is left identity for Seq.
+///  Noop is left identity for Seq.
 pub proof fn lemma_seq_noop_left(s: Stage, state: SharedState)
     ensures
         staged_eval(
@@ -126,7 +126,7 @@ pub proof fn lemma_seq_noop_left(s: Stage, state: SharedState)
     lemma_noop(state);
 }
 
-/// Noop is right identity for Seq.
+///  Noop is right identity for Seq.
 pub proof fn lemma_seq_noop_right(s: Stage, state: SharedState)
     ensures
         staged_eval(
@@ -138,11 +138,11 @@ pub proof fn lemma_seq_noop_right(s: Stage, state: SharedState)
     lemma_noop(staged_eval(&s, state));
 }
 
-// ══════════════════════════════════════════════════════════════
-// Barrier invariant chaining
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Barrier invariant chaining
+//  ══════════════════════════════════════════════════════════════
 
-/// If a stage establishes a postcondition, it holds after Seq(stage, Barrier(post)).
+///  If a stage establishes a postcondition, it holds after Seq(stage, Barrier(post)).
 pub proof fn lemma_barrier_post_holds(
     stage: Stage,
     scope: BarrierScope,
@@ -164,9 +164,9 @@ pub proof fn lemma_barrier_post_holds(
     lemma_barrier_noop(scope, post, staged_eval(&stage, state));
 }
 
-/// Hoare-style barrier chaining: {pre} stage {post}.
-/// If `pre(state)` and `forall s. pre(s) ==> post(eval(stage, s))`,
-/// then `post` holds after executing stage.
+///  Hoare-style barrier chaining: {pre} stage {post}.
+///  If `pre(state)` and `forall s. pre(s) ==> post(eval(stage, s))`,
+///  then `post` holds after executing stage.
 pub proof fn lemma_barrier_chain(
     stage: Stage,
     pre: spec_fn(SharedState) -> bool,
@@ -185,17 +185,17 @@ pub proof fn lemma_barrier_chain(
             state,
         )),
 {
-    // staged_eval(&stage, state) satisfies post by the Hoare triple
+    //  staged_eval(&stage, state) satisfies post by the Hoare triple
     assert(post(staged_eval(&stage, state)));
     lemma_barrier_post_holds(stage, BarrierScope::Workgroup, post, state);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Stage substitution
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Stage substitution
+//  ══════════════════════════════════════════════════════════════
 
-/// If two stages produce the same result after a common prefix,
-/// they are interchangeable in Seq(prefix ; stage ; suffix).
+///  If two stages produce the same result after a common prefix,
+///  they are interchangeable in Seq(prefix ; stage ; suffix).
 pub proof fn lemma_seq_stage_substitution(
     before: Stage,
     a: Stage,
@@ -222,26 +222,26 @@ pub proof fn lemma_seq_stage_substitution(
         ),
 {
     let mid = staged_eval(&before, state);
-    // Unfold LHS
+    //  Unfold LHS
     lemma_seq_compose(
         Stage::Seq { first: Box::new(before), then: Box::new(a) },
         after, state);
     lemma_seq_compose(before, a, state);
-    // Unfold RHS
+    //  Unfold RHS
     lemma_seq_compose(
         Stage::Seq { first: Box::new(before), then: Box::new(b) },
         after, state);
     lemma_seq_compose(before, b, state);
-    // Now both sides = staged_eval(&after, staged_eval(&X, mid))
-    // where staged_eval(&a, mid) == staged_eval(&b, mid) by requires.
+    //  Now both sides = staged_eval(&after, staged_eval(&X, mid))
+    //  where staged_eval(&a, mid) == staged_eval(&b, mid) by requires.
 }
 
-// ══════════════════════════════════════════════════════════════
-// Loop + Seq: explicit two-stage loop body
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Loop + Seq: explicit two-stage loop body
+//  ══════════════════════════════════════════════════════════════
 
-/// Explicit form of a loop with a two-stage body, for easier reasoning.
-/// Each iteration runs a then b.
+///  Explicit form of a loop with a two-stage body, for easier reasoning.
+///  Each iteration runs a then b.
 pub open spec fn eval_loop_two_stage(
     a: &Stage, b: &Stage, state: SharedState, bound: nat, iter: nat,
 ) -> SharedState
@@ -256,7 +256,7 @@ pub open spec fn eval_loop_two_stage(
     }
 }
 
-/// A loop whose body is Seq(a, b) unfolds to the explicit two-stage form.
+///  A loop whose body is Seq(a, b) unfolds to the explicit two-stage form.
 pub proof fn lemma_loop_body_seq(
     a: Stage, b: Stage, state: SharedState, bound: nat, iter: nat,
 )
@@ -278,11 +278,11 @@ pub proof fn lemma_loop_body_seq(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// SharedState frame conditions
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  SharedState frame conditions
+//  ══════════════════════════════════════════════════════════════
 
-/// Writing to one buffer doesn't affect other buffers.
+///  Writing to one buffer doesn't affect other buffers.
 pub proof fn lemma_write_other_buffer(
     state: SharedState, buf_w: nat, idx: nat, val: int, buf_r: nat,
 )
@@ -297,7 +297,7 @@ pub proof fn lemma_write_other_buffer(
 {
 }
 
-/// Writing to one position doesn't affect other positions in the same buffer.
+///  Writing to one position doesn't affect other positions in the same buffer.
 pub proof fn lemma_write_other_index(
     state: SharedState, buf: nat, idx_w: nat, val: int, idx_r: nat,
 )
@@ -311,7 +311,7 @@ pub proof fn lemma_write_other_index(
 {
 }
 
-/// Writing then reading the same position gives the written value.
+///  Writing then reading the same position gives the written value.
 pub proof fn lemma_write_read_same(
     state: SharedState, buf: nat, idx: nat, val: int,
 )
@@ -323,7 +323,7 @@ pub proof fn lemma_write_read_same(
 {
 }
 
-/// set_buffer doesn't affect other buffers.
+///  set_buffer doesn't affect other buffers.
 pub proof fn lemma_set_buffer_other(
     state: SharedState, buf_w: nat, data: Seq<int>, buf_r: nat,
 )
@@ -337,7 +337,7 @@ pub proof fn lemma_set_buffer_other(
 {
 }
 
-/// set_buffer then reading gives the new data.
+///  set_buffer then reading gives the new data.
 pub proof fn lemma_set_buffer_read(
     state: SharedState, buf: nat, data: Seq<int>, idx: nat,
 )
@@ -349,7 +349,7 @@ pub proof fn lemma_set_buffer_read(
 {
 }
 
-/// write preserves num_buffers.
+///  write preserves num_buffers.
 pub proof fn lemma_write_preserves_num_buffers(
     state: SharedState, buf: nat, idx: nat, val: int,
 )
@@ -358,7 +358,7 @@ pub proof fn lemma_write_preserves_num_buffers(
 {
 }
 
-/// set_buffer preserves num_buffers.
+///  set_buffer preserves num_buffers.
 pub proof fn lemma_set_buffer_preserves_num_buffers(
     state: SharedState, buf: nat, data: Seq<int>,
 )
@@ -367,7 +367,7 @@ pub proof fn lemma_set_buffer_preserves_num_buffers(
 {
 }
 
-/// write preserves workgroup_size.
+///  write preserves workgroup_size.
 pub proof fn lemma_write_preserves_workgroup_size(
     state: SharedState, buf: nat, idx: nat, val: int,
 )
@@ -376,7 +376,7 @@ pub proof fn lemma_write_preserves_workgroup_size(
 {
 }
 
-/// set_buffer preserves workgroup_size.
+///  set_buffer preserves workgroup_size.
 pub proof fn lemma_set_buffer_preserves_workgroup_size(
     state: SharedState, buf: nat, data: Seq<int>,
 )
@@ -385,15 +385,15 @@ pub proof fn lemma_set_buffer_preserves_workgroup_size(
 {
 }
 
-// ══════════════════════════════════════════════════════════════
-// eval_map for single-output kernels
+//  ══════════════════════════════════════════════════════════════
+//  eval_map for single-output kernels
 //
-// THE key bridge: connects staged_eval(Map{...}) to set_buffer + map_output_declarative.
-// Unlocks per-element reasoning for any single-output kernel.
-// ══════════════════════════════════════════════════════════════
+//  THE key bridge: connects staged_eval(Map{...}) to set_buffer + map_output_declarative.
+//  Unlocks per-element reasoning for any single-output kernel.
+//  ══════════════════════════════════════════════════════════════
 
-/// For a single-output kernel, staged_eval(Map) = set_buffer(map_output_declarative).
-/// This is the fundamental lemma for connecting Stage evaluation to per-element reasoning.
+///  For a single-output kernel, staged_eval(Map) = set_buffer(map_output_declarative).
+///  This is the fundamental lemma for connecting Stage evaluation to per-element reasoning.
 pub proof fn lemma_staged_eval_map_single_output(
     spec: &KernelSpec,
     input_bufs: Seq<nat>,
@@ -422,68 +422,68 @@ pub proof fn lemma_staged_eval_map_single_output(
         spec: *spec, input_bufs, output_bufs, thread_dim: *thread_dim };
     let inputs = Seq::new(input_bufs.len(), |i: int| state.buffers[input_bufs[i] as int]);
     let ws = thread_count(thread_dim, state.workgroup_size);
-    // staged_eval(Map) = eval_map(spec, input_bufs, output_bufs, state, thread_dim)
-    // eval_map = eval_map_outputs(spec, inputs, output_bufs, state, 0, ws, thread_dim)
-    // For single output: eval_map_outputs processes output 0, then returns
+    //  staged_eval(Map) = eval_map(spec, input_bufs, output_bufs, state, thread_dim)
+    //  eval_map = eval_map_outputs(spec, inputs, output_bufs, state, 0, ws, thread_dim)
+    //  For single output: eval_map_outputs processes output 0, then returns
     let new_buf = map_output_declarative(spec, 0, inputs,
         state.buffers[output_bufs[0] as int], ws, thread_dim);
     let after = state.set_buffer(output_bufs[0], new_buf);
 
-    // Chain: staged_eval(Map) → eval_map → eval_map_outputs
+    //  Chain: staged_eval(Map) → eval_map → eval_map_outputs
     assert(staged_eval(&map_stage, state)
         == eval_map(spec, input_bufs, output_bufs, state, thread_dim));
     assert(eval_map(spec, input_bufs, output_bufs, state, thread_dim)
         == eval_map_outputs(spec, inputs, output_bufs, state, 0, ws, thread_dim));
-    // eval_map_outputs at out_idx=0: set_buffer + recurse at out_idx=1
+    //  eval_map_outputs at out_idx=0: set_buffer + recurse at out_idx=1
     assert(eval_map_outputs(spec, inputs, output_bufs, state, 0, ws, thread_dim)
         == eval_map_outputs(spec, inputs, output_bufs, after, 1, ws, thread_dim));
-    // eval_map_outputs at out_idx=1 >= outputs.len()=1: return after
+    //  eval_map_outputs at out_idx=1 >= outputs.len()=1: return after
     assert(eval_map_outputs(spec, inputs, output_bufs, after, 1, ws, thread_dim) == after);
 }
 
-// ══════════════════════════════════════════════════════════════
-// seq_stages correctness
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  seq_stages correctness
+//  ══════════════════════════════════════════════════════════════
 
-/// seq_stages of a single stage is that stage.
+///  seq_stages of a single stage is that stage.
 pub proof fn lemma_seq_stages_single(s: Stage, state: SharedState)
     ensures staged_eval(&seq_stages(seq![s]), state) == staged_eval(&s, state),
 {
 }
 
-/// seq_stages of two stages is Seq(a, b).
+///  seq_stages of two stages is Seq(a, b).
 pub proof fn lemma_seq_stages_two(a: Stage, b: Stage, state: SharedState)
     ensures staged_eval(&seq_stages(seq![a, b]), state)
         == staged_eval(&b, staged_eval(&a, state)),
 {
     assert(seq![a, b].skip(1) =~= seq![b]);
     assert(seq_stages(seq![b]) == b);
-    // Now: seq_stages(seq![a, b]) = Seq(a, b)
+    //  Now: seq_stages(seq![a, b]) = Seq(a, b)
     assert(seq_stages(seq![a, b]) == Stage::Seq {
         first: Box::new(a), then: Box::new(b) });
     lemma_seq_compose(a, b, state);
 }
 
-/// seq_stages of three stages composes left-to-right.
+///  seq_stages of three stages composes left-to-right.
 pub proof fn lemma_seq_stages_three(a: Stage, b: Stage, c: Stage, state: SharedState)
     ensures staged_eval(&seq_stages(seq![a, b, c]), state)
         == staged_eval(&c, staged_eval(&b, staged_eval(&a, state))),
 {
-    // Help Z3 unfold seq_stages
+    //  Help Z3 unfold seq_stages
     assert(seq![a, b, c].skip(1) =~= seq![b, c]);
     let bc = seq_stages(seq![b, c]);
     lemma_seq_compose(a, bc, state);
     lemma_seq_stages_two(b, c, staged_eval(&a, state));
 }
 
-// ══════════════════════════════════════════════════════════════
-// eval_map unfolding for two-output kernels
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  eval_map unfolding for two-output kernels
+//  ══════════════════════════════════════════════════════════════
 
-/// For a two-output kernel, eval_map chains two set_buffer calls using
-/// map_output_declarative. Both use the same `inputs` (captured from initial state).
-/// Works for both distinct and same output buffers — the second output
-/// naturally sees the first output's writes in its `old_buf`.
+///  For a two-output kernel, eval_map chains two set_buffer calls using
+///  map_output_declarative. Both use the same `inputs` (captured from initial state).
+///  Works for both distinct and same output buffers — the second output
+///  naturally sees the first output's writes in its `old_buf`.
 pub proof fn lemma_eval_map_two_outputs(
     spec: &KernelSpec,
     input_bufs: Seq<nat>,
@@ -528,15 +528,15 @@ pub proof fn lemma_eval_map_two_outputs(
     assert(eval_map_outputs(spec, inputs, output_bufs, after_out1, 2, ws, thread_dim) == after_out1);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Map determinism proof helpers
+//  ══════════════════════════════════════════════════════════════
+//  Map determinism proof helpers
 //
-// map_output_declarative is now the PRIMARY definition in stage.rs.
-// eval_map_threads is the OPERATIONAL version for exec.
-// These lemmas prove they agree (under scatter injectivity).
-// ══════════════════════════════════════════════════════════════
+//  map_output_declarative is now the PRIMARY definition in stage.rs.
+//  eval_map_threads is the OPERATIONAL version for exec.
+//  These lemmas prove they agree (under scatter injectivity).
+//  ══════════════════════════════════════════════════════════════
 
-/// Thread t is active and scatters to position j for output out_idx.
+///  Thread t is active and scatters to position j for output out_idx.
 pub open spec fn thread_writes_to(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -549,7 +549,7 @@ pub open spec fn thread_writes_to(
         thread_env_1d(t), inputs) == j
 }
 
-/// No thread in [tid, workgroup_size) writes to position j.
+///  No thread in [tid, workgroup_size) writes to position j.
 pub open spec fn no_writer_in_range(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -562,7 +562,7 @@ pub open spec fn no_writer_in_range(
         !#[trigger] thread_writes_to(spec, inputs, out_idx, t, j)
 }
 
-/// All active threads scatter to valid buffer positions.
+///  All active threads scatter to valid buffer positions.
 pub open spec fn scatter_in_bounds(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -579,10 +579,10 @@ pub open spec fn scatter_in_bounds(
         }
 }
 
-/// Bundled frame lemma: eval_map_threads preserves ALL non-target properties.
-/// One induction instead of four separate lemmas.
+///  Bundled frame lemma: eval_map_threads preserves ALL non-target properties.
+///  One induction instead of four separate lemmas.
 ///
-/// Preserves: buffer lengths, other buffers, workgroup_size, num_buffers.
+///  Preserves: buffer lengths, other buffers, workgroup_size, num_buffers.
 pub proof fn lemma_eval_map_threads_frame(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -597,12 +597,12 @@ pub proof fn lemma_eval_map_threads_frame(
         scatter_in_bounds(spec, inputs, out_idx, state.buffer_len(out_buf), state.workgroup_size),
     ensures ({
         let result = eval_map_threads(spec, inputs, out_buf, out_idx, state, tid);
-        // Target buffer length preserved
+        //  Target buffer length preserved
         &&& result.buffers[out_buf as int].len() == state.buffers[out_buf as int].len()
-        // Other buffers unchanged
+        //  Other buffers unchanged
         &&& forall|b: nat| b < state.num_buffers() && b != out_buf ==>
             result.buffers[b as int] == state.buffers[b as int]
-        // Structure preserved
+        //  Structure preserved
         &&& result.workgroup_size == state.workgroup_size
         &&& result.num_buffers() == state.num_buffers()
     }),
@@ -617,11 +617,11 @@ pub proof fn lemma_eval_map_threads_frame(
                 &spec.outputs[out_idx as int], env, inputs);
             assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
             let new_state = state.write(out_buf, scatter_idx as nat, compute_val);
-            // Frame conditions for single write
+            //  Frame conditions for single write
             assert forall|b: nat| b < state.num_buffers() && b != out_buf implies
                 new_state.buffers[b as int] == state.buffers[b as int]
             by { lemma_write_other_buffer(state, out_buf, scatter_idx as nat, compute_val, b); }
-            // Recurse
+            //  Recurse
             lemma_eval_map_threads_frame(
                 spec, inputs, out_buf, out_idx, new_state, tid + 1);
         } else {
@@ -631,8 +631,8 @@ pub proof fn lemma_eval_map_threads_frame(
     }
 }
 
-/// If no thread in [tid, workgroup_size) writes to position j,
-/// then eval_map_threads leaves buffer[j] unchanged.
+///  If no thread in [tid, workgroup_size) writes to position j,
+///  then eval_map_threads leaves buffer[j] unchanged.
 pub proof fn lemma_eval_map_threads_preserves_non_target(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -654,31 +654,31 @@ pub proof fn lemma_eval_map_threads_preserves_non_target(
     decreases state.workgroup_size - tid,
 {
     if tid >= state.workgroup_size {
-        // Base: no threads, state unchanged
+        //  Base: no threads, state unchanged
     } else {
         let env = thread_env_1d(tid);
         let guard_val = arith_eval_with_arrays(&spec.guard, env, inputs);
-        // Thread tid does NOT write to j (by no_writer_in_range)
+        //  Thread tid does NOT write to j (by no_writer_in_range)
         assert(!thread_writes_to(spec, inputs, out_idx, tid, j as int));
 
         if guard_val != 0 {
             let (scatter_idx, compute_val) = eval_output(
                 &spec.outputs[out_idx as int], env, inputs,
             );
-            // scatter_idx is in bounds (from scatter_in_bounds precondition)
+            //  scatter_idx is in bounds (from scatter_in_bounds precondition)
             assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
-            // scatter_idx != j (since tid doesn't write to j)
+            //  scatter_idx != j (since tid doesn't write to j)
             assert(scatter_idx != j as int);
             let si = scatter_idx as nat;
             let new_state = state.write(out_buf, si, compute_val);
-            // Writing to scatter_idx doesn't affect position j
+            //  Writing to scatter_idx doesn't affect position j
             lemma_write_other_index(state, out_buf, si, compute_val, j);
-            // IH: remaining threads also don't write to j
+            //  IH: remaining threads also don't write to j
             lemma_eval_map_threads_preserves_non_target(
                 spec, inputs, out_buf, out_idx, new_state, tid + 1, j,
             );
         } else {
-            // Guard is 0 — no write, just recurse
+            //  Guard is 0 — no write, just recurse
             lemma_eval_map_threads_preserves_non_target(
                 spec, inputs, out_buf, out_idx, state, tid + 1, j,
             );
@@ -686,8 +686,8 @@ pub proof fn lemma_eval_map_threads_preserves_non_target(
     }
 }
 
-/// If thread `writer` is the unique active writer to position j among [tid, workgroup_size),
-/// then after eval_map_threads, buffer[j] == compute(writer).
+///  If thread `writer` is the unique active writer to position j among [tid, workgroup_size),
+///  then after eval_map_threads, buffer[j] == compute(writer).
 pub proof fn lemma_eval_map_threads_writer_wins(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -703,9 +703,9 @@ pub proof fn lemma_eval_map_threads_writer_wins(
         j < state.buffer_len(out_buf),
         out_idx < spec.outputs.len(),
         tid <= writer < state.workgroup_size,
-        // writer is active and scatters to j
+        //  writer is active and scatters to j
         thread_writes_to(spec, inputs, out_idx, writer, j as int),
-        // no OTHER thread in [tid, workgroup_size) writes to j
+        //  no OTHER thread in [tid, workgroup_size) writes to j
         forall|t: nat| tid <= t < state.workgroup_size && t != writer ==>
             !#[trigger] thread_writes_to(spec, inputs, out_idx, t, j as int),
         scatter_in_bounds(spec, inputs, out_idx, state.buffer_len(out_buf), state.workgroup_size),
@@ -717,27 +717,27 @@ pub proof fn lemma_eval_map_threads_writer_wins(
     decreases writer - tid,
 {
     if tid == writer {
-        // This is the writer thread. It writes compute(writer) to position j.
+        //  This is the writer thread. It writes compute(writer) to position j.
         let env = thread_env_1d(tid);
         let guard_val = arith_eval_with_arrays(&spec.guard, env, inputs);
-        assert(guard_val != 0); // writer is active
+        assert(guard_val != 0); //  writer is active
         let (scatter_idx, compute_val) = eval_output(
             &spec.outputs[out_idx as int], env, inputs,
         );
-        assert(scatter_idx == j as int); // writer scatters to j
+        assert(scatter_idx == j as int); //  writer scatters to j
         assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
         let si = scatter_idx as nat;
         assert(si == j);
         let new_state = state.write(out_buf, j, compute_val);
-        // After write: new_state.read(out_buf, j) == compute_val
+        //  After write: new_state.read(out_buf, j) == compute_val
         lemma_write_read_same(state, out_buf, j, compute_val);
-        // No thread in [writer+1, workgroup_size) writes to j
-        // → eval_map_threads from writer+1 preserves position j
+        //  No thread in [writer+1, workgroup_size) writes to j
+        //  → eval_map_threads from writer+1 preserves position j
         lemma_eval_map_threads_preserves_non_target(
             spec, inputs, out_buf, out_idx, new_state, tid + 1, j,
         );
     } else {
-        // tid < writer. Thread tid does NOT write to j.
+        //  tid < writer. Thread tid does NOT write to j.
         assert(!thread_writes_to(spec, inputs, out_idx, tid, j as int));
         let env = thread_env_1d(tid);
         let guard_val = arith_eval_with_arrays(&spec.guard, env, inputs);
@@ -749,12 +749,12 @@ pub proof fn lemma_eval_map_threads_writer_wins(
             assert(0 <= scatter_idx && scatter_idx < state.buffer_len(out_buf) as int);
             let si = scatter_idx as nat;
             let new_state = state.write(out_buf, si, compute_val);
-            // IH on new_state from tid+1
+            //  IH on new_state from tid+1
             lemma_eval_map_threads_writer_wins(
                 spec, inputs, out_buf, out_idx, new_state, tid + 1, writer, j,
             );
         } else {
-            // Guard is 0, no write
+            //  Guard is 0, no write
             lemma_eval_map_threads_writer_wins(
                 spec, inputs, out_buf, out_idx, state, tid + 1, writer, j,
             );
@@ -762,7 +762,7 @@ pub proof fn lemma_eval_map_threads_writer_wins(
     }
 }
 
-/// All active thread pairs satisfy scatter_injective for output out_idx.
+///  All active thread pairs satisfy scatter_injective for output out_idx.
 pub open spec fn all_scatter_injective(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -776,10 +776,10 @@ pub open spec fn all_scatter_injective(
             inputs, thread_env_1d(t1), thread_env_1d(t2))
 }
 
-/// Per-position map determinism: at position j, eval_map_threads agrees
-/// with map_output_declarative.
-/// Map determinism for 1D dispatch. For 2D, the same proof works
-/// with thread_env_for_dim — left as a follow-up.
+///  Per-position map determinism: at position j, eval_map_threads agrees
+///  with map_output_declarative.
+///  Map determinism for 1D dispatch. For 2D, the same proof works
+///  with thread_env_for_dim — left as a follow-up.
 proof fn lemma_map_determinism_at(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -809,17 +809,17 @@ proof fn lemma_map_determinism_at(
         spec, out_idx, inputs, old_buf, ws, &dim1d)[j as int];
 
     if exists|t: nat| t < ws && thread_writes_to(spec, inputs, out_idx, t, j as int) {
-        // Some thread writes to j. Pick it.
+        //  Some thread writes to j. Pick it.
         let writer = choose|t: nat| t < ws
             && thread_writes_to(spec, inputs, out_idx, t, j as int);
 
-        // Help Z3: writer satisfies the raw exists in map_output_declarative
+        //  Help Z3: writer satisfies the raw exists in map_output_declarative
         assert(arith_eval_with_arrays(&spec.guard, thread_env_1d(writer), inputs) != 0);
         assert(arith_eval_with_arrays(
             &spec.outputs[out_idx as int].scatter,
             thread_env_1d(writer), inputs) == j as int);
 
-        // Prove uniqueness: no other thread writes to j
+        //  Prove uniqueness: no other thread writes to j
         assert forall|t: nat|
             0 <= t < ws && t != writer
             implies !#[trigger] thread_writes_to(spec, inputs, out_idx, t, j as int)
@@ -835,7 +835,7 @@ proof fn lemma_map_determinism_at(
             }
         }
 
-        // eval_map_threads gives compute(writer) at position j
+        //  eval_map_threads gives compute(writer) at position j
         lemma_eval_map_threads_writer_wins(
             spec, inputs, out_buf, out_idx, state, 0, writer, j);
         let compute_w = arith_eval_with_arrays(
@@ -844,11 +844,11 @@ proof fn lemma_map_determinism_at(
         assert(eval_map_threads(spec, inputs, out_buf, out_idx, state, 0)
             .read(out_buf, j) == compute_w);
 
-        // Bridge: thread_env_for_dim(Dim1D, t) == thread_env_1d(t)
+        //  Bridge: thread_env_for_dim(Dim1D, t) == thread_env_1d(t)
         assert forall|t: nat| thread_env_for_dim(&dim1d, t) == thread_env_1d(t) by {}
 
-        // map_output_declarative: the choose picks some satisfier.
-        // Any satisfier must be writer (by uniqueness), so compute value matches.
+        //  map_output_declarative: the choose picks some satisfier.
+        //  Any satisfier must be writer (by uniqueness), so compute value matches.
         let decl_t = choose|t: nat| t < ws
             && arith_eval_with_arrays(&spec.guard, thread_env_for_dim(&dim1d, t), inputs) != 0
             && arith_eval_with_arrays(&spec.outputs[out_idx as int].scatter,
@@ -861,13 +861,13 @@ proof fn lemma_map_determinism_at(
         assert(decl_t == writer);
         assert(decl_val == compute_w);
     } else {
-        // No thread writes to j
+        //  No thread writes to j
         assert(no_writer_in_range(spec, inputs, out_idx, j as int, 0, ws));
         lemma_eval_map_threads_preserves_non_target(
             spec, inputs, out_buf, out_idx, state, 0, j);
         assert(eval_map_threads(spec, inputs, out_buf, out_idx, state, 0)
             .read(out_buf, j) == old_buf[j as int]);
-        // Help Z3: no thread satisfies the raw predicate (with dim1d env) either
+        //  Help Z3: no thread satisfies the raw predicate (with dim1d env) either
         assert forall|t: nat| thread_env_for_dim(&dim1d, t) == thread_env_1d(t) by {}
         assert forall|t: nat| t < ws implies
             !(arith_eval_with_arrays(&spec.guard, #[trigger] thread_env_for_dim(&dim1d, t), inputs) != 0
@@ -880,11 +880,11 @@ proof fn lemma_map_determinism_at(
     }
 }
 
-/// Map determinism: eval_map_threads (sequential) produces the same buffer
-/// as map_output_declarative (order-independent choose-based spec).
+///  Map determinism: eval_map_threads (sequential) produces the same buffer
+///  as map_output_declarative (order-independent choose-based spec).
 ///
-/// THE key theorem — proves GPU thread execution order doesn't affect results.
-/// Map determinism for 1D dispatch.
+///  THE key theorem — proves GPU thread execution order doesn't affect results.
+///  Map determinism for 1D dispatch.
 pub proof fn lemma_map_determinism(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -908,13 +908,13 @@ pub proof fn lemma_map_determinism(
     let result_state = eval_map_threads(spec, inputs, out_buf, out_idx, state, 0);
     let decl = map_output_declarative(spec, out_idx, inputs, old_buf, state.workgroup_size, &ThreadDim::Dim1D);
 
-    // Frame: eval_map_threads preserves buffer structure
+    //  Frame: eval_map_threads preserves buffer structure
     lemma_eval_map_threads_frame(spec, inputs, out_buf, out_idx, state, 0);
     assert(result_state.buffers[out_buf as int].len() == old_buf.len());
-    // decl has same length by Seq::new construction
+    //  decl has same length by Seq::new construction
     assert(decl.len() == old_buf.len());
 
-    // Pointwise equality
+    //  Pointwise equality
     assert forall|j: int| 0 <= j < old_buf.len() implies
         result_state.buffers[out_buf as int][j] == decl[j]
     by {
@@ -923,11 +923,11 @@ pub proof fn lemma_map_determinism(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// eval_scan frame conditions
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  eval_scan frame conditions
+//  ══════════════════════════════════════════════════════════════
 
-/// eval_scan preserves other buffers (for any ScanOp).
+///  eval_scan preserves other buffers (for any ScanOp).
 pub proof fn lemma_eval_scan_preserves_other_buf(
     buffer: nat, op: ScanOp, state: SharedState, other_buf: nat,
 )
@@ -939,7 +939,7 @@ pub proof fn lemma_eval_scan_preserves_other_buf(
         eval_scan(buffer, op, state).buffers[other_buf as int]
             == state.buffers[other_buf as int],
 {
-    // All ScanOps use set_buffer on `buffer`, which doesn't affect other_buf
+    //  All ScanOps use set_buffer on `buffer`, which doesn't affect other_buf
     match op {
         ScanOp::InclusiveSum => {
             lemma_set_buffer_other(state, buffer,
@@ -959,14 +959,14 @@ pub proof fn lemma_eval_scan_preserves_other_buf(
     }
 }
 
-/// eval_scan preserves workgroup_size (for any ScanOp).
+///  eval_scan preserves workgroup_size (for any ScanOp).
 pub proof fn lemma_eval_scan_preserves_wg_size(buffer: nat, op: ScanOp, state: SharedState)
     requires buffer < state.num_buffers(),
     ensures eval_scan(buffer, op, state).workgroup_size == state.workgroup_size,
 {
 }
 
-/// eval_scan preserves num_buffers (for any ScanOp).
+///  eval_scan preserves num_buffers (for any ScanOp).
 pub proof fn lemma_eval_scan_preserves_num_bufs(buffer: nat, op: ScanOp, state: SharedState)
     requires buffer < state.num_buffers(),
     ensures eval_scan(buffer, op, state).num_buffers() == state.num_buffers(),
@@ -990,7 +990,7 @@ pub proof fn lemma_eval_scan_preserves_num_bufs(buffer: nat, op: ScanOp, state: 
     }
 }
 
-/// eval_scan preserves the length of the scanned buffer (for inclusive/exclusive).
+///  eval_scan preserves the length of the scanned buffer (for inclusive/exclusive).
 pub proof fn lemma_eval_scan_preserves_buf_len(buffer: nat, op: ScanOp, state: SharedState)
     requires buffer < state.num_buffers(),
     ensures
@@ -999,12 +999,12 @@ pub proof fn lemma_eval_scan_preserves_buf_len(buffer: nat, op: ScanOp, state: S
 {
 }
 
-// ══════════════════════════════════════════════════════════════
-// Identity scatter injectivity (generic — works for any kernel)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Identity scatter injectivity (generic — works for any kernel)
+//  ══════════════════════════════════════════════════════════════
 
-/// A kernel where scatter = Var(0) for output `out_idx` is automatically
-/// scatter-injective. This is the most common pattern (thread i writes to position i).
+///  A kernel where scatter = Var(0) for output `out_idx` is automatically
+///  scatter-injective. This is the most common pattern (thread i writes to position i).
 pub proof fn lemma_identity_scatter_injective(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -1024,14 +1024,14 @@ pub proof fn lemma_identity_scatter_injective(
             &spec.outputs[out_idx as int], &spec.guard,
             inputs, thread_env_1d(t1), thread_env_1d(t2))
     by {
-        // scatter(t1) = Var(0) evaluated at env(t1) = t1
-        // scatter(t2) = Var(0) evaluated at env(t2) = t2
-        // If t1 != t2, then scatter(t1) != scatter(t2),
-        // so the implication in scatter_injective holds vacuously.
+        //  scatter(t1) = Var(0) evaluated at env(t1) = t1
+        //  scatter(t2) = Var(0) evaluated at env(t2) = t2
+        //  If t1 != t2, then scatter(t1) != scatter(t2),
+        //  so the implication in scatter_injective holds vacuously.
     }
 }
 
-/// Var(0) scatter is always in bounds when n_pixels <= buffer_len.
+///  Var(0) scatter is always in bounds when n_pixels <= buffer_len.
 pub proof fn lemma_identity_scatter_in_bounds(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -1044,7 +1044,7 @@ pub proof fn lemma_identity_scatter_in_bounds(
         out_idx < spec.outputs.len(),
         spec.outputs[out_idx as int].scatter == ArithExpr::Var(0),
         n_pixels <= buf_len,
-        // Guard only activates threads < n_pixels
+        //  Guard only activates threads < n_pixels
         forall|t: nat| t < workgroup_size
             && arith_eval_with_arrays(&spec.guard, thread_env_1d(t), inputs) != 0
             ==> t < n_pixels,
@@ -1053,18 +1053,18 @@ pub proof fn lemma_identity_scatter_in_bounds(
 {
 }
 
-// ══════════════════════════════════════════════════════════════
-// 2D thread environment bridge
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  2D thread environment bridge
+//  ══════════════════════════════════════════════════════════════
 
-/// thread_env_for_dim(Dim1D, t) == thread_env_1d(t).
-/// This allows 1D determinism proofs to apply to Dim1D maps.
+///  thread_env_for_dim(Dim1D, t) == thread_env_1d(t).
+///  This allows 1D determinism proofs to apply to Dim1D maps.
 pub proof fn lemma_dim1d_env_equals_1d(t: nat)
     ensures thread_env_for_dim(&ThreadDim::Dim1D, t) == thread_env_1d(t),
 {
 }
 
-/// thread_env_for_dim(Dim2D, t) == thread_env_2d(t % width, t / width).
+///  thread_env_for_dim(Dim2D, t) == thread_env_2d(t % width, t / width).
 pub proof fn lemma_dim2d_env(t: nat, width: nat, height: nat)
     requires width > 0,
     ensures thread_env_for_dim(
@@ -1073,11 +1073,11 @@ pub proof fn lemma_dim2d_env(t: nat, width: nat, height: nat)
 {
 }
 
-// ══════════════════════════════════════════════════════════════
-// Loop fusion: two consecutive loops = one loop with summed bounds
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Loop fusion: two consecutive loops = one loop with summed bounds
+//  ══════════════════════════════════════════════════════════════
 
-/// Simplified loop: apply body n times. No iter parameter.
+///  Simplified loop: apply body n times. No iter parameter.
 pub open spec fn loop_n(body: &Stage, state: SharedState, n: nat) -> SharedState
     decreases n,
 {
@@ -1085,7 +1085,7 @@ pub open spec fn loop_n(body: &Stage, state: SharedState, n: nat) -> SharedState
     else { loop_n(body, staged_eval(body, state), (n - 1) as nat) }
 }
 
-/// eval_loop(body, state, bound, 0) == loop_n(body, state, bound).
+///  eval_loop(body, state, bound, 0) == loop_n(body, state, bound).
 pub proof fn lemma_eval_loop_is_loop_n(
     body: &Stage, state: SharedState, bound: nat,
 )
@@ -1097,45 +1097,45 @@ pub proof fn lemma_eval_loop_is_loop_n(
         assert(loop_n(body, state, 0) == state);
     } else {
         let mid = staged_eval(body, state);
-        // eval_loop(body, state, bound, 0) = eval_loop(body, mid, bound, 1)
-        // loop_n(body, state, bound) = loop_n(body, mid, bound-1)
-        // IH: eval_loop(body, mid, bound-1, 0) == loop_n(body, mid, bound-1)
+        //  eval_loop(body, state, bound, 0) = eval_loop(body, mid, bound, 1)
+        //  loop_n(body, state, bound) = loop_n(body, mid, bound-1)
+        //  IH: eval_loop(body, mid, bound-1, 0) == loop_n(body, mid, bound-1)
         lemma_eval_loop_is_loop_n(body, mid, (bound - 1) as nat);
         lemma_eval_loop_shift(body, mid, (bound - 1) as nat, 1);
         assert((bound - 1) as nat + 1 == bound);
     }
 }
 
-/// General loop shift: eval_loop(body, state, a+b, b) == eval_loop(body, state, a, 0).
-/// Both execute exactly `a` iterations of body starting from state.
+///  General loop shift: eval_loop(body, state, a+b, b) == eval_loop(body, state, a, 0).
+///  Both execute exactly `a` iterations of body starting from state.
 proof fn lemma_eval_loop_shift(body: &Stage, state: SharedState, a: nat, b: nat)
     ensures eval_loop(body, state, a + b, b) == eval_loop(body, state, a, 0),
     decreases a,
 {
     if a == 0 {
-        // eval_loop(body, state, b, b) == state (iter >= bound)
-        // eval_loop(body, state, 0, 0) == state
+        //  eval_loop(body, state, b, b) == state (iter >= bound)
+        //  eval_loop(body, state, 0, 0) == state
     } else {
         let mid = staged_eval(body, state);
-        // LHS: eval_loop(body, state, a+b, b) = eval_loop(body, mid, a+b, b+1) [since b < a+b]
-        // Apply IH on mid with (a-1, b+1):
+        //  LHS: eval_loop(body, state, a+b, b) = eval_loop(body, mid, a+b, b+1) [since b < a+b]
+        //  Apply IH on mid with (a-1, b+1):
         lemma_eval_loop_shift(body, mid, (a - 1) as nat, b + 1);
-        // IH gives: eval_loop(body, mid, (a-1)+(b+1), b+1) == eval_loop(body, mid, a-1, 0)
+        //  IH gives: eval_loop(body, mid, (a-1)+(b+1), b+1) == eval_loop(body, mid, a-1, 0)
         assert((a - 1) + (b + 1) == a + b);
-        // So: eval_loop(body, mid, a+b, b+1) == eval_loop(body, mid, a-1, 0)
+        //  So: eval_loop(body, mid, a+b, b+1) == eval_loop(body, mid, a-1, 0)
 
-        // RHS: eval_loop(body, state, a, 0) = eval_loop(body, mid, a, 1) [since 0 < a]
-        // Apply IH on mid with (a-1, 1):
+        //  RHS: eval_loop(body, state, a, 0) = eval_loop(body, mid, a, 1) [since 0 < a]
+        //  Apply IH on mid with (a-1, 1):
         lemma_eval_loop_shift(body, mid, (a - 1) as nat, 1);
-        // IH gives: eval_loop(body, mid, (a-1)+1, 1) == eval_loop(body, mid, a-1, 0)
+        //  IH gives: eval_loop(body, mid, (a-1)+1, 1) == eval_loop(body, mid, a-1, 0)
         assert((a - 1) as nat + 1 == a);
-        // So: eval_loop(body, mid, a, 1) == eval_loop(body, mid, a-1, 0)
+        //  So: eval_loop(body, mid, a, 1) == eval_loop(body, mid, a-1, 0)
 
-        // Both sides == eval_loop(body, mid, a-1, 0)
+        //  Both sides == eval_loop(body, mid, a-1, 0)
     }
 }
 
-/// Loop fusion: loop_n(body, loop_n(body, s, a), b) == loop_n(body, s, a + b).
+///  Loop fusion: loop_n(body, loop_n(body, s, a), b) == loop_n(body, s, a + b).
 pub proof fn lemma_loop_n_fusion(
     body: &Stage, state: SharedState, a: nat, b: nat,
 )
@@ -1149,7 +1149,7 @@ pub proof fn lemma_loop_n_fusion(
     }
 }
 
-/// Two consecutive eval_loops fuse into one.
+///  Two consecutive eval_loops fuse into one.
 pub proof fn lemma_loop_fusion(
     body: &Stage, state: SharedState, a: nat, b: nat,
 )
@@ -1163,18 +1163,18 @@ pub proof fn lemma_loop_fusion(
     lemma_loop_n_fusion(body, state, a, b);
 }
 
-// ══════════════════════════════════════════════════════════════
-// General seq_stages correctness (inductive)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  General seq_stages correctness (inductive)
+//  ══════════════════════════════════════════════════════════════
 
-/// seq_stages of an empty list is Noop (identity).
+///  seq_stages of an empty list is Noop (identity).
 pub proof fn lemma_seq_stages_empty(state: SharedState)
     ensures staged_eval(&seq_stages(Seq::<Stage>::empty()), state) == state,
 {
 }
 
-/// seq_stages distributes: evaluating seq_stages([a] + rest) =
-/// evaluating a, then evaluating seq_stages(rest).
+///  seq_stages distributes: evaluating seq_stages([a] + rest) =
+///  evaluating a, then evaluating seq_stages(rest).
 pub proof fn lemma_seq_stages_cons(first: Stage, rest: Seq<Stage>, state: SharedState)
     requires rest.len() > 0,
     ensures
@@ -1189,11 +1189,11 @@ pub proof fn lemma_seq_stages_cons(first: Stage, rest: Seq<Stage>, state: Shared
     lemma_seq_compose(first, inner, state);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Map with zero outputs is identity
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Map with zero outputs is identity
+//  ══════════════════════════════════════════════════════════════
 
-/// A Map with no outputs doesn't change the state.
+///  A Map with no outputs doesn't change the state.
 pub proof fn lemma_map_zero_outputs(
     spec: &KernelSpec,
     input_bufs: Seq<nat>,
@@ -1210,4 +1210,4 @@ pub proof fn lemma_map_zero_outputs(
 {
 }
 
-} // verus!
+} //  verus!

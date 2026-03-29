@@ -4,7 +4,7 @@ use super::*;
 
 verus! {
 
-/// Runtime contraction spec: concrete representation.
+///  Runtime contraction spec: concrete representation.
 pub struct RuntimeContractionSpec {
     pub batch_modes_a: Vec<u64>,
     pub batch_modes_b: Vec<u64>,
@@ -29,15 +29,15 @@ impl View for RuntimeContractionSpec {
 }
 
 impl RuntimeContractionSpec {
-    /// Well-formedness: paired mode lists have equal lengths.
+    ///  Well-formedness: paired mode lists have equal lengths.
     pub open spec fn wf_spec(&self) -> bool {
         &&& self.batch_modes_a.len() == self.batch_modes_b.len()
         &&& self.contraction_modes_a.len() == self.contraction_modes_b.len()
     }
 }
 
-/// Helper: check all elements of modes are < rank.
-/// Ensures both u64-level and nat-level postconditions for trigger compatibility.
+///  Helper: check all elements of modes are < rank.
+///  Ensures both u64-level and nat-level postconditions for trigger compatibility.
 fn check_modes_in_range(modes: &Vec<u64>, rank: u64) -> (result: bool)
     ensures
         result == (forall|i: nat| i < modes.len() ==> (#[trigger] modes@[i as int]) < rank),
@@ -53,7 +53,7 @@ fn check_modes_in_range(modes: &Vec<u64>, rank: u64) -> (result: bool)
     {
         if modes[i] >= rank {
             proof {
-                // Explicit counterexample for the nat-level forall
+                //  Explicit counterexample for the nat-level forall
                 let wi = i as nat;
                 assert(shape_to_nat_seq(modes@)[wi as int] == modes@[wi as int] as nat);
                 assert(modes@[wi as int] >= rank);
@@ -74,7 +74,7 @@ fn check_modes_in_range(modes: &Vec<u64>, rank: u64) -> (result: bool)
     true
 }
 
-/// Validate a contraction spec at runtime.
+///  Validate a contraction spec at runtime.
 pub fn validate_contraction(
     spec: &RuntimeContractionSpec,
     a_rank: u64, b_rank: u64,
@@ -105,7 +105,7 @@ pub fn validate_contraction(
         return false;
     }
 
-    // Compute all range checks without early returns
+    //  Compute all range checks without early returns
     let ba_in = check_modes_in_range(&spec.batch_modes_a, a_rank);
     let ca_in = check_modes_in_range(&spec.contraction_modes_a, a_rank);
     let fa_in = check_modes_in_range(&spec.free_modes_a, a_rank);
@@ -116,7 +116,7 @@ pub fn validate_contraction(
     let all_in = ba_in && ca_in && fa_in && bb_in && cb_in && fb_in;
 
     proof {
-        // Bridge lengths: shape_to_nat_seq preserves length
+        //  Bridge lengths: shape_to_nat_seq preserves length
         let sv = spec@;
         assert(sv.batch_modes_a.len() == spec.batch_modes_a@.len());
         assert(sv.batch_modes_b.len() == spec.batch_modes_b@.len());
@@ -125,7 +125,7 @@ pub fn validate_contraction(
         assert(sv.free_modes_a.len() == spec.free_modes_a@.len());
         assert(sv.free_modes_b.len() == spec.free_modes_b@.len());
 
-        // Rank coverage
+        //  Rank coverage
         assert(sv.batch_modes_a.len() + sv.contraction_modes_a.len() + sv.free_modes_a.len() == a_rank as nat);
         assert(sv.batch_modes_b.len() + sv.contraction_modes_b.len() + sv.free_modes_b.len() == b_rank as nat);
     }
@@ -133,7 +133,7 @@ pub fn validate_contraction(
     all_in
 }
 
-/// Gather shape values at given mode indices.
+///  Gather shape values at given mode indices.
 pub fn gather_shape_exec(
     shape: &Vec<u64>, modes: &Vec<u64>,
 ) -> (result: Vec<u64>)
@@ -165,7 +165,7 @@ pub fn gather_shape_exec(
     out
 }
 
-/// Concatenate three Vec<u64>s.
+///  Concatenate three Vec<u64>s.
 fn concat3(a: &Vec<u64>, b: &Vec<u64>, c: &Vec<u64>) -> (result: Vec<u64>)
     ensures
         result.len() == a.len() + b.len() + c.len(),
@@ -221,7 +221,7 @@ fn concat3(a: &Vec<u64>, b: &Vec<u64>, c: &Vec<u64>) -> (result: Vec<u64>)
     result
 }
 
-/// Compute contraction output shape at runtime.
+///  Compute contraction output shape at runtime.
 pub fn contraction_output_shape_exec(
     spec: &RuntimeContractionSpec,
     a_shape: &Vec<u64>, b_shape: &Vec<u64>,
@@ -295,7 +295,7 @@ pub fn contraction_output_shape_exec(
     result
 }
 
-/// Helper: compare two Vec<u64> for element-wise equality.
+///  Helper: compare two Vec<u64> for element-wise equality.
 fn vec_eq(a: &Vec<u64>, b: &Vec<u64>) -> (result: bool)
     ensures
         result == (a@ =~= b@),
@@ -321,9 +321,9 @@ fn vec_eq(a: &Vec<u64>, b: &Vec<u64>) -> (result: bool)
     true
 }
 
-/// Compute gathered_product at runtime.
+///  Compute gathered_product at runtime.
 ///
-/// gathered_product(shape, modes) is the product of shape[modes[i]] for all i.
+///  gathered_product(shape, modes) is the product of shape[modes[i]] for all i.
 pub fn gathered_product_exec(
     shape: &Vec<u64>, modes: &Vec<u64>,
 ) -> (result: u64)
@@ -358,19 +358,19 @@ pub fn gathered_product_exec(
             assert(ti1.last() == mn@[i as int]);
             assert(ti1.drop_last() =~= ti);
 
-            // Bridge val to spec level
+            //  Bridge val to spec level
             assert(mn@[i as int] == modes@[i as int] as nat);
             assert(sn@[mn@[i as int] as int] == shape@[modes@[i as int] as int] as nat);
             assert(val as nat == sn@[mn@[i as int] as int]);
 
-            // Prove shapes positive at nat level for monotonicity
+            //  Prove shapes positive at nat level for monotonicity
             assert forall|k: nat| k < sn@.len()
             implies (#[trigger] sn@[k as int]) > 0nat
             by {
                 assert(shape@[k as int] > 0u64);
             };
             lemma_gathered_product_monotone(&sn@, &mn@, i as nat);
-            // gp(modes.take(i+1)) <= gp(modes) <= u64::MAX
+            //  gp(modes.take(i+1)) <= gp(modes) <= u64::MAX
             let gp_i1 = gathered_product(&sn@, &ti1);
             assert(gp_i1 == sn@[mn@[i as int] as int] * gathered_product(&sn@, &ti));
             assert(gp_i1 == (val as nat) * (acc as nat));
@@ -385,7 +385,7 @@ pub fn gathered_product_exec(
     acc
 }
 
-/// gathered_product of a prefix is <= gathered_product of the whole.
+///  gathered_product of a prefix is <= gathered_product of the whole.
 proof fn lemma_gathered_product_monotone(
     shape: &Seq<nat>, modes: &Seq<nat>, k: nat,
 )
@@ -403,7 +403,7 @@ proof fn lemma_gathered_product_monotone(
     } else {
         assert(modes.drop_last().take((k + 1) as int)
             =~= modes.take((k + 1) as int));
-        // Modes in range for drop_last
+        //  Modes in range for drop_last
         assert forall|j: nat| j < modes.drop_last().len()
         implies (#[trigger] modes.drop_last()[j as int]) < shape.len()
         by {
@@ -420,7 +420,7 @@ proof fn lemma_gathered_product_monotone(
     }
 }
 
-/// Compute contraction_reduction_size at runtime.
+///  Compute contraction_reduction_size at runtime.
 pub fn contraction_reduction_size_exec(
     spec: &RuntimeContractionSpec,
     a_shape: &Vec<u64>,
@@ -439,7 +439,7 @@ pub fn contraction_reduction_size_exec(
     gathered_product_exec(a_shape, &spec.contraction_modes_a)
 }
 
-/// Check contraction_shapes_match at runtime.
+///  Check contraction_shapes_match at runtime.
 fn check_shapes_match(
     spec: &RuntimeContractionSpec,
     a_shape: &Vec<u64>, b_shape: &Vec<u64>,
@@ -454,14 +454,14 @@ fn check_shapes_match(
         let sv = spec@;
         let as_ = shape_to_nat_seq(a_shape@);
         let bs_ = shape_to_nat_seq(b_shape@);
-        // batch modes in range
+        //  batch modes in range
         assert forall|i: nat| i < spec.batch_modes_a.len()
         implies (#[trigger] spec.batch_modes_a@[i as int] as nat) < a_shape.len()
         by { assert(sv.batch_modes_a[i as int] < as_.len()); };
         assert forall|i: nat| i < spec.batch_modes_b.len()
         implies (#[trigger] spec.batch_modes_b@[i as int] as nat) < b_shape.len()
         by { assert(sv.batch_modes_b[i as int] < bs_.len()); };
-        // contraction modes in range
+        //  contraction modes in range
         assert forall|i: nat| i < spec.contraction_modes_a.len()
         implies (#[trigger] spec.contraction_modes_a@[i as int] as nat) < a_shape.len()
         by { assert(sv.contraction_modes_a[i as int] < as_.len()); };
@@ -487,7 +487,7 @@ fn check_shapes_match(
         let contr_a_spec = gather_shape(&as_, &sv.contraction_modes_a);
         let contr_b_spec = gather_shape(&bs_, &sv.contraction_modes_b);
 
-        // Bridge: batch_a@ =~= batch_b@ ↔ batch_a_spec =~= batch_b_spec
+        //  Bridge: batch_a@ =~= batch_b@ ↔ batch_a_spec =~= batch_b_spec
         if batch_match {
             assert(batch_a@ =~= batch_b@);
             assert forall|j: int| 0 <= j < batch_a_spec.len()
@@ -499,13 +499,13 @@ fn check_shapes_match(
             };
             assert(batch_a_spec =~= batch_b_spec);
         } else {
-            // batch_a@ !=~= batch_b@
-            // Need: batch_a_spec !=~= batch_b_spec
+            //  batch_a@ !=~= batch_b@
+            //  Need: batch_a_spec !=~= batch_b_spec
             if batch_a.len() != batch_b.len() {
                 assert(batch_a_spec.len() != batch_b_spec.len());
             } else {
-                // Same length, some element differs
-                // batch_a@ != batch_b@ and same len → exists witness
+                //  Same length, some element differs
+                //  batch_a@ != batch_b@ and same len → exists witness
                 let wit = choose|j: int| 0 <= j < batch_a@.len() && batch_a@[j] != batch_b@[j];
                 assert(batch_a@[wit] != batch_b@[wit]);
                 assert(batch_a@[wit] as nat == batch_a_spec[wit]);
@@ -540,7 +540,7 @@ fn check_shapes_match(
     batch_match && contr_match
 }
 
-/// Check contraction_admissible at runtime.
+///  Check contraction_admissible at runtime.
 pub fn contraction_admissible_exec(
     spec: &RuntimeContractionSpec,
     a_shape: &Vec<u64>, b_shape: &Vec<u64>,
@@ -563,11 +563,11 @@ pub fn contraction_admissible_exec(
     check_shapes_match(spec, a_shape, b_shape)
 }
 
-// ══════════════════════════════════════════════════════════════
-// GEMM contraction exec: C[i,j] = sum_k A[i,k] * B[k,j]
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  GEMM contraction exec: C[i,j] = sum_k A[i,k] * B[k,j]
+//  ══════════════════════════════════════════════════════════════
 
-/// Spec: partial sum of A[i,0..kk] · B[0..kk,j] as mathematical int (no overflow).
+///  Spec: partial sum of A[i,0..kk] · B[0..kk,j] as mathematical int (no overflow).
 pub open spec fn gemm_partial_sum(
     a: Seq<i64>, b: Seq<i64>,
     k_size: nat, n: nat,
@@ -582,7 +582,7 @@ pub open spec fn gemm_partial_sum(
     }
 }
 
-/// Spec: full GEMM element C[i,j] = sum_{k=0}^{K-1} A[i*K+k] * B[k*N+j].
+///  Spec: full GEMM element C[i,j] = sum_{k=0}^{K-1} A[i*K+k] * B[k*N+j].
 pub open spec fn gemm_element_spec(
     a: Seq<i64>, b: Seq<i64>,
     k_size: nat, n: nat,
@@ -591,35 +591,35 @@ pub open spec fn gemm_element_spec(
     gemm_partial_sum(a, b, k_size, n, i, j, k_size)
 }
 
-/// Naive GEMM: C = A * B where A is M×K and B is K×N, all row-major.
+///  Naive GEMM: C = A * B where A is M×K and B is K×N, all row-major.
 ///
-/// C[i,j] = sum_{k=0}^{K-1} A[i*K + k] * B[k*N + j]
+///  C[i,j] = sum_{k=0}^{K-1} A[i*K + k] * B[k*N + j]
 ///
-/// Verified to produce correct values (not just correct length).
-/// Requires element values bounded so partial sums don't overflow i64.
+///  Verified to produce correct values (not just correct length).
+///  Requires element values bounded so partial sums don't overflow i64.
 pub fn gemm_naive_exec(
-    a: &Vec<i64>,    // A[M, K] row-major (flattened)
-    b: &Vec<i64>,    // B[K, N] row-major (flattened)
+    a: &Vec<i64>,    //  A[M, K] row-major (flattened)
+    b: &Vec<i64>,    //  B[K, N] row-major (flattened)
     m: usize,
     k_size: usize,
     n: usize,
-    bound: u32,       // Element value bound
+    bound: u32,       //  Element value bound
 ) -> (result: Vec<i64>)
     requires
         m > 0, k_size > 0, n > 0,
         a.len() >= m * k_size,
         b.len() >= k_size * n,
         m * n <= usize::MAX,
-        // Element values are bounded
+        //  Element values are bounded
         forall|idx: int| 0 <= idx < a.len() as int ==>
             -(bound as int) <= #[trigger] a@[idx] as int && a@[idx] as int <= bound as int,
         forall|idx: int| 0 <= idx < b.len() as int ==>
             -(bound as int) <= #[trigger] b@[idx] as int && b@[idx] as int <= bound as int,
-        // Bound ensures no overflow: K * bound^2 <= i64::MAX
+        //  Bound ensures no overflow: K * bound^2 <= i64::MAX
         (k_size as int) * (bound as int) * (bound as int) <= i64::MAX as int,
     ensures
         result.len() == m * n,
-        // Value correctness: result[i*n + j] == gemm_element_spec(a, b, K, N, i, j)
+        //  Value correctness: result[i*n + j] == gemm_element_spec(a, b, K, N, i, j)
         forall|i: nat, j: nat|
             i < m && j < n ==>
             #[trigger] result@[(i * n + j) as int] as int
@@ -641,14 +641,14 @@ pub fn gemm_naive_exec(
                 -(bound as int) <= #[trigger] a@[idx] as int && a@[idx] as int <= bound as int,
             forall|idx: int| 0 <= idx < b.len() as int ==>
                 -(bound as int) <= #[trigger] b@[idx] as int && b@[idx] as int <= bound as int,
-            // Value correctness for all completed rows
+            //  Value correctness for all completed rows
             forall|ii: nat, jj: nat|
                 ii < i && jj < n ==>
                 #[trigger] c@[(ii * n + jj) as int] as int
                     == gemm_element_spec(a@, b@, k_size as nat, n as nat, ii, jj),
         decreases m - i,
     {
-        let ghost c_before_j = c@;  // snapshot before j-loop
+        let ghost c_before_j = c@;  //  snapshot before j-loop
         let mut j: usize = 0;
         while j < n
             invariant
@@ -664,18 +664,18 @@ pub fn gemm_naive_exec(
                     -(bound as int) <= #[trigger] a@[idx] as int && a@[idx] as int <= bound as int,
                 forall|idx: int| 0 <= idx < b.len() as int ==>
                     -(bound as int) <= #[trigger] b@[idx] as int && b@[idx] as int <= bound as int,
-                // Old elements preserved (snapshot)
+                //  Old elements preserved (snapshot)
                 c_before_j.len() == i * n,
                 forall|idx: int| 0 <= idx < c_before_j.len() as int ==>
                     c@[idx] == #[trigger] c_before_j[idx],
-                // Current row: completed columns correct
+                //  Current row: completed columns correct
                 forall|jj: nat|
                     jj < j ==>
                     #[trigger] c@[(i * n + jj) as int] as int
                         == gemm_element_spec(a@, b@, k_size as nat, n as nat, i as nat, jj),
             decreases n - j,
         {
-            // Compute C[i,j] = sum_k A[i,k] * B[k,j]
+            //  Compute C[i,j] = sum_k A[i,k] * B[k,j]
             let mut acc: i64 = 0;
             let mut kk: usize = 0;
             while kk < k_size
@@ -689,9 +689,9 @@ pub fn gemm_naive_exec(
                         -(bound as int) <= #[trigger] a@[idx] as int && a@[idx] as int <= bound as int,
                     forall|idx: int| 0 <= idx < b.len() as int ==>
                         -(bound as int) <= #[trigger] b@[idx] as int && b@[idx] as int <= bound as int,
-                    // KEY: acc tracks the partial sum
+                    //  KEY: acc tracks the partial sum
                     acc as int == gemm_partial_sum(a@, b@, k_size as nat, n as nat, i as nat, j as nat, kk as nat),
-                    // Partial sum bounded by kk * bound^2
+                    //  Partial sum bounded by kk * bound^2
                     acc as int >= -(kk as int) * (bound as int) * (bound as int),
                     acc as int <= (kk as int) * (bound as int) * (bound as int),
                 decreases k_size - kk,
@@ -705,7 +705,7 @@ pub fn gemm_naive_exec(
                 let a_val = a[i * k_size + kk];
                 let b_val = b[kk * n + j];
                 proof {
-                    // Product bounded: |a_val * b_val| <= bound^2
+                    //  Product bounded: |a_val * b_val| <= bound^2
                     assert(-(bound as int) <= a_val as int && a_val as int <= bound as int);
                     assert(-(bound as int) <= b_val as int && b_val as int <= bound as int);
                     assert((a_val as int) * (b_val as int) >= -(bound as int) * (bound as int))
@@ -717,7 +717,7 @@ pub fn gemm_naive_exec(
                         requires -(bound as int) <= a_val as int, a_val as int <= bound as int,
                                  -(bound as int) <= b_val as int, b_val as int <= bound as int;
 
-                    // New partial sum bounded by (kk+1) * bound^2 <= k_size * bound^2 <= i64::MAX
+                    //  New partial sum bounded by (kk+1) * bound^2 <= k_size * bound^2 <= i64::MAX
                     let ghost new_ps = gemm_partial_sum(a@, b@, k_size as nat, n as nat, i as nat, j as nat, (kk + 1) as nat);
                     assert(new_ps == (acc as int) + (a_val as int) * (b_val as int));
                     assert(new_ps >= -((kk + 1) as int) * (bound as int) * (bound as int))
@@ -733,16 +733,16 @@ pub fn gemm_naive_exec(
                             (a_val as int) * (b_val as int) <= (bound as int) * (bound as int),
                             new_ps == (acc as int) + (a_val as int) * (b_val as int);
                 }
-                // Product via i128 (i64*i64 always fits in i128, and result fits in i64)
+                //  Product via i128 (i64*i64 always fits in i128, and result fits in i64)
                 proof {
-                    // Product fits in i64: |a*b| <= bound^2 <= k*bound^2 <= i64::MAX
+                    //  Product fits in i64: |a*b| <= bound^2 <= k*bound^2 <= i64::MAX
                     assert((bound as int) * (bound as int) <= i64::MAX as int) by (nonlinear_arith)
                         requires (k_size as int) * (bound as int) * (bound as int) <= i64::MAX as int,
                                  k_size >= 1;
                     assert((a_val as int) * (b_val as int) >= -(bound as int) * (bound as int));
                     assert((a_val as int) * (b_val as int) <= (bound as int) * (bound as int));
-                    // acc + prod fits in i64 (partial sum bounded by (kk+1) * bound^2 <= k_size * bound^2 <= i64::MAX)
-                    // (kk+1) * bound^2 <= k_size * bound^2 <= i64::MAX
+                    //  acc + prod fits in i64 (partial sum bounded by (kk+1) * bound^2 <= k_size * bound^2 <= i64::MAX)
+                    //  (kk+1) * bound^2 <= k_size * bound^2 <= i64::MAX
                     assert(((kk + 1) as int) * (bound as int) * (bound as int) <= i64::MAX as int)
                         by (nonlinear_arith)
                         requires (k_size as int) * (bound as int) * (bound as int) <= i64::MAX as int,
@@ -761,15 +761,15 @@ pub fn gemm_naive_exec(
                             ((kk + 1) as int) * (bound as int) * (bound as int) <= i64::MAX as int;
                 }
                 proof {
-                    // i128 conversion preserves value for i64
+                    //  i128 conversion preserves value for i64
                     assert((a_val as i128) as int == a_val as int);
                     assert((b_val as i128) as int == b_val as int);
                 }
                 let prod_wide: i128 = (a_val as i128) * (b_val as i128);
                 proof {
                     assert(prod_wide as int == (a_val as int) * (b_val as int));
-                    // prod_wide fits in i64: |prod| <= bound^2 <= i64::MAX
-                    // -(bound^2) >= -(i64::MAX) >= i64::MIN
+                    //  prod_wide fits in i64: |prod| <= bound^2 <= i64::MAX
+                    //  -(bound^2) >= -(i64::MAX) >= i64::MIN
                     assert(prod_wide as int >= -(bound as int) * (bound as int));
                     assert(prod_wide as int <= (bound as int) * (bound as int));
                     assert((bound as int) * (bound as int) <= i64::MAX as int);
@@ -796,22 +796,22 @@ pub fn gemm_naive_exec(
         proof {
             assert(c.len() == i * n + n);
             assert((i + 1) * n == i * n + n) by (nonlinear_arith);
-            // The j-loop's final state: completed rows (ii < i) still correct,
-            // AND current row (ii == i) is now complete (j == n).
-            // Together: all ii < i+1 and jj < n are correct.
+            //  The j-loop's final state: completed rows (ii < i) still correct,
+            //  AND current row (ii == i) is now complete (j == n).
+            //  Together: all ii < i+1 and jj < n are correct.
             assert forall|ii: nat, jj: nat|
                 ii < (i + 1) as nat && jj < n
             implies #[trigger] c@[(ii * n + jj) as int] as int
                 == gemm_element_spec(a@, b@, k_size as nat, n as nat, ii, jj)
             by {
                 if ii < i as nat {
-                    // Old row: from snapshot (push preserved old elements)
+                    //  Old row: from snapshot (push preserved old elements)
                     assert(ii * n + jj < i * n) by (nonlinear_arith)
                         requires ii < i, jj < n, n > 0;
                     assert(c@[(ii * n + jj) as int] == c_before_j[(ii * n + jj) as int]);
-                    // c_before_j matches outer invariant
+                    //  c_before_j matches outer invariant
                 } else {
-                    // Current row (ii == i): from j-loop invariant with j == n
+                    //  Current row (ii == i): from j-loop invariant with j == n
                     assert(ii == i as nat);
                     assert(c@[(i * n + jj) as int] as int
                         == gemm_element_spec(a@, b@, k_size as nat, n as nat, i as nat, jj));
@@ -826,4 +826,4 @@ pub fn gemm_naive_exec(
     c
 }
 
-} // verus!
+} //  verus!

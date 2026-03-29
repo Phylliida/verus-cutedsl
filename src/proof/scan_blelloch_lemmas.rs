@@ -1,11 +1,11 @@
-/// Blelloch exclusive scan correctness proofs.
+///  Blelloch exclusive scan correctness proofs.
 ///
-/// Proves that the Blelloch down-sweep produces the exclusive prefix sum.
-/// Key structure:
-/// - Base case (k=0): root set to 0 = sum(data, 0, 0)
-/// - Inductive step: right positions combine prefix + up-sweep partner via sum_split;
-///   left positions copy partner's prefix; unchanged positions keep up-sweep values.
-/// - Final (k=total_levels): every position active, gives exclusive_scan.
+///  Proves that the Blelloch down-sweep produces the exclusive prefix sum.
+///  Key structure:
+///  - Base case (k=0): root set to 0 = sum(data, 0, 0)
+///  - Inductive step: right positions combine prefix + up-sweep partner via sum_split;
+///    left positions copy partner's prefix; unchanged positions keep up-sweep values.
+///  - Final (k=total_levels): every position active, gives exclusive_scan.
 use vstd::prelude::*;
 use verus_algebra::traits::*;
 use verus_algebra::summation::*;
@@ -18,23 +18,23 @@ use crate::proof::swizzle_lemmas::*;
 
 verus! {
 
-// ============================================================
-// Tree reduce helpers
-// ============================================================
+//  ============================================================
+//  Tree reduce helpers
+//  ============================================================
 
-/// log2_ceil(pow2(k)) == k for any k.
+///  log2_ceil(pow2(k)) == k for any k.
 pub proof fn lemma_log2_ceil_eq_for_pow2(n: nat, total_levels: nat)
     requires
         n > 0,
         pow2(total_levels) == n,
     ensures log2_ceil(n) == total_levels,
 {
-    // Direction 1: log2_ceil(n) <= total_levels
+    //  Direction 1: log2_ceil(n) <= total_levels
     crate::proof::scan_lemmas::lemma_log2_ceil_upper_bound(n, total_levels);
-    // Direction 2: log2_ceil(n) >= total_levels
-    // By contradiction: if log2_ceil(n) < total_levels, then
-    // pow2(log2_ceil(n)+1) <= pow2(total_levels) = n (by monotonicity)
-    // but pow2(log2_ceil(n)+1) = 2*pow2(log2_ceil(n)) >= 2n > n. Contradiction.
+    //  Direction 2: log2_ceil(n) >= total_levels
+    //  By contradiction: if log2_ceil(n) < total_levels, then
+    //  pow2(log2_ceil(n)+1) <= pow2(total_levels) = n (by monotonicity)
+    //  but pow2(log2_ceil(n)+1) = 2*pow2(log2_ceil(n)) >= 2n > n. Contradiction.
     crate::proof::scan_lemmas::lemma_log2_ceil_pow2(n);
     let k = log2_ceil(n);
     if k < total_levels {
@@ -51,7 +51,7 @@ pub proof fn lemma_log2_ceil_eq_for_pow2(n: nat, total_levels: nat)
     }
 }
 
-/// Tree reduce invariant holds at any level up to total_levels.
+///  Tree reduce invariant holds at any level up to total_levels.
 pub proof fn lemma_tree_reduce_invariant_all(data: Seq<int>, n: nat, total_levels: nat, level: nat)
     requires
         n == data.len(),
@@ -71,7 +71,7 @@ pub proof fn lemma_tree_reduce_invariant_all(data: Seq<int>, n: nat, total_level
     }
 }
 
-/// Non-active positions are stable across a range of tree_reduce levels.
+///  Non-active positions are stable across a range of tree_reduce levels.
 pub proof fn lemma_tree_reduce_stable_range(data: Seq<int>, n: nat, start: nat, end_level: nat, i: int)
     requires
         n == data.len(),
@@ -85,12 +85,12 @@ pub proof fn lemma_tree_reduce_stable_range(data: Seq<int>, n: nat, start: nat, 
     if start == end_level {
     } else {
         lemma_tree_reduce_stable_range(data, n, start, (end_level - 1) as nat, i);
-        // At level end_level: (i+1) % pow2(end_level) != 0, so prev[i] passes through
+        //  At level end_level: (i+1) % pow2(end_level) != 0, so prev[i] passes through
     }
 }
 
-/// Value of tree_reduce_state at total_levels for a position whose exact
-/// divisibility level is d (i.e., pow2(d) | (i+1) but pow2(d+1) ∤ (i+1)).
+///  Value of tree_reduce_state at total_levels for a position whose exact
+///  divisibility level is d (i.e., pow2(d) | (i+1) but pow2(d+1) ∤ (i+1)).
 pub proof fn lemma_tree_reduce_value_at_exact_level(data: Seq<int>, n: nat, total_levels: nat, d: nat, i: int)
     requires
         n == data.len(),
@@ -104,15 +104,15 @@ pub proof fn lemma_tree_reduce_value_at_exact_level(data: Seq<int>, n: nat, tota
     ensures
         tree_reduce_state(data, n, total_levels)[i] == sum::<int>(|j: int| data[j], i + 1 - pow2(d) as int, i + 1),
 {
-    // Establish invariant at level d
+    //  Establish invariant at level d
     lemma_tree_reduce_invariant_all(data, n, total_levels, d);
 
     if d == total_levels {
-        // Only position n-1: invariant says state[n-1] == sum(data, 0, n)
+        //  Only position n-1: invariant says state[n-1] == sum(data, 0, n)
     } else {
-        // d < total_levels: show stability from d to total_levels
-        // For all L in (d, total_levels], (i+1) % pow2(L) != 0
-        // by contrapositive of lemma_mod_pow2_weaken
+        //  d < total_levels: show stability from d to total_levels
+        //  For all L in (d, total_levels], (i+1) % pow2(L) != 0
+        //  by contrapositive of lemma_mod_pow2_weaken
         assert forall|L: nat| d < L && L <= total_levels
         implies (i + 1) % (pow2(L) as int) != 0
         by {
@@ -124,11 +124,11 @@ pub proof fn lemma_tree_reduce_value_at_exact_level(data: Seq<int>, n: nat, tota
     }
 }
 
-// ============================================================
-// Down-sweep base case
-// ============================================================
+//  ============================================================
+//  Down-sweep base case
+//  ============================================================
 
-/// Blelloch down-sweep invariant holds at k=0 (base case).
+///  Blelloch down-sweep invariant holds at k=0 (base case).
 pub proof fn lemma_blelloch_base(data: Seq<int>, n: nat, total_levels: nat)
     requires
         n == data.len(),
@@ -162,68 +162,68 @@ pub proof fn lemma_blelloch_base(data: Seq<int>, n: nat, total_levels: nat)
     }
 }
 
-// ============================================================
-// Down-sweep inductive step helper
-// ============================================================
+//  ============================================================
+//  Down-sweep inductive step helper
+//  ============================================================
 
-/// Helper: in the else branch of blelloch_downsweep_state, (j+1) % stride != 0.
-/// Proved by contradiction using the two negated if-conditions.
+///  Helper: in the else branch of blelloch_downsweep_state, (j+1) % stride != 0.
+///  Proved by contradiction using the two negated if-conditions.
 pub proof fn lemma_else_branch_not_divisible(j: int, stride: nat, s_prev: nat)
     requires
         j >= 0,
         stride > 0,
         s_prev == 2 * stride,
-        // Negated right-active condition
+        //  Negated right-active condition
         !((j + 1) % (2 * stride as int) == 0 && j >= stride as int),
-        // Negated left-active condition
+        //  Negated left-active condition
         !((j + 1) % (2 * stride as int) == stride as int),
     ensures (j + 1) % (stride as int) != 0,
 {
     if (j + 1) % (stride as int) == 0 {
-        // j+1 = stride * m for some m >= 1
+        //  j+1 = stride * m for some m >= 1
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(j + 1, stride as int);
         let m = (j + 1) / (stride as int);
         assert(j + 1 == stride as int * m);
         assert(m >= 1) by (nonlinear_arith)
             requires j + 1 == stride as int * m, j >= 0, stride > 0;
 
-        // Decompose m into even/odd
+        //  Decompose m into even/odd
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(m, 2);
         let q = m / 2;
         let r = m % 2;
         assert(m == 2 * q + r);
 
         if r == 0 {
-            // m even: m >= 2 (since m >= 1 and even), so q >= 1
+            //  m even: m >= 2 (since m >= 1 and even), so q >= 1
             assert(q >= 1) by (nonlinear_arith)
                 requires m >= 1, m == 2 * q + r, r == 0;
-            // j+1 = stride*2q = (2*stride)*q, so (j+1) % (2*stride) == 0
+            //  j+1 = stride*2q = (2*stride)*q, so (j+1) % (2*stride) == 0
             assert(j + 1 == (2 * stride as int) * q) by (nonlinear_arith)
                 requires j + 1 == stride as int * m, m == 2 * q, r == 0;
             vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
                 j + 1, (2 * stride as int), q, 0
             );
-            // (j+1) % (2*stride) == 0, so from negated right-active: j < stride
-            // But j+1 = 2*stride*q >= 2*stride > stride, so j >= stride. Contradiction.
+            //  (j+1) % (2*stride) == 0, so from negated right-active: j < stride
+            //  But j+1 = 2*stride*q >= 2*stride > stride, so j >= stride. Contradiction.
             assert(j >= stride as int) by (nonlinear_arith)
                 requires j + 1 == (2 * stride as int) * q, q >= 1, stride > 0;
         } else {
-            // m odd: j+1 = stride*(2q+1) = 2*stride*q + stride
+            //  m odd: j+1 = stride*(2q+1) = 2*stride*q + stride
             assert(j + 1 == (2 * stride as int) * q + stride as int) by (nonlinear_arith)
                 requires j + 1 == stride as int * m, m == 2 * q + r, r == 1;
             vstd::arithmetic::div_mod::lemma_fundamental_div_mod_converse(
                 j + 1, (2 * stride as int), q, stride as int
             );
-            // (j+1) % (2*stride) == stride, contradicts negated left-active condition
+            //  (j+1) % (2*stride) == stride, contradicts negated left-active condition
         }
     }
 }
 
-// ============================================================
-// Down-sweep inductive step
-// ============================================================
+//  ============================================================
+//  Down-sweep inductive step
+//  ============================================================
 
-/// Helper: RIGHT position in Blelloch down-sweep step.
+///  Helper: RIGHT position in Blelloch down-sweep step.
 proof fn lemma_blelloch_step_right(
     data: Seq<int>, n: nat, total_levels: nat, k: nat, j: int,
     stride: nat, s_prev: nat,
@@ -283,7 +283,7 @@ proof fn lemma_blelloch_step_right(
     };
 }
 
-/// Helper: LEFT position in Blelloch down-sweep step.
+///  Helper: LEFT position in Blelloch down-sweep step.
 proof fn lemma_blelloch_step_left(
     data: Seq<int>, n: nat, total_levels: nat, k: nat, j: int,
     stride: nat, s_prev: nat,
@@ -333,7 +333,7 @@ proof fn lemma_blelloch_step_left(
     };
 }
 
-/// Helper: UNCHANGED position in Blelloch down-sweep step.
+///  Helper: UNCHANGED position in Blelloch down-sweep step.
 proof fn lemma_blelloch_step_unchanged(
     data: Seq<int>, n: nat, total_levels: nat, k: nat, j: int,
     stride: nat, s_prev: nat,
@@ -363,7 +363,7 @@ proof fn lemma_blelloch_step_unchanged(
     assert(prev[j] == tree_reduce_state(data, n, total_levels)[j]);
 }
 
-/// Blelloch down-sweep invariant: inductive step from k to k+1.
+///  Blelloch down-sweep invariant: inductive step from k to k+1.
 pub proof fn lemma_blelloch_step(data: Seq<int>, n: nat, total_levels: nat, k: nat)
     requires
         n == data.len(),
@@ -381,7 +381,7 @@ pub proof fn lemma_blelloch_step(data: Seq<int>, n: nat, total_levels: nat, k: n
     let s_prev = pow2((total_levels - k) as nat);
     let f = |j: int| data[j];
 
-    // Key relation: s_prev = 2 * stride
+    //  Key relation: s_prev = 2 * stride
     assert(s_prev == 2 * stride) by {
         assert(pow2((total_levels - k) as nat) == 2 * pow2((total_levels - k - 1) as nat));
     };
@@ -405,11 +405,11 @@ pub proof fn lemma_blelloch_step(data: Seq<int>, n: nat, total_levels: nat, k: n
     }
 }
 
-// ============================================================
-// Master invariant + correctness
-// ============================================================
+//  ============================================================
+//  Master invariant + correctness
+//  ============================================================
 
-/// Blelloch down-sweep invariant holds at all levels 0..=total_levels.
+///  Blelloch down-sweep invariant holds at all levels 0..=total_levels.
 pub proof fn lemma_blelloch_invariant_all(data: Seq<int>, n: nat, total_levels: nat, k: nat)
     requires
         n == data.len(),
@@ -429,10 +429,10 @@ pub proof fn lemma_blelloch_invariant_all(data: Seq<int>, n: nat, total_levels: 
     }
 }
 
-/// Blelloch result equals exclusive_scan at all positions.
+///  Blelloch result equals exclusive_scan at all positions.
 ///
-/// After total_levels down-sweep levels, stride = pow2(0) = 1 divides all (j+1),
-/// so every position holds sum(data, 0, j) = exclusive_scan(data)[j].
+///  After total_levels down-sweep levels, stride = pow2(0) = 1 divides all (j+1),
+///  so every position holds sum(data, 0, j) = exclusive_scan(data)[j].
 pub proof fn lemma_blelloch_correct(data: Seq<int>, n: nat, total_levels: nat)
     requires
         n == data.len(),
@@ -462,4 +462,4 @@ pub proof fn lemma_blelloch_correct(data: Seq<int>, n: nat, total_levels: nat)
     }
 }
 
-} // verus!
+} //  verus!

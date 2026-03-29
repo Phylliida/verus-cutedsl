@@ -1,21 +1,21 @@
-/// Exec-level ArithExpr evaluator WITH array support.
+///  Exec-level ArithExpr evaluator WITH array support.
 ///
-/// Like `runtime_arith_eval` in arith_expr.rs, but takes an additional
-/// `arrays` parameter for `Index(arr, idx)` nodes to read from.
-/// This enables exec evaluation of Map kernels that read input buffers.
+///  Like `runtime_arith_eval` in arith_expr.rs, but takes an additional
+///  `arrays` parameter for `Index(arr, idx)` nodes to read from.
+///  This enables exec evaluation of Map kernels that read input buffers.
 ///
-/// In a separate file to avoid rlimit pollution of the 1900-line arith_expr.rs.
+///  In a separate file to avoid rlimit pollution of the 1900-line arith_expr.rs.
 
 use vstd::prelude::*;
 use crate::arith_expr::*;
 
-// NOTE: Shr support requires replicating ~30 lines of pow2 proof logic
-// from runtime_arith_eval. Deferred — add when fixed-point kernels need it.
-// All integer kernels (Hillis-Steele, compact, GEMM) work without Shr.
+//  NOTE: Shr support requires replicating ~30 lines of pow2 proof logic
+//  from runtime_arith_eval. Deferred — add when fixed-point kernels need it.
+//  All integer kernels (Hillis-Steele, compact, GEMM) work without Shr.
 
 verus! {
 
-/// Spec: all intermediate values fit in i64, including array reads.
+///  Spec: all intermediate values fit in i64, including array reads.
 pub open spec fn eval_with_arrays_fits_i64(
     expr: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
 ) -> bool
@@ -47,8 +47,8 @@ pub open spec fn eval_with_arrays_fits_i64(
     }
 }
 
-/// Exec ArithExpr evaluator with arrays.
-/// Ensures result matches `arith_eval_with_arrays` spec.
+///  Exec ArithExpr evaluator with arrays.
+///  Ensures result matches `arith_eval_with_arrays` spec.
 pub fn runtime_eval_with_arrays(
     expr: &RuntimeArithExpr,
     env: &Vec<i64>,
@@ -127,7 +127,7 @@ pub fn runtime_eval_with_arrays(
             }
         },
         RuntimeArithExpr::Shr(_, _) => {
-            // Unreachable by no_shr precondition
+            //  Unreachable by no_shr precondition
             proof { assert(false); }
             0i64
         },
@@ -144,13 +144,13 @@ pub fn runtime_eval_with_arrays(
             }
         },
         RuntimeArithExpr::Reduce(_, _, _) => {
-            // Reduce not supported at exec level (requires no_reduce precondition)
+            //  Reduce not supported at exec level (requires no_reduce precondition)
             0i64
         },
     }
 }
 
-/// Predicate: expression contains no Shr nodes.
+///  Predicate: expression contains no Shr nodes.
 pub open spec fn no_shr(expr: &ArithExpr) -> bool
     decreases expr,
 {
@@ -166,9 +166,9 @@ pub open spec fn no_shr(expr: &ArithExpr) -> bool
     }
 }
 
-/// Convert Vec<Vec<i64>> view to Seq<Seq<int>> for spec.
+///  Convert Vec<Vec<i64>> view to Seq<Seq<int>> for spec.
 pub open spec fn i64_vecs_to_int(vecs: Seq<Vec<i64>>) -> Seq<Seq<int>> {
     Seq::new(vecs.len(), |i: int| i64_seq_to_int(vecs[i]@))
 }
 
-} // verus!
+} //  verus!

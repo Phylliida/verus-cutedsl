@@ -4,7 +4,7 @@ use super::*;
 
 verus! {
 
-/// Compute shape_size at runtime: product of all shape elements.
+///  Compute shape_size at runtime: product of all shape elements.
 pub fn shape_size_exec(shape: &Vec<u64>) -> (result: u64)
     requires
         shape_valid_u64(shape@),
@@ -45,7 +45,7 @@ pub fn shape_size_exec(shape: &Vec<u64>) -> (result: u64)
     result
 }
 
-/// Helper: shape_size of take(i+1) = shape_size(take(i)) * s[i].
+///  Helper: shape_size of take(i+1) = shape_size(take(i)) * s[i].
 pub proof fn lemma_shape_size_take_step(s: Seq<nat>, i: nat)
     requires
         shape_valid(s),
@@ -61,19 +61,19 @@ pub proof fn lemma_shape_size_take_step(s: Seq<nat>, i: nat)
     let tail = ti1.skip(i as int);
     assert(tail =~= seq![s[i as int]]);
     lemma_shape_size_split(ti1, i);
-    // Now: shape_size(ti1) == shape_size(ti) * shape_size(tail)
-    // Need: shape_size(tail) == s[i]
+    //  Now: shape_size(ti1) == shape_size(ti) * shape_size(tail)
+    //  Need: shape_size(tail) == s[i]
     let si = s[i as int];
     assert(tail.len() == 1);
     assert(tail.first() == si);
     assert(tail.skip(1) =~= Seq::<nat>::empty());
-    // shape_size(tail) = tail.first() * shape_size(tail.skip(1)) = si * 1 = si
+    //  shape_size(tail) = tail.first() * shape_size(tail.skip(1)) = si * 1 = si
     assert(shape_size(Seq::<nat>::empty()) == 1nat);
     assert(shape_size(tail) == si * shape_size(tail.skip(1)));
     assert(shape_size(tail) == si);
 }
 
-/// Helper: shape_size(take(i+1)) <= shape_size(s) so it fits in u64.
+///  Helper: shape_size(take(i+1)) <= shape_size(s) so it fits in u64.
 proof fn lemma_shape_size_take_monotone(s: Seq<nat>, i: nat)
     requires
         shape_valid(s),
@@ -104,7 +104,7 @@ proof fn lemma_shape_size_take_monotone(s: Seq<nat>, i: nat)
     }
 }
 
-/// shape_size(s) == shape_size(take(k)) * shape_size(skip(k))
+///  shape_size(s) == shape_size(take(k)) * shape_size(skip(k))
 pub proof fn lemma_shape_size_split(s: Seq<nat>, k: nat)
     requires shape_valid(s), k <= s.len(),
     ensures shape_size(s) == shape_size(s.take(k as int)) * shape_size(s.skip(k as int)),
@@ -121,29 +121,29 @@ pub proof fn lemma_shape_size_split(s: Seq<nat>, k: nat)
             }
         }
         lemma_shape_size_split(s1, (k - 1) as nat);
-        // IH: shape_size(s1) == shape_size(s1.take((k-1) as int)) * shape_size(s1.skip((k-1) as int))
+        //  IH: shape_size(s1) == shape_size(s1.take((k-1) as int)) * shape_size(s1.skip((k-1) as int))
         assert(s1.take((k - 1) as int) =~= s.take(k as int).skip(1));
         assert(s1.skip((k - 1) as int) =~= s.skip(k as int));
-        // shape_size(s) = s.first() * shape_size(s1) [by def]
+        //  shape_size(s) = s.first() * shape_size(s1) [by def]
         assert(s.first() == s[0]);
         assert(s.len() > 0);
-        // shape_size(s.take(k)) = s.take(k).first() * shape_size(s.take(k).skip(1)) [by def]
+        //  shape_size(s.take(k)) = s.take(k).first() * shape_size(s.take(k).skip(1)) [by def]
         let tk = s.take(k as int);
         assert(tk.len() > 0);
         assert(tk.first() == s[0]);
         assert(tk.skip(1) =~= s1.take((k - 1) as int));
-        // So shape_size(tk) = s[0] * shape_size(s1.take(k-1))
-        // And shape_size(s) = s[0] * shape_size(s1) = s[0] * shape_size(s1.take(k-1)) * shape_size(s.skip(k))
-        //                    = shape_size(tk) * shape_size(s.skip(k))
-        // Unfold shape_size(s): s.len() > 0, so shape_size(s) = s.first() * shape_size(s.skip(1))
+        //  So shape_size(tk) = s[0] * shape_size(s1.take(k-1))
+        //  And shape_size(s) = s[0] * shape_size(s1) = s[0] * shape_size(s1.take(k-1)) * shape_size(s.skip(k))
+        //                     = shape_size(tk) * shape_size(s.skip(k))
+        //  Unfold shape_size(s): s.len() > 0, so shape_size(s) = s.first() * shape_size(s.skip(1))
         assert(s.skip(1) =~= s1);
-        // shape_size(s) = s[0] * shape_size(s1) -- by def since s.len() > 0
-        // Unfold shape_size(tk): tk.len() > 0 (since k >= 1), so shape_size(tk) = tk.first() * shape_size(tk.skip(1))
-        // tk.first() = s[0], tk.skip(1) =~= s1.take(k-1)
-        // IH gave us: shape_size(s1) = shape_size(s1.take(k-1)) * shape_size(s1.skip(k-1))
-        // And s1.skip(k-1) =~= s.skip(k)
-        // So shape_size(s) = s[0] * shape_size(s1.take(k-1)) * shape_size(s.skip(k))
-        //                   = shape_size(tk) * shape_size(s.skip(k))
+        //  shape_size(s) = s[0] * shape_size(s1) -- by def since s.len() > 0
+        //  Unfold shape_size(tk): tk.len() > 0 (since k >= 1), so shape_size(tk) = tk.first() * shape_size(tk.skip(1))
+        //  tk.first() = s[0], tk.skip(1) =~= s1.take(k-1)
+        //  IH gave us: shape_size(s1) = shape_size(s1.take(k-1)) * shape_size(s1.skip(k-1))
+        //  And s1.skip(k-1) =~= s.skip(k)
+        //  So shape_size(s) = s[0] * shape_size(s1.take(k-1)) * shape_size(s.skip(k))
+        //                    = shape_size(tk) * shape_size(s.skip(k))
         let a_val = shape_size(s1.take((k - 1) as int));
         let b_val = shape_size(s.skip(k as int));
         assert(shape_size(s1) == a_val * b_val);
@@ -152,7 +152,7 @@ pub proof fn lemma_shape_size_split(s: Seq<nat>, k: nat)
     }
 }
 
-/// Delinearize a linear index into per-dimension coordinates at runtime.
+///  Delinearize a linear index into per-dimension coordinates at runtime.
 pub fn delinearize_exec(idx: u64, shape: &Vec<u64>) -> (result: Vec<u64>)
     requires
         shape_valid_u64(shape@),
@@ -171,7 +171,7 @@ pub fn delinearize_exec(idx: u64, shape: &Vec<u64>) -> (result: Vec<u64>)
     proof {
         crate::proof::shape_lemmas::lemma_delinearize_len(idx as nat, spec_shape);
         crate::proof::shape_lemmas::lemma_delinearize_bounds(idx as nat, spec_shape);
-        // At i=0: take(0) = empty, shape_size(empty) = 1, idx/1 = idx
+        //  At i=0: take(0) = empty, shape_size(empty) = 1, idx/1 = idx
         assert(spec_shape.take(0int) =~= Seq::<nat>::empty());
         assert(shape_size(Seq::<nat>::empty()) == 1nat);
     }
@@ -191,7 +191,7 @@ pub fn delinearize_exec(idx: u64, shape: &Vec<u64>) -> (result: Vec<u64>)
         decreases shape.len() - i,
     {
         proof {
-            // Link: delinearize(idx, s)[i] == (idx / shape_size(s.take(i))) % s[i]
+            //  Link: delinearize(idx, s)[i] == (idx / shape_size(s.take(i))) % s[i]
             lemma_delinearize_index_formula(idx as nat, spec_shape, i as nat);
         }
 
@@ -199,13 +199,13 @@ pub fn delinearize_exec(idx: u64, shape: &Vec<u64>) -> (result: Vec<u64>)
         let new_remaining = remaining / shape[i];
 
         proof {
-            // coord == delinearize(idx, spec_shape)[i]
+            //  coord == delinearize(idx, spec_shape)[i]
             assert(coord as nat == remaining as nat % (spec_shape[i as int]));
             assert(coord as nat == spec_delinearized[i as int]);
 
-            // new_remaining = idx / shape_size(take(i+1))
+            //  new_remaining = idx / shape_size(take(i+1))
             lemma_shape_size_take_step(spec_shape, i as nat);
-            // Prove prefix > 0
+            //  Prove prefix > 0
             let prefix = shape_size(spec_shape.take(i as int));
             lemma_take_shape_valid(spec_shape, i as nat);
             crate::proof::shape_lemmas::lemma_shape_size_positive(spec_shape.take(i as int));
@@ -225,7 +225,7 @@ pub fn delinearize_exec(idx: u64, shape: &Vec<u64>) -> (result: Vec<u64>)
     result
 }
 
-/// take of a valid shape is valid.
+///  take of a valid shape is valid.
 pub proof fn lemma_take_shape_valid(s: Seq<nat>, k: nat)
     requires shape_valid(s), k <= s.len(),
     ensures shape_valid(s.take(k as int)),
@@ -235,7 +235,7 @@ pub proof fn lemma_take_shape_valid(s: Seq<nat>, k: nat)
     }
 }
 
-/// delinearize(idx, s)[k] == (idx / shape_size(s.take(k))) % s[k]
+///  delinearize(idx, s)[k] == (idx / shape_size(s.take(k))) % s[k]
 pub proof fn lemma_delinearize_index_formula(idx: nat, s: Seq<nat>, k: nat)
     requires shape_valid(s), k < s.len(), idx < shape_size(s),
     ensures delinearize(idx, s)[k as int] == (idx / shape_size(s.take(k as int))) % s[k as int],
@@ -253,27 +253,27 @@ pub proof fn lemma_delinearize_index_formula(idx: nat, s: Seq<nat>, k: nat)
         }
         crate::proof::shape_lemmas::lemma_shape_size_positive(s1);
 
-        // Prove idx / s[0] < shape_size(s1)
+        //  Prove idx / s[0] < shape_size(s1)
         assert(s.first() == s[0]);
         assert(s.skip(1int) =~= s1);
-        // shape_size(s) = s[0] * shape_size(s1)
-        // (unfold shape_size: first() * shape_size(skip(1)))
+        //  shape_size(s) = s[0] * shape_size(s1)
+        //  (unfold shape_size: first() * shape_size(skip(1)))
         assert(shape_size(s) == s.first() * shape_size(s1));
         assert(idx / s[0] < shape_size(s1)) by (nonlinear_arith)
             requires idx < s[0] * shape_size(s1), s[0] > 0, shape_size(s1) > 0nat,
         {}
 
-        // delinearize(idx, s) = [idx % s[0]] ++ delinearize(idx / s[0], s1)
-        // So delinearize(idx, s)[k] = delinearize(idx / s[0], s1)[k-1]
+        //  delinearize(idx, s) = [idx % s[0]] ++ delinearize(idx / s[0], s1)
+        //  So delinearize(idx, s)[k] = delinearize(idx / s[0], s1)[k-1]
         crate::proof::shape_lemmas::lemma_delinearize_len(idx / s.first(), s1);
         let d_full = delinearize(idx, s);
         let d_rest = delinearize(idx / s.first(), s1);
         assert(d_full.len() == s.len());
         assert(d_rest.len() == s1.len());
-        // d_full = seq![idx % s[0]] ++ d_rest
+        //  d_full = seq![idx % s[0]] ++ d_rest
         assert(d_full.first() == idx % s.first());
         assert(d_full.skip(1) =~= d_rest) by {
-            // By definition of delinearize
+            //  By definition of delinearize
             assert(d_full =~= seq![idx % s.first()].add(d_rest));
         }
         assert(d_full[k as int] == d_rest[(k - 1) as int]);
@@ -286,7 +286,7 @@ pub proof fn lemma_delinearize_index_formula(idx: nat, s: Seq<nat>, k: nat)
         let tk = s.take(k as int);
         assert(tk.first() == s[0]);
         assert(tk.skip(1) =~= s1.take((k - 1) as int));
-        // shape_size(tk) = s[0] * shape_size(s1.take(k-1))
+        //  shape_size(tk) = s[0] * shape_size(s1.take(k-1))
         assert(shape_size(tk) == tk.first() * shape_size(tk.skip(1)));
 
         let a = idx;
@@ -300,14 +300,14 @@ pub proof fn lemma_delinearize_index_formula(idx: nat, s: Seq<nat>, k: nat)
     }
 }
 
-/// Compute dot product of coords (u64) with strides (i64) at runtime.
-/// Requires non-negative strides and partial sums in i64 range.
+///  Compute dot product of coords (u64) with strides (i64) at runtime.
+///  Requires non-negative strides and partial sums in i64 range.
 pub fn dot_product_exec(coords: &Vec<u64>, strides: &Vec<i64>) -> (result: i64)
     requires
         coords@.len() == strides@.len(),
-        // Non-negative strides
+        //  Non-negative strides
         forall|j: int| 0 <= j < strides@.len() ==> #[trigger] strides@[j] >= 0,
-        // Each partial sum fits in i64
+        //  Each partial sum fits in i64
         forall|k: nat| k <= coords@.len() ==>
             dot_product_nat_int(
                 shape_to_nat_seq(coords@).take(k as int),
@@ -342,9 +342,9 @@ pub fn dot_product_exec(coords: &Vec<u64>, strides: &Vec<i64>) -> (result: i64)
     {
         proof {
             lemma_dot_product_take_step(spec_coords, spec_strides, i as nat);
-            // partial(i+1) = partial(i) + coords[i]*strides[i]
-            // Both partial(i) and partial(i+1) are in [0, i64::MAX] (non-negative strides)
-            // So product = partial(i+1) - partial(i) is in [0, i64::MAX]
+            //  partial(i+1) = partial(i) + coords[i]*strides[i]
+            //  Both partial(i) and partial(i+1) are in [0, i64::MAX] (non-negative strides)
+            //  So product = partial(i+1) - partial(i) is in [0, i64::MAX]
         }
 
         let product: i64 = if strides[i] == 0 {
@@ -355,12 +355,12 @@ pub fn dot_product_exec(coords: &Vec<u64>, strides: &Vec<i64>) -> (result: i64)
             0
         } else {
             proof {
-                // strides[i] >= 1, so coords[i] * strides[i] <= i64::MAX
-                // implies coords[i] <= i64::MAX (since strides[i] >= 1)
+                //  strides[i] >= 1, so coords[i] * strides[i] <= i64::MAX
+                //  implies coords[i] <= i64::MAX (since strides[i] >= 1)
                 let c = coords@[i as int] as int;
                 let s = strides@[i as int] as int;
                 assert(s >= 1);
-                // product = partial(i+1) - partial(i), in [0, i64::MAX]
+                //  product = partial(i+1) - partial(i), in [0, i64::MAX]
                 let partial_i = dot_product_nat_int(spec_coords.take(i as int), spec_strides.take(i as int));
                 let partial_i1 = dot_product_nat_int(spec_coords.take((i + 1) as int), spec_strides.take((i + 1) as int));
                 assert(partial_i1 == partial_i + c * s);
@@ -373,7 +373,7 @@ pub fn dot_product_exec(coords: &Vec<u64>, strides: &Vec<i64>) -> (result: i64)
                 }
                 assert(c * s <= i64::MAX as int);
 
-                // coords[i] <= product / strides[i] <= i64::MAX / 1 = i64::MAX
+                //  coords[i] <= product / strides[i] <= i64::MAX / 1 = i64::MAX
                 assert(c <= i64::MAX as int) by {
                     assert(c * s <= i64::MAX as int);
                     assert(s >= 1);
@@ -398,7 +398,7 @@ pub fn dot_product_exec(coords: &Vec<u64>, strides: &Vec<i64>) -> (result: i64)
     result
 }
 
-/// Partial dot product with non-negative strides is non-negative.
+///  Partial dot product with non-negative strides is non-negative.
 proof fn lemma_dot_product_partial_nonneg(coords: Seq<nat>, strides: Seq<int>, k: nat)
     requires
         coords.len() == strides.len(),
@@ -419,7 +419,7 @@ proof fn lemma_dot_product_partial_nonneg(coords: Seq<nat>, strides: Seq<int>, k
     }
 }
 
-/// dot_product(take(i+1), take(i+1)) == dot_product(take(i), take(i)) + coords[i]*strides[i]
+///  dot_product(take(i+1), take(i+1)) == dot_product(take(i), take(i)) + coords[i]*strides[i]
 pub proof fn lemma_dot_product_take_step(coords: Seq<nat>, strides: Seq<int>, i: nat)
     requires
         coords.len() == strides.len(),
@@ -461,4 +461,4 @@ pub proof fn lemma_dot_product_take_step(coords: Seq<nat>, strides: Seq<int>, i:
     }
 }
 
-} // verus!
+} //  verus!

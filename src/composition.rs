@@ -5,17 +5,17 @@ use crate::inverse::shape_prefix_products;
 
 verus! {
 
-/// Find the split point: mode i where b_stride == prefix_product(a.shape, i).
-/// Returns Some(i) if such a mode exists, None otherwise.
+///  Find the split point: mode i where b_stride == prefix_product(a.shape, i).
+///  Returns Some(i) if such a mode exists, None otherwise.
 pub open spec fn find_split_mode(a: &LayoutSpec, b_stride: nat) -> Option<nat>
     decreases a.shape.len(),
 {
     let pp = shape_prefix_products(a.shape);
-    // Search through prefix products for a match
+    //  Search through prefix products for a match
     find_pp_index(pp, b_stride, 0)
 }
 
-/// Helper: find index i in pp (starting from pos) where pp[i] == target.
+///  Helper: find index i in pp (starting from pos) where pp[i] == target.
 pub open spec fn find_pp_index(pp: Seq<nat>, target: nat, pos: nat) -> Option<nat>
     decreases pp.len() - pos,
 {
@@ -28,11 +28,11 @@ pub open spec fn find_pp_index(pp: Seq<nat>, target: nat, pos: nat) -> Option<na
     }
 }
 
-/// Compose two single-mode layouts: A = (M):(d) and B = (N):(r).
-/// Result: (N):(r*d), meaning A(B(x)) = A(r*x) = (r*x mod M)*d = x*(r*d) when r*N <= M.
+///  Compose two single-mode layouts: A = (M):(d) and B = (N):(r).
+///  Result: (N):(r*d), meaning A(B(x)) = A(r*x) = (r*x mod M)*d = x*(r*d) when r*N <= M.
 ///
-/// Precondition: r * N <= M (B's codomain fits within A's domain).
-/// This is the "trivial" case where B maps into a single mode of A without crossing mode boundaries.
+///  Precondition: r * N <= M (B's codomain fits within A's domain).
+///  This is the "trivial" case where B maps into a single mode of A without crossing mode boundaries.
 pub open spec fn compose_1d(a_shape: nat, a_stride: int, b_shape: nat, b_stride: int) -> LayoutSpec
     recommends a_shape > 0, b_shape > 0, b_stride * (b_shape as int) <= (a_shape as int),
 {
@@ -42,28 +42,28 @@ pub open spec fn compose_1d(a_shape: nat, a_stride: int, b_shape: nat, b_stride:
     }
 }
 
-/// Compose a multi-mode A with a single-mode B = (N):(r).
+///  Compose a multi-mode A with a single-mode B = (N):(r).
 ///
-/// This is the general single-mode composition. B's stride r determines a "split point"
-/// in A's modes -- the mode i where r "lands" after consuming modes 0..i-1.
+///  This is the general single-mode composition. B's stride r determines a "split point"
+///  in A's modes -- the mode i where r "lands" after consuming modes 0..i-1.
 ///
-/// For now, we define the simple case where B's stride is 1 (selecting the first N elements
-/// of A's linearized domain) and the general stride case.
+///  For now, we define the simple case where B's stride is 1 (selecting the first N elements
+///  of A's linearized domain) and the general stride case.
 ///
-/// When r == 1 and N <= A.shape[0]: result is (N):(A.stride[0]).
-/// When r == A.shape[0] and N <= A.shape[1]: result is (N):(A.stride[1]).
-/// General: r = product(A.shape[0..i]) * c where c divides A.shape[i].
+///  When r == 1 and N <= A.shape[0]: result is (N):(A.stride[0]).
+///  When r == A.shape[0] and N <= A.shape[1]: result is (N):(A.stride[1]).
+///  General: r = product(A.shape[0..i]) * c where c divides A.shape[i].
 pub open spec fn compose_single_mode(a: LayoutSpec, b_shape: nat, b_stride: nat) -> LayoutSpec
     recommends a.valid(), b_shape > 0,
 {
-    // For the stride-1 case: select first b_shape elements from A's fastest mode
+    //  For the stride-1 case: select first b_shape elements from A's fastest mode
     if b_stride == 1 && b_shape <= a.shape.first() && a.shape.len() > 0 {
         LayoutSpec {
             shape: seq![b_shape],
             stride: seq![a.stride.first()],
         }
     } else {
-        // Fallback: general composition
+        //  Fallback: general composition
         LayoutSpec {
             shape: seq![b_shape],
             stride: seq![(b_stride as int) * a.stride.first()],
@@ -71,13 +71,13 @@ pub open spec fn compose_single_mode(a: LayoutSpec, b_shape: nat, b_stride: nat)
     }
 }
 
-/// Extended single-mode composition using prefix-product decomposition.
+///  Extended single-mode composition using prefix-product decomposition.
 ///
-/// When B's stride matches a prefix product of A's shape (i.e., b_stride == product(A.shape[0..i])),
-/// the result uses A's stride at mode i rather than the naive b_stride * a.stride[0].
-/// This is correct for general (non-column-major) layouts and matches CuTe's actual behavior.
+///  When B's stride matches a prefix product of A's shape (i.e., b_stride == product(A.shape[0..i])),
+///  the result uses A's stride at mode i rather than the naive b_stride * a.stride[0].
+///  This is correct for general (non-column-major) layouts and matches CuTe's actual behavior.
 ///
-/// Falls back to compose_single_mode when no split point is found.
+///  Falls back to compose_single_mode when no split point is found.
 pub open spec fn compose_single_mode_extended(a: LayoutSpec, b_shape: nat, b_stride: nat) -> LayoutSpec
     recommends a.valid(), b_shape > 0,
 {
@@ -111,10 +111,10 @@ pub open spec fn compose_single_mode_extended(a: LayoutSpec, b_shape: nat, b_str
     }
 }
 
-/// DEPRECATED: Use `compose` instead, which correctly handles all cases.
+///  DEPRECATED: Use `compose` instead, which correctly handles all cases.
 ///
-/// This uses `compose_single_mode_extended` which only handles prefix-product-aligned
-/// strides and falls back incorrectly for non-aligned strides.
+///  This uses `compose_single_mode_extended` which only handles prefix-product-aligned
+///  strides and falls back incorrectly for non-aligned strides.
 pub open spec fn compose_extended(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
     recommends a.valid(), b.valid(),
     decreases b.shape.len(),
@@ -134,10 +134,10 @@ pub open spec fn compose_extended(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
     }
 }
 
-/// Multi-mode composition: distributes over B's modes.
-/// A compose_linear (B_0, B_1, ..., B_k) = (A compose_linear B_0, A compose_linear B_1, ..., A compose_linear B_k)
+///  Multi-mode composition: distributes over B's modes.
+///  A compose_linear (B_0, B_1, ..., B_k) = (A compose_linear B_0, A compose_linear B_1, ..., A compose_linear B_k)
 ///
-/// Each B_i is a single-mode layout. The results are concatenated.
+///  Each B_i is a single-mode layout. The results are concatenated.
 pub open spec fn compose_linear(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
     recommends a.valid(), b.valid(),
     decreases b.shape.len(),
@@ -147,7 +147,7 @@ pub open spec fn compose_linear(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
     } else if b.shape.len() == 1 {
         compose_single_mode(a, b.shape.first(), b.stride.first() as nat)
     } else {
-        // Compose A with first mode of B, then recurse
+        //  Compose A with first mode of B, then recurse
         let first = compose_single_mode(a, b.shape.first(), b.stride.first() as nat);
         let rest_b = LayoutSpec { shape: b.shape.skip(1), stride: b.stride.skip(1) };
         let rest = compose_linear(a, rest_b);
@@ -158,29 +158,29 @@ pub open spec fn compose_linear(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// CuTe-style recursive composition
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  CuTe-style recursive composition
+//  ══════════════════════════════════════════════════════════════
 
-/// Recursive single-mode composition: compose_linear A with B = (N):(r).
+///  Recursive single-mode composition: compose_linear A with B = (N):(r).
 ///
-/// Unlike `compose_single_mode` (which always produces rank-1 output),
-/// this can produce MULTI-mode output when B's range straddles A's mode
-/// boundaries.
+///  Unlike `compose_single_mode` (which always produces rank-1 output),
+///  this can produce MULTI-mode output when B's range straddles A's mode
+///  boundaries.
 ///
-/// Cases:
-/// 1. `r * N <= shape[0]`: B fits entirely within A's first mode
-///    → (N):(r * d_0)
+///  Cases:
+///  1. `r * N <= shape[0]`: B fits entirely within A's first mode
+///     → (N):(r * d_0)
 ///
-/// 2. `r < shape[0]` and `shape[0] % r == 0`: B straddles first mode
-///    → split into (shape[0]/r):(r*d_0) within first mode
-///      + recursive compose_linear on remaining modes
+///  2. `r < shape[0]` and `shape[0] % r == 0`: B straddles first mode
+///     → split into (shape[0]/r):(r*d_0) within first mode
+///       + recursive compose_linear on remaining modes
 ///
-/// 3. `r >= shape[0]` and `r % shape[0] == 0`: B skips first mode entirely
-///    → recurse on A.skip(1) with stride r/shape[0]
+///  3. `r >= shape[0]` and `r % shape[0] == 0`: B skips first mode entirely
+///     → recurse on A.skip(1) with stride r/shape[0]
 ///
-/// 4. Fallback (non-divisible): treat as within first mode
-///    → (N):(r * d_0)
+///  4. Fallback (non-divisible): treat as within first mode
+///     → (N):(r * d_0)
 pub open spec fn compose_single(
     a: LayoutSpec, b_shape: nat, b_stride: nat,
 ) -> LayoutSpec
@@ -188,7 +188,7 @@ pub open spec fn compose_single(
     decreases a.shape.len(),
 {
     if a.shape.len() == 0 {
-        // No modes: constant offset
+        //  No modes: constant offset
         LayoutSpec { shape: seq![b_shape], stride: seq![0int] }
     } else {
         let m = a.shape.first();
@@ -196,11 +196,11 @@ pub open spec fn compose_single(
         let a_rest = LayoutSpec { shape: a.shape.skip(1), stride: a.stride.skip(1) };
 
         if b_stride * b_shape <= m {
-            // Case 1: entirely within first mode
+            //  Case 1: entirely within first mode
             LayoutSpec { shape: seq![b_shape], stride: seq![(b_stride as int) * d] }
         } else if b_stride < m && m % b_stride == 0 && b_shape > 0 && b_shape % (m / b_stride) == 0 {
-            // Case 2: straddles first mode boundary (only when b_shape divisible by q)
-            let q = m / b_stride;  // elements fitting in first mode
+            //  Case 2: straddles first mode boundary (only when b_shape divisible by q)
+            let q = m / b_stride;  //  elements fitting in first mode
             let inner = LayoutSpec {
                 shape: seq![q],
                 stride: seq![(b_stride as int) * d],
@@ -211,20 +211,20 @@ pub open spec fn compose_single(
                 stride: inner.stride.add(rest.stride),
             }
         } else if b_stride >= m && b_stride % m == 0 {
-            // Case 3: skip first mode entirely
+            //  Case 3: skip first mode entirely
             compose_single(a_rest, b_shape, b_stride / m)
         } else {
-            // Case 4: fallback (non-divisible stride)
+            //  Case 4: fallback (non-divisible stride)
             LayoutSpec { shape: seq![b_shape], stride: seq![(b_stride as int) * d] }
         }
     }
 }
 
-/// Recursive multi-mode composition: compose_linear A with multi-mode B.
+///  Recursive multi-mode composition: compose_linear A with multi-mode B.
 ///
-/// Distributes over B's modes, calling `compose_single` for each.
-/// Unlike `compose_linear`, each single-mode result can be multi-mode (from straddling),
-/// so the output rank may be larger than B's rank.
+///  Distributes over B's modes, calling `compose_single` for each.
+///  Unlike `compose_linear`, each single-mode result can be multi-mode (from straddling),
+///  so the output rank may be larger than B's rank.
 pub open spec fn compose(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
     recommends a.valid(), b.valid(), b.non_negative_strides(),
     decreases b.shape.len(),
@@ -244,4 +244,4 @@ pub open spec fn compose(a: LayoutSpec, b: LayoutSpec) -> LayoutSpec
     }
 }
 
-} // verus!
+} //  verus!

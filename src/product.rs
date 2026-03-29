@@ -4,13 +4,13 @@ use crate::layout::*;
 
 verus! {
 
-/// Logical product: tile space by replicating A at offsets determined by B.
+///  Logical product: tile space by replicating A at offsets determined by B.
 ///
-/// Given A (the intra-tile pattern) and B (the inter-tile iterator):
-/// result = (A.shape ++ B.shape, A.stride ++ (B.stride * cosize(A)))
+///  Given A (the intra-tile pattern) and B (the inter-tile iterator):
+///  result = (A.shape ++ B.shape, A.stride ++ (B.stride * cosize(A)))
 ///
-/// B's strides are scaled by cosize(A) so that each "copy" of A starts
-/// at a fresh block of offsets.
+///  B's strides are scaled by cosize(A) so that each "copy" of A starts
+///  at a fresh block of offsets.
 pub open spec fn logical_product(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
     recommends a.valid(), b.valid(), a.non_negative_strides(),
 {
@@ -21,13 +21,13 @@ pub open spec fn logical_product(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
     }
 }
 
-/// Scale every stride in a sequence by a constant factor.
+///  Scale every stride in a sequence by a constant factor.
 pub open spec fn scale_strides(strides: Seq<int>, factor: int) -> Seq<int> {
     Seq::new(strides.len(), |i: int| strides[i] * factor)
 }
 
-/// Admissibility for logical product: both valid, A has non-negative strides,
-/// and cosize(A) * cosize(B_scaled) fits in M (if applicable).
+///  Admissibility for logical product: both valid, A has non-negative strides,
+///  and cosize(A) * cosize(B_scaled) fits in M (if applicable).
 pub open spec fn product_admissible(a: &LayoutSpec, b: &LayoutSpec) -> bool {
     &&& a.valid()
     &&& b.valid()
@@ -35,19 +35,19 @@ pub open spec fn product_admissible(a: &LayoutSpec, b: &LayoutSpec) -> bool {
     &&& a.shape.len() > 0
 }
 
-/// Blocked product: same as logical_product(A, B).
-/// Each "copy" of A is a contiguous block, with B iterating between blocks.
-/// This is the standard tiling: A = intra-tile pattern, B = inter-tile iterator.
+///  Blocked product: same as logical_product(A, B).
+///  Each "copy" of A is a contiguous block, with B iterating between blocks.
+///  This is the standard tiling: A = intra-tile pattern, B = inter-tile iterator.
 pub open spec fn blocked_product(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
     recommends a.valid(), b.valid(), a.non_negative_strides(),
 {
     logical_product(a, b)
 }
 
-/// Raked product: A's strides are scaled by cosize(B), B's strides are unscaled.
-/// This interleaves A's elements across B's blocks (cyclic distribution).
+///  Raked product: A's strides are scaled by cosize(B), B's strides are unscaled.
+///  This interleaves A's elements across B's blocks (cyclic distribution).
 ///
-/// result = (A.shape ++ B.shape, A.stride * cosize(B) ++ B.stride)
+///  result = (A.shape ++ B.shape, A.stride * cosize(B) ++ B.stride)
 pub open spec fn raked_product(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
     recommends a.valid(), b.valid(), b.non_negative_strides(),
 {
@@ -58,7 +58,7 @@ pub open spec fn raked_product(a: &LayoutSpec, b: &LayoutSpec) -> LayoutSpec
     }
 }
 
-/// Admissibility for raked product: both valid, B has non-negative strides.
+///  Admissibility for raked product: both valid, B has non-negative strides.
 pub open spec fn raked_product_admissible(a: &LayoutSpec, b: &LayoutSpec) -> bool {
     &&& a.valid()
     &&& b.valid()
@@ -66,10 +66,10 @@ pub open spec fn raked_product_admissible(a: &LayoutSpec, b: &LayoutSpec) -> boo
     &&& b.shape.len() > 0
 }
 
-/// Scalar layout: the multiplicative identity for product.
-/// A single element at stride 0. logical_product(a, scalar_layout()) ≈ a.
+///  Scalar layout: the multiplicative identity for product.
+///  A single element at stride 0. logical_product(a, scalar_layout()) ≈ a.
 pub open spec fn scalar_layout() -> LayoutSpec {
     LayoutSpec { shape: seq![1nat], stride: seq![0int] }
 }
 
-} // verus!
+} //  verus!

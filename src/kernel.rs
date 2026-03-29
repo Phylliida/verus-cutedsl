@@ -3,29 +3,29 @@ use crate::arith_expr::*;
 
 verus! {
 
-// ══════════════════════════════════════════════════════════════
-// Kernel: guard + multiple (scatter, compute) outputs
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Kernel: guard + multiple (scatter, compute) outputs
+//  ══════════════════════════════════════════════════════════════
 
-/// A single output of a kernel: write compute(env) to buffer at scatter(env).
+///  A single output of a kernel: write compute(env) to buffer at scatter(env).
 pub struct OutputSpec {
     pub scatter: ArithExpr,
     pub compute: ArithExpr,
 }
 
-/// A GPU compute kernel spec.
+///  A GPU compute kernel spec.
 ///
-/// For each thread i where guard(i) != 0:
-///   for each output o:
-///     output_buffer_o[scatter_o(i)] = compute_o(i, inputs)
+///  For each thread i where guard(i) != 0:
+///    for each output o:
+///      output_buffer_o[scatter_o(i)] = compute_o(i, inputs)
 ///
-/// Each output's scatter must be injective under guard (deterministic).
+///  Each output's scatter must be injective under guard (deterministic).
 pub struct KernelSpec {
     pub guard: ArithExpr,
     pub outputs: Seq<OutputSpec>,
 }
 
-/// Thread environment constructors.
+///  Thread environment constructors.
 pub open spec fn thread_env_1d(tid: nat) -> Seq<int> {
     seq![tid as int]
 }
@@ -34,7 +34,7 @@ pub open spec fn thread_env_2d(gid_x: nat, gid_y: nat) -> Seq<int> {
     seq![gid_x as int, gid_y as int]
 }
 
-/// Evaluate a single output for a single thread.
+///  Evaluate a single output for a single thread.
 pub open spec fn eval_output(
     o: &OutputSpec, env: Seq<int>, inputs: Seq<Seq<int>>,
 ) -> (int, int) {
@@ -42,12 +42,12 @@ pub open spec fn eval_output(
      arith_eval_with_arrays(&o.compute, env, inputs))
 }
 
-// ══════════════════════════════════════════════════════════════
-// Foundational kernel properties
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Foundational kernel properties
+//  ══════════════════════════════════════════════════════════════
 
-/// Scatter injectivity predicate: for a given output,
-/// no two active threads write to the same index.
+///  Scatter injectivity predicate: for a given output,
+///  no two active threads write to the same index.
 pub open spec fn scatter_injective(
     o: &OutputSpec,
     guard: &ArithExpr,
@@ -62,15 +62,15 @@ pub open spec fn scatter_injective(
     ==> env_a == env_b
 }
 
-/// If scatter is injective under guard, then the output for any given index
-/// is uniquely determined — at most one thread writes to each output position.
-/// This means kernel evaluation is independent of thread execution order.
+///  If scatter is injective under guard, then the output for any given index
+///  is uniquely determined — at most one thread writes to each output position.
+///  This means kernel evaluation is independent of thread execution order.
 ///
-/// Proof: if two threads t1 and t2 both write to index j, then
-/// scatter(t1) == scatter(t2) == j, and both guards are non-zero,
-/// so by injectivity env(t1) == env(t2), meaning t1 == t2.
-/// Therefore each output index is written by at most one thread,
-/// making the result order-independent.
+///  Proof: if two threads t1 and t2 both write to index j, then
+///  scatter(t1) == scatter(t2) == j, and both guards are non-zero,
+///  so by injectivity env(t1) == env(t2), meaning t1 == t2.
+///  Therefore each output index is written by at most one thread,
+///  making the result order-independent.
 pub proof fn lemma_injective_scatter_unique_writer(
     o: &OutputSpec,
     guard: &ArithExpr,
@@ -91,13 +91,13 @@ pub proof fn lemma_injective_scatter_unique_writer(
             == arith_eval_with_arrays(&o.compute, env_b, inputs),
 {}
 
-// ══════════════════════════════════════════════════════════════
-// kernel_eval: full kernel output semantics
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  kernel_eval: full kernel output semantics
+//  ══════════════════════════════════════════════════════════════
 
-/// Full kernel output for a single output buffer, 1D dispatch.
-/// output[j] = compute(thread) where thread is the unique active thread with scatter(thread)==j,
-/// or 0 if no thread writes to j.
+///  Full kernel output for a single output buffer, 1D dispatch.
+///  output[j] = compute(thread) where thread is the unique active thread with scatter(thread)==j,
+///  or 0 if no thread writes to j.
 pub open spec fn kernel_eval_1d(
     k: &KernelSpec, output_idx: nat,
     inputs: Seq<Seq<int>>,
@@ -109,7 +109,7 @@ pub open spec fn kernel_eval_1d(
         kernel_find_writer_1d(&k.outputs[output_idx as int], &k.guard, inputs, n_threads, j as nat, 0))
 }
 
-/// Search for the thread that writes to output index j (1D dispatch).
+///  Search for the thread that writes to output index j (1D dispatch).
 pub open spec fn kernel_find_writer_1d(
     o: &OutputSpec, guard: &ArithExpr,
     inputs: Seq<Seq<int>>,
@@ -134,11 +134,11 @@ pub open spec fn kernel_find_writer_1d(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Helper: single-output kernel constructor
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Helper: single-output kernel constructor
+//  ══════════════════════════════════════════════════════════════
 
-/// Convenience: build a single-output KernelSpec.
+///  Convenience: build a single-output KernelSpec.
 pub open spec fn single_output_kernel(
     guard: ArithExpr, scatter: ArithExpr, compute: ArithExpr,
 ) -> KernelSpec {
@@ -148,12 +148,12 @@ pub open spec fn single_output_kernel(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// GEMM kernel
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  GEMM kernel
+//  ══════════════════════════════════════════════════════════════
 
-/// GEMM kernel: C[i*N+j] = Σ_{k=0}^{K-1} A[i*K+k] * B[k*N+j]
-/// Variables: 0=gid.x(i), 1=gid.y(j), 2=reduce var(k). Buffers: 0=A, 1=B.
+///  GEMM kernel: C[i*N+j] = Σ_{k=0}^{K-1} A[i*K+k] * B[k*N+j]
+///  Variables: 0=gid.x(i), 1=gid.y(j), 2=reduce var(k). Buffers: 0=A, 1=B.
 pub open spec fn gemm_kernel(m: nat, k_size: nat, n: nat) -> KernelSpec {
     single_output_kernel(
         ArithExpr::Mul(
@@ -172,7 +172,7 @@ pub open spec fn gemm_kernel(m: nat, k_size: nat, n: nat) -> KernelSpec {
     )
 }
 
-/// The body expression for GEMM: A[i*K+k] * B[k*N+j]
+///  The body expression for GEMM: A[i*K+k] * B[k*N+j]
 pub open spec fn gemm_kernel_body(k_size: nat, n: nat) -> ArithExpr {
     ArithExpr::Mul(
         Box::new(ArithExpr::Index(0, Box::new(ArithExpr::Add(
@@ -186,7 +186,7 @@ pub open spec fn gemm_kernel_body(k_size: nat, n: nat) -> ArithExpr {
     )
 }
 
-/// GEMM correctness: output 0's compute == Σ_k A[i*K+k] * B[k*N+j]
+///  GEMM correctness: output 0's compute == Σ_k A[i*K+k] * B[k*N+j]
 pub proof fn lemma_gemm_kernel_element_correct(
     a: Seq<int>, b: Seq<int>,
     m: nat, k_size: nat, n: nat,
@@ -223,7 +223,7 @@ pub proof fn lemma_gemm_kernel_element_correct(
     }
 }
 
-/// Core inductive helper for GEMM.
+///  Core inductive helper for GEMM.
 proof fn lemma_gemm_reduce_matches_partial_sum(
     a: Seq<int>, b: Seq<int>,
     k_size: nat, n: nat,
@@ -286,7 +286,7 @@ proof fn lemma_gemm_reduce_matches_partial_sum(
     }
 }
 
-/// Integer GEMM partial sum spec.
+///  Integer GEMM partial sum spec.
 pub open spec fn gemm_partial_sum_int(
     a: Seq<int>, b: Seq<int>,
     k_size: nat, n: nat,
@@ -301,11 +301,11 @@ pub open spec fn gemm_partial_sum_int(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Vector add kernel
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Vector add kernel
+//  ══════════════════════════════════════════════════════════════
 
-/// Vector add: out[i] = A[i] + B[i]
+///  Vector add: out[i] = A[i] + B[i]
 pub open spec fn vector_add_kernel(n: nat) -> KernelSpec {
     single_output_kernel(
         ArithExpr::Cmp(CmpOp::Lt, Box::new(ArithExpr::Var(0)), Box::new(ArithExpr::Const(n as int))),
@@ -317,7 +317,7 @@ pub open spec fn vector_add_kernel(n: nat) -> KernelSpec {
     )
 }
 
-/// Vector add correctness.
+///  Vector add correctness.
 pub proof fn lemma_vector_add_kernel_correct(
     a: Seq<int>, b: Seq<int>, n: nat, i: nat,
 )
@@ -340,11 +340,11 @@ pub proof fn lemma_vector_add_kernel_correct(
     assert(arith_eval_with_arrays(&idx_b, env, inputs) == b[i as int]);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Layout offset kernel
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Layout offset kernel
+//  ══════════════════════════════════════════════════════════════
 
-/// Layout offset: out[x] = layout.offset(x)
+///  Layout offset: out[x] = layout.offset(x)
 pub open spec fn offset_kernel(shape: Seq<nat>, stride: Seq<int>) -> KernelSpec
     recommends shape.len() == stride.len(),
 {
@@ -356,7 +356,7 @@ pub open spec fn offset_kernel(shape: Seq<nat>, stride: Seq<int>) -> KernelSpec
     )
 }
 
-/// Offset kernel correctness: connects to CuTe layout algebra.
+///  Offset kernel correctness: connects to CuTe layout algebra.
 pub proof fn lemma_offset_kernel_correct(
     shape: Seq<nat>, stride: Seq<int>, x: nat,
 )
@@ -374,11 +374,11 @@ pub proof fn lemma_offset_kernel_correct(
     crate::arith_expr::lemma_offset_expr_correct(shape, stride, x);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Dot product kernel
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Dot product kernel
+//  ══════════════════════════════════════════════════════════════
 
-/// Dot product spec: Σ_{i=0}^{n-1} a[i] * b[i]
+///  Dot product spec: Σ_{i=0}^{n-1} a[i] * b[i]
 pub open spec fn dot_product_spec(a: Seq<int>, b: Seq<int>, n: nat) -> int
     decreases n,
 {
@@ -386,7 +386,7 @@ pub open spec fn dot_product_spec(a: Seq<int>, b: Seq<int>, n: nat) -> int
     else { dot_product_spec(a, b, (n - 1) as nat) + a[(n - 1) as int] * b[(n - 1) as int] }
 }
 
-/// Dot product: out[0] = Σ_k a[k] * b[k]
+///  Dot product: out[0] = Σ_k a[k] * b[k]
 pub open spec fn dot_product_kernel(n: nat) -> KernelSpec {
     single_output_kernel(
         ArithExpr::Cmp(CmpOp::Eq, Box::new(ArithExpr::Var(0)), Box::new(ArithExpr::Const(0))),
@@ -402,7 +402,7 @@ pub open spec fn dot_product_kernel(n: nat) -> KernelSpec {
     )
 }
 
-/// Dot product correctness.
+///  Dot product correctness.
 pub proof fn lemma_dot_product_kernel_correct(
     a: Seq<int>, b: Seq<int>, n: nat,
 )
@@ -427,7 +427,7 @@ pub proof fn lemma_dot_product_kernel_correct(
     lemma_dot_reduce_matches(a, b, n, env, inputs, &body);
 }
 
-/// Inductive helper for dot product.
+///  Inductive helper for dot product.
 proof fn lemma_dot_reduce_matches(
     a: Seq<int>, b: Seq<int>, kk: nat,
     env: Seq<int>, inputs: Seq<Seq<int>>,
@@ -465,12 +465,12 @@ proof fn lemma_dot_reduce_matches(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// 1D Convolution kernel — demonstrates sliding-window gather
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  1D Convolution kernel — demonstrates sliding-window gather
+//  ══════════════════════════════════════════════════════════════
 
-/// 1D convolution spec: out[i] = Σ_{d=0}^{W-1} input[i+d] * weight[d]
-/// where W is the kernel width. No padding — output is N-W+1 elements.
+///  1D convolution spec: out[i] = Σ_{d=0}^{W-1} input[i+d] * weight[d]
+///  where W is the kernel width. No padding — output is N-W+1 elements.
 pub open spec fn conv1d_spec(
     input: Seq<int>, weight: Seq<int>, w: nat, i: nat,
 ) -> int
@@ -483,34 +483,34 @@ pub open spec fn conv1d_spec(
     }
 }
 
-/// 1D convolution kernel: out[i] = Σ_{d=0}^{W-1} input[i+d] * weight[d]
-/// Variable 0 = thread id (output position i), Variable 1 = reduce var (d).
-/// Buffer 0 = input, Buffer 1 = weight.
+///  1D convolution kernel: out[i] = Σ_{d=0}^{W-1} input[i+d] * weight[d]
+///  Variable 0 = thread id (output position i), Variable 1 = reduce var (d).
+///  Buffer 0 = input, Buffer 1 = weight.
 pub open spec fn conv1d_kernel(n: nat, w: nat) -> KernelSpec {
     single_output_kernel(
-        // Guard: i < n - w + 1 (valid output range)
+        //  Guard: i < n - w + 1 (valid output range)
         ArithExpr::Cmp(CmpOp::Lt, Box::new(ArithExpr::Var(0)),
             Box::new(ArithExpr::Const((n - w + 1) as int))),
-        // Scatter: identity (output[i] = result)
+        //  Scatter: identity (output[i] = result)
         ArithExpr::Var(0),
-        // Compute: Σ_{d=0}^{W-1} input[i+d] * weight[d]
+        //  Compute: Σ_{d=0}^{W-1} input[i+d] * weight[d]
         ArithExpr::Reduce(
-            1,  // reduce variable d
+            1,  //  reduce variable d
             Box::new(ArithExpr::Const(w as int)),
             Box::new(ArithExpr::Mul(
-                // input[i + d]
+                //  input[i + d]
                 Box::new(ArithExpr::Index(0, Box::new(ArithExpr::Add(
                     Box::new(ArithExpr::Var(0)),
                     Box::new(ArithExpr::Var(1)),
                 )))),
-                // weight[d]
+                //  weight[d]
                 Box::new(ArithExpr::Index(1, Box::new(ArithExpr::Var(1)))),
             )),
         ),
     )
 }
 
-/// 1D convolution correctness.
+///  1D convolution correctness.
 pub proof fn lemma_conv1d_kernel_correct(
     input: Seq<int>, weight: Seq<int>,
     n: nat, w: nat, i: nat,
@@ -543,7 +543,7 @@ pub proof fn lemma_conv1d_kernel_correct(
     lemma_conv1d_reduce_matches(input, weight, w, i, env, inputs, &body);
 }
 
-/// Inductive helper for convolution.
+///  Inductive helper for convolution.
 proof fn lemma_conv1d_reduce_matches(
     input: Seq<int>, weight: Seq<int>,
     w: nat, i: nat,
@@ -580,37 +580,37 @@ proof fn lemma_conv1d_reduce_matches(
         assert(ext_env[0] == i as int);
         assert(ext_env[1] == d as int);
 
-        // Bounds
+        //  Bounds
         let id = i + d;
         assert(id < input.len());
         assert(d < weight.len());
 
-        // Help Z3 unfold: Add(Var(0), Var(1)) = i + d
+        //  Help Z3 unfold: Add(Var(0), Var(1)) = i + d
         assert(arith_eval_with_arrays(&ArithExpr::Var(0), ext_env, inputs) == i as int);
         assert(arith_eval_with_arrays(&ArithExpr::Var(1), ext_env, inputs) == d as int);
         let add_expr = ArithExpr::Add(Box::new(ArithExpr::Var(0)), Box::new(ArithExpr::Var(1)));
         crate::arith_expr::lemma_eval_with_arrays_add(
             &ArithExpr::Var(0), &ArithExpr::Var(1), ext_env, inputs);
 
-        // Help Z3: Index(0, i+d) = input[i+d], Index(1, d) = weight[d]
+        //  Help Z3: Index(0, i+d) = input[i+d], Index(1, d) = weight[d]
         crate::arith_expr::lemma_eval_with_arrays_index(
             0, &add_expr, ext_env, inputs, id as int);
         let var1 = ArithExpr::Var(1);
         crate::arith_expr::lemma_eval_with_arrays_index(
             1, &var1, ext_env, inputs, d as int);
 
-        // Help Z3: Mul
+        //  Help Z3: Mul
         let idx_input = ArithExpr::Index(0, Box::new(add_expr));
         let idx_weight = ArithExpr::Index(1, Box::new(ArithExpr::Var(1)));
         crate::arith_expr::lemma_eval_with_arrays_mul(&idx_input, &idx_weight, ext_env, inputs);
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Scan (prefix sum) kernel — demonstrates variable-bound Reduce
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Scan (prefix sum) kernel — demonstrates variable-bound Reduce
+//  ══════════════════════════════════════════════════════════════
 
-/// Partial sum spec: Σ_{j=0}^{kk-1} input[j]. Works for kk=0 (returns 0).
+///  Partial sum spec: Σ_{j=0}^{kk-1} input[j]. Works for kk=0 (returns 0).
 pub open spec fn partial_sum(input: Seq<int>, kk: nat) -> int
     decreases kk,
 {
@@ -618,27 +618,27 @@ pub open spec fn partial_sum(input: Seq<int>, kk: nat) -> int
     else { partial_sum(input, (kk - 1) as nat) + input[(kk - 1) as int] }
 }
 
-/// Inclusive prefix sum: out[i] = partial_sum(input, i + 1) = Σ_{j=0}^{i} input[j]
+///  Inclusive prefix sum: out[i] = partial_sum(input, i + 1) = Σ_{j=0}^{i} input[j]
 pub open spec fn prefix_sum_spec(input: Seq<int>, i: nat) -> int {
     partial_sum(input, i + 1)
 }
 
-/// Inclusive scan kernel: out[i] = Σ_{j=0}^{i} input[j]
-/// Variable 0 = thread id (i), Variable 1 = reduce var (j).
-/// The bound is Add(Var(0), Const(1)) — depends on thread id!
+///  Inclusive scan kernel: out[i] = Σ_{j=0}^{i} input[j]
+///  Variable 0 = thread id (i), Variable 1 = reduce var (j).
+///  The bound is Add(Var(0), Const(1)) — depends on thread id!
 pub open spec fn scan_kernel(n: nat) -> KernelSpec {
     single_output_kernel(
         ArithExpr::Cmp(CmpOp::Lt, Box::new(ArithExpr::Var(0)), Box::new(ArithExpr::Const(n as int))),
         ArithExpr::Var(0),
         ArithExpr::Reduce(
-            1,  // reduce variable j
+            1,  //  reduce variable j
             Box::new(ArithExpr::Add(Box::new(ArithExpr::Var(0)), Box::new(ArithExpr::Const(1)))),
             Box::new(ArithExpr::Index(0, Box::new(ArithExpr::Var(1)))),
         ),
     )
 }
 
-/// Scan kernel correctness: connects to prefix_sum_spec.
+///  Scan kernel correctness: connects to prefix_sum_spec.
 pub proof fn lemma_scan_kernel_correct(
     input: Seq<int>, n: nat, i: nat,
 )
@@ -659,17 +659,17 @@ pub proof fn lemma_scan_kernel_correct(
     let inputs = seq![input];
     let body = ArithExpr::Index(0, Box::new(ArithExpr::Var(1)));
 
-    // The bound is Add(Var(0), Const(1)) which evaluates to i+1
+    //  The bound is Add(Var(0), Const(1)) which evaluates to i+1
     assert(arith_eval_with_arrays(&ArithExpr::Var(0), env, inputs) == i as int);
     assert(arith_eval_with_arrays(&ArithExpr::Const(1), env, inputs) == 1);
     crate::arith_expr::lemma_eval_with_arrays_add(
         &ArithExpr::Var(0), &ArithExpr::Const(1), env, inputs);
 
     lemma_scan_reduce_matches(input, i + 1, i, env, inputs, &body);
-    // i + 1 > 0, so the second ensures gives us the prefix_sum_spec equality
+    //  i + 1 > 0, so the second ensures gives us the prefix_sum_spec equality
 }
 
-/// Inductive helper: reduce_sum_arrays for scan body matches partial_sum.
+///  Inductive helper: reduce_sum_arrays for scan body matches partial_sum.
 proof fn lemma_scan_reduce_matches(
     input: Seq<int>, kk: nat, i: nat,
     env: Seq<int>, inputs: Seq<Seq<int>>,
@@ -702,14 +702,14 @@ proof fn lemma_scan_reduce_matches(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Bridge: gemm_partial_sum_int ↔ gemm_partial_sum (i64 version)
-// Connects kernel framework to existing verified exec GEMM.
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Bridge: gemm_partial_sum_int ↔ gemm_partial_sum (i64 version)
+//  Connects kernel framework to existing verified exec GEMM.
+//  ══════════════════════════════════════════════════════════════
 
-/// Bridge: kernel's gemm_partial_sum_int (Seq<int>) equals contraction's
-/// gemm_partial_sum (Seq<i64>) when the sequences have matching values.
-/// This connects the verified Kernel framework to the verified exec GEMM.
+///  Bridge: kernel's gemm_partial_sum_int (Seq<int>) equals contraction's
+///  gemm_partial_sum (Seq<i64>) when the sequences have matching values.
+///  This connects the verified Kernel framework to the verified exec GEMM.
 pub proof fn lemma_gemm_partial_sum_bridge(
     a_i64: Seq<i64>, b_i64: Seq<i64>,
     a_int: Seq<int>, b_int: Seq<int>,
@@ -732,8 +732,8 @@ pub proof fn lemma_gemm_partial_sum_bridge(
     if kk == 0 {
     } else {
         lemma_gemm_partial_sum_bridge(a_i64, b_i64, a_int, b_int, k_size, n, i, j, (kk - 1) as nat);
-        // Term: a_int[i*K + kk-1] * b_int[(kk-1)*N + j]
-        //     == (a_i64[i*K + kk-1] as int) * (b_i64[(kk-1)*N + j] as int)
+        //  Term: a_int[i*K + kk-1] * b_int[(kk-1)*N + j]
+        //      == (a_i64[i*K + kk-1] as int) * (b_i64[(kk-1)*N + j] as int)
         let a_off = i * k_size + (kk - 1);
         let b_off = (kk - 1) * n + j;
         assert(a_off < i * k_size + k_size);
@@ -745,11 +745,11 @@ pub proof fn lemma_gemm_partial_sum_bridge(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Guard correctness proofs
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Guard correctness proofs
+//  ══════════════════════════════════════════════════════════════
 
-/// Vector-add guard: active iff i < n.
+///  Vector-add guard: active iff i < n.
 pub proof fn lemma_vector_add_guard(n: nat, i: nat, inputs: Seq<Seq<int>>)
     ensures
         i < n ==> arith_eval_with_arrays(&vector_add_kernel(n).guard, thread_env_1d(i), inputs) != 0,
@@ -760,7 +760,7 @@ pub proof fn lemma_vector_add_guard(n: nat, i: nat, inputs: Seq<Seq<int>>)
         &CmpOp::Lt, &ArithExpr::Var(0), &ArithExpr::Const(n as int), env, inputs);
 }
 
-/// Dot product guard: active iff tid == 0.
+///  Dot product guard: active iff tid == 0.
 pub proof fn lemma_dot_product_guard(n: nat, tid: nat, inputs: Seq<Seq<int>>)
     ensures
         tid == 0 ==> arith_eval_with_arrays(&dot_product_kernel(n).guard, thread_env_1d(tid), inputs) != 0,
@@ -771,7 +771,7 @@ pub proof fn lemma_dot_product_guard(n: nat, tid: nat, inputs: Seq<Seq<int>>)
         &CmpOp::Eq, &ArithExpr::Var(0), &ArithExpr::Const(0), env, inputs);
 }
 
-/// Conv1d guard: active iff i < n - w + 1.
+///  Conv1d guard: active iff i < n - w + 1.
 pub proof fn lemma_conv1d_guard(n: nat, w: nat, i: nat, inputs: Seq<Seq<int>>)
     requires w > 0, w <= n,
     ensures
@@ -783,7 +783,7 @@ pub proof fn lemma_conv1d_guard(n: nat, w: nat, i: nat, inputs: Seq<Seq<int>>)
         &CmpOp::Lt, &ArithExpr::Var(0), &ArithExpr::Const((n - w + 1) as int), env, inputs);
 }
 
-/// Scan guard: active iff i < n.
+///  Scan guard: active iff i < n.
 pub proof fn lemma_scan_guard(n: nat, i: nat, inputs: Seq<Seq<int>>)
     ensures
         i < n ==> arith_eval_with_arrays(&scan_kernel(n).guard, thread_env_1d(i), inputs) != 0,
@@ -794,37 +794,37 @@ pub proof fn lemma_scan_guard(n: nat, i: nat, inputs: Seq<Seq<int>>)
         &CmpOp::Lt, &ArithExpr::Var(0), &ArithExpr::Const(n as int), env, inputs);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Scatter injectivity proofs
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Scatter injectivity proofs
+//  ══════════════════════════════════════════════════════════════
 
-/// Identity scatter is trivially injective.
+///  Identity scatter is trivially injective.
 pub proof fn lemma_identity_scatter_injective(i1: nat, i2: nat)
     requires i1 == i2,
     ensures thread_env_1d(i1) == thread_env_1d(i2),
 {}
 
-/// GEMM scatter i*N+j is injective for i < M, j < N (linear indexing).
+///  GEMM scatter i*N+j is injective for i < M, j < N (linear indexing).
 pub proof fn lemma_gemm_scatter_injective(n: nat, i1: nat, j1: nat, i2: nat, j2: nat)
     requires
         j1 < n, j2 < n, n > 0,
         i1 * n + j1 == i2 * n + j2,
     ensures i1 == i2 && j1 == j2,
 {
-    // i1 * n + j1 == i2 * n + j2
-    // Since j1 < n and j2 < n:
-    //   (i1 * n + j1) / n == i1 (since j1 < n)
-    //   (i2 * n + j2) / n == i2 (since j2 < n)
-    // So i1 == i2, then j1 == j2.
+    //  i1 * n + j1 == i2 * n + j2
+    //  Since j1 < n and j2 < n:
+    //    (i1 * n + j1) / n == i1 (since j1 < n)
+    //    (i2 * n + j2) / n == i2 (since j2 < n)
+    //  So i1 == i2, then j1 == j2.
     assert(i1 == i2) by (nonlinear_arith)
         requires i1 * n + j1 == i2 * n + j2, j1 < n, j2 < n, n > 0;
 }
 
-// ══════════════════════════════════════════════════════════════
-// Output bounds proofs
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Output bounds proofs
+//  ══════════════════════════════════════════════════════════════
 
-/// Identity scatter bounds: scatter(i) = i, so i < n means in bounds.
+///  Identity scatter bounds: scatter(i) = i, so i < n means in bounds.
 pub proof fn lemma_identity_scatter_bounds(n: nat, i: nat)
     requires i < n,
     ensures
@@ -832,7 +832,7 @@ pub proof fn lemma_identity_scatter_bounds(n: nat, i: nat)
         arith_eval(&ArithExpr::Var(0), thread_env_1d(i)) < n as int,
 {}
 
-/// GEMM scatter bounds: i*N+j < M*N when i < M and j < N.
+///  GEMM scatter bounds: i*N+j < M*N when i < M and j < N.
 pub proof fn lemma_gemm_scatter_bounds(m: nat, n: nat, i: nat, j: nat)
     requires i < m, j < n, n > 0,
     ensures
@@ -843,29 +843,29 @@ pub proof fn lemma_gemm_scatter_bounds(m: nat, n: nat, i: nat, j: nat)
         requires i < m, j < n, n > 0;
 }
 
-// ══════════════════════════════════════════════════════════════
-// Multi-output kernel example: swap
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Multi-output kernel example: swap
+//  ══════════════════════════════════════════════════════════════
 
-/// Swap kernel: out1[i] = b[i], out2[i] = a[i].
-/// Demonstrates multi-output with two OutputSpecs.
+///  Swap kernel: out1[i] = b[i], out2[i] = a[i].
+///  Demonstrates multi-output with two OutputSpecs.
 pub open spec fn swap_kernel(n: nat) -> KernelSpec {
     KernelSpec {
         guard: ArithExpr::Cmp(CmpOp::Lt, Box::new(ArithExpr::Var(0)), Box::new(ArithExpr::Const(n as int))),
         outputs: seq![
             OutputSpec {
                 scatter: ArithExpr::Var(0),
-                compute: ArithExpr::Index(1, Box::new(ArithExpr::Var(0))),  // out1 = b[i]
+                compute: ArithExpr::Index(1, Box::new(ArithExpr::Var(0))),  //  out1 = b[i]
             },
             OutputSpec {
                 scatter: ArithExpr::Var(0),
-                compute: ArithExpr::Index(0, Box::new(ArithExpr::Var(0))),  // out2 = a[i]
+                compute: ArithExpr::Index(0, Box::new(ArithExpr::Var(0))),  //  out2 = a[i]
             },
         ],
     }
 }
 
-/// Swap kernel output 0 correctness: out1[i] = b[i].
+///  Swap kernel output 0 correctness: out1[i] = b[i].
 pub proof fn lemma_swap_kernel_output0(
     a: Seq<int>, b: Seq<int>, n: nat, i: nat,
 )
@@ -882,7 +882,7 @@ pub proof fn lemma_swap_kernel_output0(
     assert(arith_eval_with_arrays(&ArithExpr::Var(0), env, inputs) == i as int);
 }
 
-/// Swap kernel output 1 correctness: out2[i] = a[i].
+///  Swap kernel output 1 correctness: out2[i] = a[i].
 pub proof fn lemma_swap_kernel_output1(
     a: Seq<int>, b: Seq<int>, n: nat, i: nat,
 )
@@ -899,4 +899,4 @@ pub proof fn lemma_swap_kernel_output1(
     assert(arith_eval_with_arrays(&ArithExpr::Var(0), env, inputs) == i as int);
 }
 
-} // verus!
+} //  verus!

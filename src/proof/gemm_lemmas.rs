@@ -18,12 +18,12 @@ use verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence;
 
 verus! {
 
-// ══════════════════════════════════════════════════════════════
-// Offset tiling consistency
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Offset tiling consistency
+//  ══════════════════════════════════════════════════════════════
 
-/// Flat and tiled offsets agree: for any (i, kk), the flat offset equals
-/// the tiled offset at tile (i/bm, kk/bk) element (i%bm, kk%bk).
+///  Flat and tiled offsets agree: for any (i, kk), the flat offset equals
+///  the tiled offset at tile (i/bm, kk/bk) element (i%bm, kk%bk).
 pub proof fn lemma_gemm_offset_tiling_consistent(
     a_layout: &LayoutSpec, m: nat, k: nat, bm: nat, bk: nat,
 )
@@ -40,7 +40,7 @@ pub proof fn lemma_gemm_offset_tiling_consistent(
         == gemm_a_tiled_offset(a_layout, bm, bk,
             i / bm, kk / bk, i % bm, kk % bk)
     by {
-        // By fundamental theorem of division: i == (i/bm)*bm + i%bm
+        //  By fundamental theorem of division: i == (i/bm)*bm + i%bm
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(i as int, bm as int);
         vstd::arithmetic::mul::lemma_mul_is_commutative(bm as int, (i / bm) as int);
         assert((i / bm) * bm + i % bm == i);
@@ -49,18 +49,18 @@ pub proof fn lemma_gemm_offset_tiling_consistent(
         vstd::arithmetic::mul::lemma_mul_is_commutative(bk as int, (kk / bk) as int);
         assert((kk / bk) * bk + kk % bk == kk);
 
-        // gemm_a_tiled_offset unfolds to gemm_a_offset(a_layout, ti*bm+ei, tk*bk+ek)
-        // With ti=i/bm, ei=i%bm, tk=kk/bk, ek=kk%bk:
-        // = gemm_a_offset(a_layout, (i/bm)*bm + i%bm, (kk/bk)*bk + kk%bk)
-        // = gemm_a_offset(a_layout, i, kk)
+        //  gemm_a_tiled_offset unfolds to gemm_a_offset(a_layout, ti*bm+ei, tk*bk+ek)
+        //  With ti=i/bm, ei=i%bm, tk=kk/bk, ek=kk%bk:
+        //  = gemm_a_offset(a_layout, (i/bm)*bm + i%bm, (kk/bk)*bk + kk%bk)
+        //  = gemm_a_offset(a_layout, i, kk)
     };
 }
 
-// ══════════════════════════════════════════════════════════════
-// K-reduction completeness
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  K-reduction completeness
+//  ══════════════════════════════════════════════════════════════
 
-/// Every K-index is covered by exactly one tile-element pair.
+///  Every K-index is covered by exactly one tile-element pair.
 pub proof fn lemma_k_reduction_complete(k_size: nat, bk: nat)
     requires
         padded_divide_admissible(k_size, bk),
@@ -75,21 +75,21 @@ pub proof fn lemma_k_reduction_complete(k_size: nat, bk: nat)
             k_size,
         )
     by {
-        // tile_for_index(kk, bk) = kk / bk
-        // elem_in_tile(kk, bk) = kk % bk
-        // tile_element_valid: (kk/bk)*bk + kk%bk < k_size
-        // By fundamental theorem: (kk/bk)*bk + kk%bk == kk
+        //  tile_for_index(kk, bk) = kk / bk
+        //  elem_in_tile(kk, bk) = kk % bk
+        //  tile_element_valid: (kk/bk)*bk + kk%bk < k_size
+        //  By fundamental theorem: (kk/bk)*bk + kk%bk == kk
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(kk as int, bk as int);
         vstd::arithmetic::mul::lemma_mul_is_commutative(bk as int, (kk / bk) as int);
         assert(tile_for_index(kk, bk) * bk + elem_in_tile(kk, bk) == kk);
     };
 }
 
-// ══════════════════════════════════════════════════════════════
-// C offset injectivity
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  C offset injectivity
+//  ══════════════════════════════════════════════════════════════
 
-/// For an injective rank-2 C layout, distinct (i,j) pairs produce distinct offsets.
+///  For an injective rank-2 C layout, distinct (i,j) pairs produce distinct offsets.
 pub proof fn lemma_gemm_c_offset_injective(
     c_layout: &LayoutSpec, m: nat, n: nat,
     i1: nat, j1: nat, i2: nat, j2: nat,
@@ -110,7 +110,7 @@ pub proof fn lemma_gemm_c_offset_injective(
     let coords1 = seq![i1, j1];
     let coords2 = seq![i2, j2];
 
-    // coords_in_bounds for both coordinate tuples
+    //  coords_in_bounds for both coordinate tuples
     assert forall|j: int| 0 <= j < coords1.len()
         implies #[trigger] coords1[j] < shape[j]
     by { if j == 0 {} else {} };
@@ -118,15 +118,15 @@ pub proof fn lemma_gemm_c_offset_injective(
         implies #[trigger] coords2[j] < shape[j]
     by { if j == 0 {} else {} };
 
-    // linearize produces in-bounds indices
+    //  linearize produces in-bounds indices
     lemma_linearize_bound(coords1, shape);
     lemma_linearize_bound(coords2, shape);
 
     let x1 = linearize(coords1, shape);
     let x2 = linearize(coords2, shape);
 
-    // x1 != x2: if they were equal, roundtrip would give coords1 =~= coords2,
-    // contradicting i1 != i2 || j1 != j2
+    //  x1 != x2: if they were equal, roundtrip would give coords1 =~= coords2,
+    //  contradicting i1 != i2 || j1 != j2
     if x1 == x2 {
         lemma_linearize_roundtrip(coords1, shape);
         lemma_linearize_roundtrip(coords2, shape);
@@ -134,12 +134,12 @@ pub proof fn lemma_gemm_c_offset_injective(
         assert(false);
     }
 
-    // By injectivity: offset(x1) != offset(x2)
-    // gemm_c_offset is defined as c_layout.offset(linearize(seq![i, j], shape))
+    //  By injectivity: offset(x1) != offset(x2)
+    //  gemm_c_offset is defined as c_layout.offset(linearize(seq![i, j], shape))
     assert(c_layout.offset(x1) != c_layout.offset(x2));
 }
 
-/// Helper: shape_size of a 2-element shape.
+///  Helper: shape_size of a 2-element shape.
 proof fn lemma_shape_size_2(a: nat, b: nat)
     requires a > 0, b > 0,
     ensures shape_size(seq![a, b]) == a * b,
@@ -149,11 +149,11 @@ proof fn lemma_shape_size_2(a: nat, b: nat)
     lemma_shape_size_single(b);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Tiled C disjointness
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Tiled C disjointness
+//  ══════════════════════════════════════════════════════════════
 
-/// Different CTAs produce different C offsets (no two CTAs write the same output element).
+///  Different CTAs produce different C offsets (no two CTAs write the same output element).
 pub proof fn lemma_gemm_tiled_c_disjoint(
     c_layout: &LayoutSpec, m: nat, n: nat, bm: nat, bn: nat,
     cm1: nat, cn1: nat, em1: nat, en1: nat,
@@ -182,18 +182,18 @@ pub proof fn lemma_gemm_tiled_c_disjoint(
     let i2 = cm2 * bm + em2;
     let j2 = cn2 * bn + en2;
 
-    // Global indices differ
+    //  Global indices differ
     lemma_gemm_cta_disjoint_mn(bm, bn, cm1, cn1, em1, en1, cm2, cn2, em2, en2);
-    // i1 != i2 || j1 != j2
+    //  i1 != i2 || j1 != j2
 
     lemma_gemm_c_offset_injective(c_layout, m, n, i1, j1, i2, j2);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Output coverage
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Output coverage
+//  ══════════════════════════════════════════════════════════════
 
-/// Every output element (i,j) with i<m, j<n is assigned to some CTA.
+///  Every output element (i,j) with i<m, j<n is assigned to some CTA.
 pub proof fn lemma_gemm_output_coverage(m: nat, n: nat, bm: nat, bn: nat, i: nat, j: nat)
     requires
         padded_divide_admissible(m, bm),
@@ -217,7 +217,7 @@ pub proof fn lemma_gemm_output_coverage(m: nat, n: nat, bm: nat, bn: nat, i: nat
     lemma_gemm_m_coverage(n, bn, j);
 }
 
-/// Coverage in flat form (no let bindings) — useful for quantifier matching.
+///  Coverage in flat form (no let bindings) — useful for quantifier matching.
 pub proof fn lemma_gemm_output_coverage_flat(m: nat, n: nat, bm: nat, bn: nat, i: nat, j: nat)
     requires
         padded_divide_admissible(m, bm),
@@ -234,11 +234,11 @@ pub proof fn lemma_gemm_output_coverage_flat(m: nat, n: nat, bm: nat, bn: nat, i
     lemma_gemm_m_coverage(n, bn, j);
 }
 
-// ══════════════════════════════════════════════════════════════
-// K-sum decomposition
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  K-sum decomposition
+//  ══════════════════════════════════════════════════════════════
 
-/// Sum of valid counts across all K-tiles equals k_size.
+///  Sum of valid counts across all K-tiles equals k_size.
 pub proof fn lemma_gemm_k_sum_decomposition(k_size: nat, bk: nat)
     requires
         padded_divide_admissible(k_size, bk),
@@ -248,16 +248,16 @@ pub proof fn lemma_gemm_k_sum_decomposition(k_size: nat, bk: nat)
     lemma_gemm_k_reduction_coverage(k_size, bk);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Three-level soundness
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Three-level soundness
+//  ══════════════════════════════════════════════════════════════
 
-/// CTA→warp→register partition covers all output elements, each assigned to exactly one
-/// (CTA, warp, register) triple.
+///  CTA→warp→register partition covers all output elements, each assigned to exactly one
+///  (CTA, warp, register) triple.
 ///
-/// For any output element (i, j), there exists a unique CTA (cta_m, cta_n) that handles it.
-/// Within that CTA, the warp and register partitions further subdivide work.
-/// Disjointness at each level ensures no element is computed twice.
+///  For any output element (i, j), there exists a unique CTA (cta_m, cta_n) that handles it.
+///  Within that CTA, the warp and register partitions further subdivide work.
+///  Disjointness at each level ensures no element is computed twice.
 pub proof fn lemma_gemm_three_level_soundness(
     m: nat, n: nat, bm: nat, bn: nat,
     i: nat, j: nat,
@@ -272,7 +272,7 @@ pub proof fn lemma_gemm_three_level_soundness(
         let cta_n = tile_for_index(j, bn);
         let elem_m = elem_in_tile(i, bm);
         let elem_n = elem_in_tile(j, bn);
-        // Element (i, j) is assigned to CTA (cta_m, cta_n)
+        //  Element (i, j) is assigned to CTA (cta_m, cta_n)
         &&& cta_m < num_tiles_ceil(m, bm)
         &&& cta_n < num_tiles_ceil(n, bn)
         &&& elem_m < bm
@@ -284,15 +284,15 @@ pub proof fn lemma_gemm_three_level_soundness(
     lemma_gemm_output_coverage(m, n, bm, bn, i, j);
 }
 
-// ══════════════════════════════════════════════════════════════
-// E2E GEMM correctness master lemma
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  E2E GEMM correctness master lemma
+//  ══════════════════════════════════════════════════════════════
 
-/// Master lemma tying together all GEMM correctness properties:
-/// 1. Every output (i,j) with i<m, j<n is covered by exactly one CTA
-/// 2. Each CTA's K-reduction covers all k_size elements (no gaps)
-/// 3. No two CTAs write to the same C element
-/// 4. Tiled offsets equal flat offsets (addressing is correct)
+///  Master lemma tying together all GEMM correctness properties:
+///  1. Every output (i,j) with i<m, j<n is covered by exactly one CTA
+///  2. Each CTA's K-reduction covers all k_size elements (no gaps)
+///  3. No two CTAs write to the same C element
+///  4. Tiled offsets equal flat offsets (addressing is correct)
 pub proof fn lemma_gemm_e2e_correctness(
     m: nat, n: nat, k: nat,
     bm: nat, bn: nat, bk: nat,
@@ -303,22 +303,22 @@ pub proof fn lemma_gemm_e2e_correctness(
         m <= c_layout.shape[0],
         n <= c_layout.shape[1],
     ensures
-        // Property 1: Output coverage — every (i,j) is handled by some CTA
+        //  Property 1: Output coverage — every (i,j) is handled by some CTA
         gemm_output_covered(m, n, bm, bn),
-        // Property 2: K-reduction completeness — all K elements covered
+        //  Property 2: K-reduction completeness — all K elements covered
         k_reduction_complete(k, bk),
-        // Property 3: Output injectivity — distinct (i,j) pairs write distinct C elements
+        //  Property 3: Output injectivity — distinct (i,j) pairs write distinct C elements
         gemm_output_injective(c_layout, m, n),
-        // Property 4: Tiling consistency — tiled offsets equal flat offsets for A
+        //  Property 4: Tiling consistency — tiled offsets equal flat offsets for A
         gemm_offset_tiling_consistent(a_layout, m, k, bm, bk),
 {
-    // Unfold admissibility for sub-lemmas
+    //  Unfold admissibility for sub-lemmas
     assert(padded_divide_admissible(m, bm));
     assert(padded_divide_admissible(n, bn));
     assert(padded_divide_admissible(k, bk));
     assert(c_layout.is_injective());
 
-    // Property 1: Coverage — use single-trigger helper for (i,j) pair
+    //  Property 1: Coverage — use single-trigger helper for (i,j) pair
     assert forall|i: nat, j: nat| i < m && j < n implies {
         let pair = #[trigger] gemm_cta_for(i, j, bm, bn);
         &&& pair.0 < num_tiles_ceil(m, bm)
@@ -329,10 +329,10 @@ pub proof fn lemma_gemm_e2e_correctness(
         lemma_gemm_output_coverage_flat(m, n, bm, bn, i, j);
     };
 
-    // Property 2: K-reduction
+    //  Property 2: K-reduction
     lemma_k_reduction_complete(k, bk);
 
-    // Property 3: Output injectivity
+    //  Property 3: Output injectivity
     assert forall|i1: nat, j1: nat, i2: nat, j2: nat|
         i1 < m && j1 < n && i2 < m && j2 < n
         && (i1 != i2 || j1 != j2)
@@ -343,15 +343,15 @@ pub proof fn lemma_gemm_e2e_correctness(
         lemma_gemm_c_offset_injective(c_layout, m, n, i1, j1, i2, j2);
     };
 
-    // Property 4: Tiling consistency
+    //  Property 4: Tiling consistency
     lemma_gemm_offset_tiling_consistent(a_layout, m, k, bm, bk);
 }
 
-// ══════════════════════════════════════════════════════════════
-// B-matrix tiling consistency
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  B-matrix tiling consistency
+//  ══════════════════════════════════════════════════════════════
 
-/// Flat and tiled B-offsets agree (mirrors A-matrix proof).
+///  Flat and tiled B-offsets agree (mirrors A-matrix proof).
 pub proof fn lemma_gemm_b_offset_tiling_consistent(
     b_layout: &LayoutSpec, k: nat, n: nat, bk: nat, bn: nat,
 )
@@ -378,11 +378,11 @@ pub proof fn lemma_gemm_b_offset_tiling_consistent(
     };
 }
 
-// ══════════════════════════════════════════════════════════════
-// Feature 1: SMEM layout proofs
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Feature 1: SMEM layout proofs
+//  ══════════════════════════════════════════════════════════════
 
-/// Column-major layouts have non-negative strides (strides are prefix products of nat shape).
+///  Column-major layouts have non-negative strides (strides are prefix products of nat shape).
 pub proof fn lemma_column_major_nonneg_strides(shape: Seq<nat>)
     requires shape_valid(shape),
     ensures make_column_major(shape).non_negative_strides(),
@@ -394,11 +394,11 @@ pub proof fn lemma_column_major_nonneg_strides(shape: Seq<nat>)
     assert forall|i: int| 0 <= i < layout.stride.len() implies #[trigger] layout.stride[i] >= 0
     by {
         crate::proof::inverse_lemmas::lemma_column_major_stride_value(shape, i as nat);
-        // stride[i] == shape_size(shape.take(i)) >= 1 for valid shapes
+        //  stride[i] == shape_size(shape.take(i)) >= 1 for valid shapes
     };
 }
 
-/// SM80 smem A-layout is valid with non-negative strides.
+///  SM80 smem A-layout is valid with non-negative strides.
 pub proof fn lemma_smem_a_layout_valid(bm: nat, bk: nat)
     requires bm > 0, bk > 0,
     ensures
@@ -413,7 +413,7 @@ pub proof fn lemma_smem_a_layout_valid(bm: nat, bk: nat)
     lemma_column_major_nonneg_strides(shape);
 }
 
-/// SM80 smem A-layout is injective.
+///  SM80 smem A-layout is injective.
 pub proof fn lemma_smem_a_layout_injective(bm: nat, bk: nat)
     requires bm > 0, bk > 0,
     ensures smem_a_layout(bm, bk).is_injective(),
@@ -425,7 +425,7 @@ pub proof fn lemma_smem_a_layout_injective(bm: nat, bk: nat)
     crate::proof::injectivity_lemmas::lemma_column_major_injective(shape);
 }
 
-/// SM80 smem B-layout is valid with non-negative strides.
+///  SM80 smem B-layout is valid with non-negative strides.
 pub proof fn lemma_smem_b_layout_valid(bk: nat, bn: nat)
     requires bk > 0, bn > 0,
     ensures
@@ -440,7 +440,7 @@ pub proof fn lemma_smem_b_layout_valid(bk: nat, bn: nat)
     lemma_column_major_nonneg_strides(shape);
 }
 
-/// SM80 smem B-layout is injective.
+///  SM80 smem B-layout is injective.
 pub proof fn lemma_smem_b_layout_injective(bk: nat, bn: nat)
     requires bk > 0, bn > 0,
     ensures smem_b_layout(bk, bn).is_injective(),
@@ -452,14 +452,14 @@ pub proof fn lemma_smem_b_layout_injective(bk: nat, bn: nat)
     crate::proof::injectivity_lemmas::lemma_column_major_injective(shape);
 }
 
-/// SM80 swizzle params are admissible: B=3, M=0, S=3, and S >= B.
+///  SM80 swizzle params are admissible: B=3, M=0, S=3, and S >= B.
 pub proof fn lemma_sm80_swizzle_admissible()
     ensures swizzle_admissible(sm80_smem_swizzle_b(), sm80_smem_swizzle_m(), sm80_smem_swizzle_s()),
 {
-    // B=3 > 0, S=3 >= B=3
+    //  B=3 > 0, S=3 >= B=3
 }
 
-/// Swizzled SMEM layout has distinct offsets when admissible.
+///  Swizzled SMEM layout has distinct offsets when admissible.
 pub proof fn lemma_smem_swizzle_distinct(
     base: &LayoutSpec, b: nat, m: nat, s: nat,
     count: nat,
@@ -473,20 +473,20 @@ pub proof fn lemma_smem_swizzle_distinct(
     crate::proof::swizzle_lemmas::lemma_swizzled_offset_injective(base, b, m, s);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Feature 2: Copy atom proofs
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Feature 2: Copy atom proofs
+//  ══════════════════════════════════════════════════════════════
 
-/// G2S copy atom is a valid copy atom.
+///  G2S copy atom is a valid copy atom.
 pub proof fn lemma_g2s_copy_atom_valid(access_width: nat)
     requires access_width > 0,
     ensures copy_atom_valid(&g2s_copy_atom(access_width), access_width),
 {
-    // g2s_copy_atom(access_width) = make_identity(access_width) = {shape: [access_width], stride: [1]}
-    // copy_atom_valid checks: valid, rank==1, shape[0]==access_width, stride[0]==1
+    //  g2s_copy_atom(access_width) = make_identity(access_width) = {shape: [access_width], stride: [1]}
+    //  copy_atom_valid checks: valid, rank==1, shape[0]==access_width, stride[0]==1
 }
 
-/// G2S tiled copy is valid.
+///  G2S tiled copy is valid.
 pub proof fn lemma_g2s_tiled_copy_valid(
     access_width: nat, thr: &LayoutSpec, val: &LayoutSpec,
 )
@@ -496,7 +496,7 @@ pub proof fn lemma_g2s_tiled_copy_valid(
     lemma_tiled_copy_valid(&g2s_copy_atom(access_width), thr, val);
 }
 
-/// G2S tiled copy is injective (no two threads load the same element).
+///  G2S tiled copy is injective (no two threads load the same element).
 pub proof fn lemma_g2s_tiled_copy_injective(
     access_width: nat, thr: &LayoutSpec, val: &LayoutSpec,
 )
@@ -509,12 +509,12 @@ pub proof fn lemma_g2s_tiled_copy_injective(
         g2s_tiled_copy(access_width, thr, val).is_injective(),
 {
     let atom = g2s_copy_atom(access_width);
-    // atom = make_identity(access_width), which is injective and has non-neg strides
+    //  atom = make_identity(access_width), which is injective and has non-neg strides
     crate::proof::injectivity_lemmas::lemma_identity_injective(access_width);
     lemma_tiled_copy_injective(&atom, thr, val);
 }
 
-/// G2S tiled copy covers the full tile.
+///  G2S tiled copy covers the full tile.
 pub proof fn lemma_g2s_tiled_copy_coverage(
     access_width: nat, thr: &LayoutSpec, val: &LayoutSpec,
     tile_size: nat,
@@ -527,20 +527,20 @@ pub proof fn lemma_g2s_tiled_copy_coverage(
 {
     let atom = g2s_copy_atom(access_width);
     lemma_tiled_copy_size(&atom, thr, val);
-    // size(tiled_copy) == atom_size * thr_size * val_size
+    //  size(tiled_copy) == atom_size * thr_size * val_size
     lemma_shape_size_single(access_width);
-    // atom_size == access_width (since atom = make_identity(access_width) = {[access_width]:[1]})
+    //  atom_size == access_width (since atom = make_identity(access_width) = {[access_width]:[1]})
     assert(shape_size(atom.shape) == access_width);
 }
 
-/// S2R copy atom is a valid copy atom.
+///  S2R copy atom is a valid copy atom.
 pub proof fn lemma_s2r_copy_atom_valid(access_width: nat)
     requires access_width > 0,
     ensures copy_atom_valid(&s2r_copy_atom(access_width), access_width),
 {
 }
 
-/// S2R tiled copy is valid.
+///  S2R tiled copy is valid.
 pub proof fn lemma_s2r_tiled_copy_valid(
     access_width: nat, thr: &LayoutSpec, val: &LayoutSpec,
 )
@@ -550,7 +550,7 @@ pub proof fn lemma_s2r_tiled_copy_valid(
     lemma_tiled_copy_valid(&s2r_copy_atom(access_width), thr, val);
 }
 
-/// S2R tiled copy is injective.
+///  S2R tiled copy is injective.
 pub proof fn lemma_s2r_tiled_copy_injective(
     access_width: nat, thr: &LayoutSpec, val: &LayoutSpec,
 )
@@ -567,7 +567,7 @@ pub proof fn lemma_s2r_tiled_copy_injective(
     lemma_tiled_copy_injective(&atom, thr, val);
 }
 
-/// S2R tiled copy covers the full fragment.
+///  S2R tiled copy covers the full fragment.
 pub proof fn lemma_s2r_tiled_copy_coverage(
     access_width: nat, thr: &LayoutSpec, val: &LayoutSpec,
     tile_size: nat,
@@ -584,21 +584,21 @@ pub proof fn lemma_s2r_tiled_copy_coverage(
     assert(shape_size(atom.shape) == access_width);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Feature 3: Pipeline composition proofs
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Feature 3: Pipeline composition proofs
+//  ══════════════════════════════════════════════════════════════
 
-/// G2S covers the A-tile.
+///  G2S covers the A-tile.
 pub proof fn lemma_g2s_covers_a_tile(
     g2s_a: &LayoutSpec, smem_a: &LayoutSpec, bm: nat, bk: nat,
 )
     requires g2s_stage_valid(g2s_a, smem_a, bm, bk),
     ensures copy_covers_tile(g2s_a, bm * bk),
 {
-    // Direct from g2s_stage_valid: g2s_a.size() >= bm * bk
+    //  Direct from g2s_stage_valid: g2s_a.size() >= bm * bk
 }
 
-/// G2S covers the B-tile.
+///  G2S covers the B-tile.
 pub proof fn lemma_g2s_covers_b_tile(
     g2s_b: &LayoutSpec, smem_b: &LayoutSpec, bk: nat, bn: nat,
 )
@@ -607,7 +607,7 @@ pub proof fn lemma_g2s_covers_b_tile(
 {
 }
 
-/// S2R loads feed the MMA.
+///  S2R loads feed the MMA.
 pub proof fn lemma_s2r_covers_mma(
     s2r: &LayoutSpec, mma_thr: &LayoutSpec, mma_val: &LayoutSpec,
 )
@@ -616,7 +616,7 @@ pub proof fn lemma_s2r_covers_mma(
 {
 }
 
-/// Master pipeline correctness: all stages compose_linear correctly.
+///  Master pipeline correctness: all stages compose_linear correctly.
 pub proof fn lemma_gemm_pipeline_correct(
     m: nat, n: nat, k: nat,
     bm: nat, bn: nat, bk: nat,
@@ -633,12 +633,12 @@ pub proof fn lemma_gemm_pipeline_correct(
         m <= c_layout.shape[0],
         n <= c_layout.shape[1],
     ensures
-        // E2E kernel correctness
+        //  E2E kernel correctness
         gemm_output_covered(m, n, bm, bn),
         k_reduction_complete(k, bk),
         gemm_output_injective(c_layout, m, n),
         gemm_offset_tiling_consistent(a_layout, m, k, bm, bk),
-        // Stage correctness
+        //  Stage correctness
         gemm_b_offset_tiling_consistent(b_layout, k, n, bk, bn),
         copy_covers_tile(g2s_a, bm * bk),
         copy_covers_tile(g2s_b, bk * bn),
@@ -649,24 +649,24 @@ pub proof fn lemma_gemm_pipeline_correct(
     lemma_g2s_covers_b_tile(g2s_b, smem_b, bk, bn);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Feature 5: Tensor contraction proofs
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Feature 5: Tensor contraction proofs
+//  ══════════════════════════════════════════════════════════════
 
-/// GEMM contraction spec has valid mode sets for rank-2 inputs.
+///  GEMM contraction spec has valid mode sets for rank-2 inputs.
 pub proof fn lemma_gemm_contraction_valid()
     ensures contraction_mode_sets_valid(&gemm_as_contraction(), 2, 2),
 {
     let spec = gemm_as_contraction();
-    // batch: 0 + contraction: 1 + free: 1 = 2 for A
-    // batch: 0 + contraction: 1 + free: 1 = 2 for B
+    //  batch: 0 + contraction: 1 + free: 1 = 2 for A
+    //  batch: 0 + contraction: 1 + free: 1 = 2 for B
     assert(spec.contraction_modes_a[0] < 2);
     assert(spec.contraction_modes_b[0] < 2);
     assert(spec.free_modes_a[0] < 2);
     assert(spec.free_modes_b[0] < 2);
 }
 
-/// GEMM contraction shapes match when K dimensions agree.
+///  GEMM contraction shapes match when K dimensions agree.
 pub proof fn lemma_gemm_contraction_shapes_match(a_shape: Seq<nat>, b_shape: Seq<nat>)
     requires
         a_shape.len() == 2,
@@ -676,15 +676,15 @@ pub proof fn lemma_gemm_contraction_shapes_match(a_shape: Seq<nat>, b_shape: Seq
         contraction_shapes_match(&gemm_as_contraction(), &a_shape, &b_shape),
 {
     let spec = gemm_as_contraction();
-    // Batch: gather_shape(a, []) =~= gather_shape(b, []) — both empty
+    //  Batch: gather_shape(a, []) =~= gather_shape(b, []) — both empty
     assert(gather_shape(&a_shape, &spec.batch_modes_a) =~=
            gather_shape(&b_shape, &spec.batch_modes_b));
-    // Contraction: gather_shape(a, [1]) = [a_shape[1]], gather_shape(b, [0]) = [b_shape[0]]
+    //  Contraction: gather_shape(a, [1]) = [a_shape[1]], gather_shape(b, [0]) = [b_shape[0]]
     assert(gather_shape(&a_shape, &spec.contraction_modes_a) =~=
            gather_shape(&b_shape, &spec.contraction_modes_b));
 }
 
-/// GEMM contraction output shape is (M, N).
+///  GEMM contraction output shape is (M, N).
 pub proof fn lemma_gemm_contraction_output_shape(a_shape: Seq<nat>, b_shape: Seq<nat>)
     requires
         a_shape.len() == 2,
@@ -694,10 +694,10 @@ pub proof fn lemma_gemm_contraction_output_shape(a_shape: Seq<nat>, b_shape: Seq
         =~= seq![a_shape[0], b_shape[1]],
 {
     let spec = gemm_as_contraction();
-    // batch = gather(a, []) = []
-    // free_a = gather(a, [0]) = [a_shape[0]]
-    // free_b = gather(b, [1]) = [b_shape[1]]
-    // output = [] ++ [a_shape[0]] ++ [b_shape[1]] = [a_shape[0], b_shape[1]]
+    //  batch = gather(a, []) = []
+    //  free_a = gather(a, [0]) = [a_shape[0]]
+    //  free_b = gather(b, [1]) = [b_shape[1]]
+    //  output = [] ++ [a_shape[0]] ++ [b_shape[1]] = [a_shape[0], b_shape[1]]
     let batch = gather_shape(&a_shape, &spec.batch_modes_a);
     let free_a = gather_shape(&a_shape, &spec.free_modes_a);
     let free_b = gather_shape(&b_shape, &spec.free_modes_b);
@@ -707,7 +707,7 @@ pub proof fn lemma_gemm_contraction_output_shape(a_shape: Seq<nat>, b_shape: Seq
     assert(batch.add(free_a).add(free_b) =~= seq![a_shape[0], b_shape[1]]);
 }
 
-/// Batched GEMM contraction spec has valid mode sets for rank-3 inputs.
+///  Batched GEMM contraction spec has valid mode sets for rank-3 inputs.
 pub proof fn lemma_batched_gemm_contraction_valid()
     ensures contraction_mode_sets_valid(&batched_gemm_as_contraction(), 3, 3),
 {
@@ -720,11 +720,11 @@ pub proof fn lemma_batched_gemm_contraction_valid()
     assert(spec.free_modes_b[0] < 3);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Contraction proofs (Feature 5 Round 2)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Contraction proofs (Feature 5 Round 2)
+//  ══════════════════════════════════════════════════════════════
 
-/// Contraction admissibility for GEMM case.
+///  Contraction admissibility for GEMM case.
 pub proof fn lemma_gemm_contraction_admissible(a_shape: Seq<nat>, b_shape: Seq<nat>)
     requires
         a_shape.len() == 2,
@@ -737,7 +737,7 @@ pub proof fn lemma_gemm_contraction_admissible(a_shape: Seq<nat>, b_shape: Seq<n
     lemma_gemm_contraction_shapes_match(a_shape, b_shape);
 }
 
-/// GEMM reduction size = K (a_shape[1]).
+///  GEMM reduction size = K (a_shape[1]).
 pub proof fn lemma_gemm_reduction_size(a_shape: Seq<nat>)
     requires a_shape.len() == 2,
     ensures contraction_reduction_size(&gemm_as_contraction(), &a_shape) == a_shape[1],
@@ -745,24 +745,24 @@ pub proof fn lemma_gemm_reduction_size(a_shape: Seq<nat>)
     let spec = gemm_as_contraction();
     assert(spec.contraction_modes_a =~= seq![1nat]);
     let modes = spec.contraction_modes_a;
-    // gathered_product(a_shape, [1]) unfolds:
-    // modes.len() == 1, modes.last() == 1, modes.drop_last() == []
-    // = a_shape[1] * gathered_product(a_shape, [])
-    // = a_shape[1] * 1 = a_shape[1]
+    //  gathered_product(a_shape, [1]) unfolds:
+    //  modes.len() == 1, modes.last() == 1, modes.drop_last() == []
+    //  = a_shape[1] * gathered_product(a_shape, [])
+    //  = a_shape[1] * 1 = a_shape[1]
     assert(modes.len() == 1);
     assert(modes.last() == 1nat);
     let dl = modes.drop_last();
     assert(dl =~= Seq::<nat>::empty());
     assert(dl.len() == 0);
-    // Force Z3 to see the base case
+    //  Force Z3 to see the base case
     assert(gathered_product(&a_shape, &dl) == 1nat);
-    // Now the recursive step
+    //  Now the recursive step
     assert(gathered_product(&a_shape, &modes) ==
         a_shape[modes.last() as int] * gathered_product(&a_shape, &dl));
     vstd::arithmetic::mul::lemma_mul_basics(a_shape[1] as int);
 }
 
-/// gathered_product of single mode = shape[mode].
+///  gathered_product of single mode = shape[mode].
 pub proof fn lemma_gathered_product_single(shape: &Seq<nat>, mode: nat)
     requires mode < shape.len(),
     ensures gathered_product(shape, &seq![mode]) == shape[mode as int],
@@ -779,11 +779,11 @@ pub proof fn lemma_gathered_product_single(shape: &Seq<nat>, mode: nat)
     vstd::arithmetic::mul::lemma_mul_basics(shape[mode as int] as int);
 }
 
-// ══════════════════════════════════════════════════════════════
-// MAC correctness proofs (Feature 3 Round 2)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  MAC correctness proofs (Feature 3 Round 2)
+//  ══════════════════════════════════════════════════════════════
 
-/// MAC completeness: all K elements produce offset pairs.
+///  MAC completeness: all K elements produce offset pairs.
 pub proof fn lemma_mac_complete(
     a_layout: &LayoutSpec, b_layout: &LayoutSpec,
     i: nat, j: nat, k_size: nat,
@@ -791,11 +791,11 @@ pub proof fn lemma_mac_complete(
     requires a_layout.rank() == 2, b_layout.rank() == 2,
     ensures mac_complete(a_layout, b_layout, i, j, k_size),
 {
-    // mac_offset_pairs(a, b, i, j, 0, k_size) = Seq::new(k_size, ...)
-    // len == k_size by definition of Seq::new
+    //  mac_offset_pairs(a, b, i, j, 0, k_size) = Seq::new(k_size, ...)
+    //  len == k_size by definition of Seq::new
 }
 
-/// Tiled MAC consistency: K-tile pairs match global pairs.
+///  Tiled MAC consistency: K-tile pairs match global pairs.
 pub proof fn lemma_tiled_mac_consistent(
     a_layout: &LayoutSpec, b_layout: &LayoutSpec,
     i: nat, j: nat, k_tile: nat, bk: nat, k_size: nat,
@@ -814,17 +814,17 @@ pub proof fn lemma_tiled_mac_consistent(
         #[trigger] mac_offset_pairs(a_layout, b_layout, i, j, k_start, k_end)[idx as int]
         == mac_offset_pairs(a_layout, b_layout, i, j, 0, k_size)[(k_start + idx) as int]
     by {
-        // LHS = (gemm_a_offset(a, i, k_start + idx), gemm_b_offset(b, k_start + idx, j))
-        // RHS = (gemm_a_offset(a, i, 0 + (k_start + idx)), gemm_b_offset(b, 0 + (k_start + idx), j))
-        // These are identical.
+        //  LHS = (gemm_a_offset(a, i, k_start + idx), gemm_b_offset(b, k_start + idx, j))
+        //  RHS = (gemm_a_offset(a, i, 0 + (k_start + idx)), gemm_b_offset(b, 0 + (k_start + idx), j))
+        //  These are identical.
     };
 }
 
-// ══════════════════════════════════════════════════════════════
-// Data-level MAC correctness proofs (Feature 1 Round 3)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Data-level MAC correctness proofs (Feature 1 Round 3)
+//  ══════════════════════════════════════════════════════════════
 
-/// MAC value is zero for empty range.
+///  MAC value is zero for empty range.
 pub proof fn lemma_mac_empty<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -839,7 +839,7 @@ pub proof fn lemma_mac_empty<R: Ring>(
     );
 }
 
-/// MAC single element: sum over [k, k+1) equals a_val(i,k) * b_val(k,j).
+///  MAC single element: sum over [k, k+1) equals a_val(i,k) * b_val(k,j).
 pub proof fn lemma_mac_single<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -855,8 +855,8 @@ pub proof fn lemma_mac_single<R: Ring>(
     );
 }
 
-/// MAC split: full MAC splits at any k_mid.
-/// gemm_mac_value(0, k_size) ≡ tiled_mac(0, k_mid) + tiled_mac(k_mid, k_size).
+///  MAC split: full MAC splits at any k_mid.
+///  gemm_mac_value(0, k_size) ≡ tiled_mac(0, k_mid) + tiled_mac(k_mid, k_size).
 pub proof fn lemma_mac_split<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -875,9 +875,9 @@ pub proof fn lemma_mac_split<R: Ring>(
     );
 }
 
-/// Predicated MAC equals real MAC when k_end <= k_size (all valid).
-/// When every element in [k_start, k_end) is valid (k < k_size), the predicated
-/// MAC equals the tiled MAC (the conditional is always true).
+///  Predicated MAC equals real MAC when k_end <= k_size (all valid).
+///  When every element in [k_start, k_end) is valid (k < k_size), the predicated
+///  MAC equals the tiled MAC (the conditional is always true).
 pub proof fn lemma_predicated_mac_all_valid<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -890,8 +890,8 @@ pub proof fn lemma_predicated_mac_all_valid<R: Ring>(
         gemm_predicated_mac_value::<R>(a_val, b_val, i, j, k_start, k_end, k_size).eqv(
             gemm_tiled_mac_value::<R>(a_val, b_val, i, j, k_start, k_end)),
 {
-    // All elements in [k_start, k_end) have k < k_size, so predicate is always true.
-    // The two summands are pointwise eqv → sum congruence.
+    //  All elements in [k_start, k_end) have k < k_size, so predicate is always true.
+    //  The two summands are pointwise eqv → sum congruence.
     let f = |k: int|
         if (k as nat) < k_size {
             a_val(i, k as nat).mul(b_val(k as nat, j))
@@ -903,9 +903,9 @@ pub proof fn lemma_predicated_mac_all_valid<R: Ring>(
     assert forall|k: int| k_start as int <= k < k_end as int
     implies (#[trigger] f(k)).eqv(g(k))
     by {
-        // k >= k_start >= 0 and k < k_end <= k_size, so (k as nat) < k_size
+        //  k >= k_start >= 0 and k < k_end <= k_size, so (k as nat) < k_size
         assert((k as nat) < k_size);
-        // f(k) == g(k) definitionally, so eqv by reflexivity
+        //  f(k) == g(k) definitionally, so eqv by reflexivity
         R::axiom_eqv_reflexive(g(k));
     };
     verus_algebra::summation::lemma_sum_congruence::<R>(
@@ -913,7 +913,7 @@ pub proof fn lemma_predicated_mac_all_valid<R: Ring>(
     );
 }
 
-/// Predicated MAC for tail beyond k_size: all terms are zero.
+///  Predicated MAC for tail beyond k_size: all terms are zero.
 pub proof fn lemma_predicated_mac_tail_zero<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -926,7 +926,7 @@ pub proof fn lemma_predicated_mac_tail_zero<R: Ring>(
         gemm_predicated_mac_value::<R>(a_val, b_val, i, j, k_start, k_end, k_size)
             .eqv(R::zero()),
 {
-    // All elements have k >= k_start >= k_size, so predicate is always false → zero terms.
+    //  All elements have k >= k_start >= k_size, so predicate is always false → zero terms.
     let f = |k: int|
         if (k as nat) < k_size {
             a_val(i, k as nat).mul(b_val(k as nat, j))
@@ -944,7 +944,7 @@ pub proof fn lemma_predicated_mac_tail_zero<R: Ring>(
     verus_algebra::summation::lemma_sum_congruence::<R>(
         f, z, k_start as int, k_end as int,
     );
-    // sum(f) ≡ sum(z). Now show sum(z) ≡ zero.
+    //  sum(f) ≡ sum(z). Now show sum(z) ≡ zero.
     if k_start < k_end {
         lemma_sum_of_zeros::<R>(z, k_start as int, k_end as int);
         R::axiom_eqv_transitive(
@@ -953,12 +953,12 @@ pub proof fn lemma_predicated_mac_tail_zero<R: Ring>(
             R::zero(),
         );
     } else {
-        // k_start == k_end, sum over empty range is zero by definition
+        //  k_start == k_end, sum over empty range is zero by definition
         verus_algebra::summation::lemma_sum_empty::<R>(f, k_start as int, k_end as int);
     }
 }
 
-/// Helper: sum of constant zero is zero.
+///  Helper: sum of constant zero is zero.
 proof fn lemma_sum_of_zeros<R: Ring>(
     z: spec_fn(int) -> R,
     lo: int, hi: int,
@@ -974,20 +974,20 @@ proof fn lemma_sum_of_zeros<R: Ring>(
         verus_algebra::summation::lemma_sum_empty::<R>(z, lo, hi);
     } else {
         verus_algebra::summation::lemma_sum_peel_last::<R>(z, lo, hi);
-        // sum(z, lo, hi) ≡ sum(z, lo, hi-1) + z(hi-1)
+        //  sum(z, lo, hi) ≡ sum(z, lo, hi-1) + z(hi-1)
         lemma_sum_of_zeros::<R>(z, lo, hi - 1);
-        // sum(z, lo, hi-1) ≡ zero
-        // z(hi-1) ≡ zero
+        //  sum(z, lo, hi-1) ≡ zero
+        //  z(hi-1) ≡ zero
         assert(z(hi - 1).eqv(R::zero()));
-        // zero + zero ≡ zero
+        //  zero + zero ≡ zero
         R::axiom_add_zero_right(R::zero());
-        // sum(z, lo, hi) ≡ sum(z, lo, hi-1) + z(hi-1) ≡ zero + zero ≡ zero
-        // Need: sum(z, lo, hi-1).add(z(hi-1)) ≡ zero.add(zero) ≡ zero
+        //  sum(z, lo, hi) ≡ sum(z, lo, hi-1) + z(hi-1) ≡ zero + zero ≡ zero
+        //  Need: sum(z, lo, hi-1).add(z(hi-1)) ≡ zero.add(zero) ≡ zero
         verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence::<R>(
             sum::<R>(z, lo, hi - 1), R::zero(),
             z(hi - 1), R::zero(),
         );
-        // sum(z, lo, hi-1).add(z(hi-1)) ≡ zero.add(zero)
+        //  sum(z, lo, hi-1).add(z(hi-1)) ≡ zero.add(zero)
         R::axiom_eqv_transitive(
             sum::<R>(z, lo, hi),
             sum::<R>(z, lo, hi - 1).add(z(hi - 1)),
@@ -1001,11 +1001,11 @@ proof fn lemma_sum_of_zeros<R: Ring>(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Epilogue store proofs (Feature 4 Round 3)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Epilogue store proofs (Feature 4 Round 3)
+//  ══════════════════════════════════════════════════════════════
 
-/// Epilogue store in-bounds when C tensor is valid and indices in range.
+///  Epilogue store in-bounds when C tensor is valid and indices in range.
 pub proof fn lemma_epilogue_store_in_bounds(
     c_layout: &LayoutSpec, c_data_size: nat, i: nat, j: nat,
 )
@@ -1027,19 +1027,19 @@ pub proof fn lemma_epilogue_store_in_bounds(
     assert(x < s0 * s1) by (nonlinear_arith)
         requires i < s0, j < s1, x == i + j * s0, s0 > 0, s1 > 0;
 
-    // Bridge x to (i,j) via div/mod
+    //  Bridge x to (i,j) via div/mod
     vstd::arithmetic::mul::lemma_mul_is_commutative(j as int, s0 as int);
     assert(x == i + s0 * j);
     crate::proof::integer_helpers::lemma_div_mod_decompose(i, j, s0);
     assert(x % s0 == i);
     assert(x / s0 == j);
 
-    // offset(x) = coords[0]*stride[0] + coords[1]*stride[1]
+    //  offset(x) = coords[0]*stride[0] + coords[1]*stride[1]
     lemma_offset_rank2(c_layout, x);
     let coords = delinearize(x, c_layout.shape);
-    // coords[0] = x % s0 = i
+    //  coords[0] = x % s0 = i
     assert(coords[0] == i);
-    // coords[1]: delinearize second level
+    //  coords[1]: delinearize second level
     assert(c_layout.shape.first() == s0);
     assert(c_layout.shape.skip(1) =~= seq![s1]);
     assert(seq![s1].first() == s1);
@@ -1053,7 +1053,7 @@ pub proof fn lemma_epilogue_store_in_bounds(
     assert(coords =~= seq![i].add(inner));
     assert(coords[1] == j);
 
-    // Bridge: x == linearize(seq![i, j], c_layout.shape)
+    //  Bridge: x == linearize(seq![i, j], c_layout.shape)
     assert(seq![s1].skip(1) =~= Seq::<nat>::empty());
     assert(seq![j].skip(1) =~= Seq::<nat>::empty());
     assert(linearize(Seq::<nat>::empty(), Seq::<nat>::empty()) == 0nat);
@@ -1063,15 +1063,15 @@ pub proof fn lemma_epilogue_store_in_bounds(
     assert(seq![i, j].skip(1) =~= seq![j]);
     assert(linearize(seq![i, j], c_layout.shape) == x);
 
-    // Now: offset(x) = i*stride[0] + j*stride[1] = gemm_c_offset(c_layout, i, j)
+    //  Now: offset(x) = i*stride[0] + j*stride[1] = gemm_c_offset(c_layout, i, j)
     assert(c_layout.offset(x) == gemm_c_offset(c_layout, i, j));
 
-    // offset bounds
+    //  offset bounds
     crate::proof::offset_lemmas::lemma_offset_nonneg(*c_layout, x);
     crate::proof::offset_lemmas::lemma_offset_upper_bound(*c_layout, x);
 }
 
-/// Predicated epilogue is correct: safe iff global indices are within bounds.
+///  Predicated epilogue is correct: safe iff global indices are within bounds.
 pub proof fn lemma_epilogue_predication_correct(
     m: nat, n: nat,
     ti: nat, tj: nat, ei: nat, ej: nat,
@@ -1082,10 +1082,10 @@ pub proof fn lemma_epilogue_predication_correct(
         epilogue_predicated_store_safe(m, n, ti, tj, ei, ej, bm, bn)
         <==> (ti * bm + ei < m && tj * bn + ej < n),
 {
-    // Direct from definition
+    //  Direct from definition
 }
 
-/// CTA epilogue correctness: all valid stores in a CTA are in-bounds.
+///  CTA epilogue correctness: all valid stores in a CTA are in-bounds.
 pub proof fn lemma_epilogue_cta_correct(
     c_layout: &LayoutSpec, c_data_size: nat,
     m: nat, n: nat, bm: nat, bn: nat,
@@ -1108,7 +1108,7 @@ pub proof fn lemma_epilogue_cta_correct(
     by {
         let gi = ti * bm + ei;
         let gj = tj * bn + ej;
-        // predication safe → gi < m <= shape[0] and gj < n <= shape[1]
+        //  predication safe → gi < m <= shape[0] and gj < n <= shape[1]
         lemma_epilogue_predication_correct(m, n, ti, tj, ei, ej, bm, bn);
         assert(gi < m);
         assert(gj < n);
@@ -1118,7 +1118,7 @@ pub proof fn lemma_epilogue_cta_correct(
     };
 }
 
-/// Cross-CTA epilogue disjointness: different CTAs write different C elements.
+///  Cross-CTA epilogue disjointness: different CTAs write different C elements.
 pub proof fn lemma_epilogue_cross_cta_disjoint(
     c_layout: &LayoutSpec, m: nat, n: nat, bm: nat, bn: nat,
 )
@@ -1149,36 +1149,36 @@ pub proof fn lemma_epilogue_cross_cta_disjoint(
         let gj2 = tj2 * bn + ej2;
         lemma_epilogue_predication_correct(m, n, ti1, tj1, ei1, ej1, bm, bn);
         lemma_epilogue_predication_correct(m, n, ti2, tj2, ei2, ej2, bm, bn);
-        // gi1 < m, gj1 < n, gi2 < m, gj2 < n
+        //  gi1 < m, gj1 < n, gi2 < m, gj2 < n
         lemma_gemm_tiled_c_disjoint(c_layout, m, n, bm, bn,
             ti1, tj1, ei1, ej1, ti2, tj2, ei2, ej2);
     };
 }
 
-// ══════════════════════════════════════════════════════════════
-// Batched GEMM contraction proofs (Feature 1 Round 4)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Batched GEMM contraction proofs (Feature 1 Round 4)
+//  ══════════════════════════════════════════════════════════════
 
-/// Batched GEMM contraction shapes match when batch and K dims agree.
+///  Batched GEMM contraction shapes match when batch and K dims agree.
 pub proof fn lemma_batched_gemm_contraction_shapes_match(a_shape: Seq<nat>, b_shape: Seq<nat>)
     requires
         a_shape.len() == 3,
         b_shape.len() == 3,
-        a_shape[0] == b_shape[0],  // batch dim
-        a_shape[2] == b_shape[1],  // K dim
+        a_shape[0] == b_shape[0],  //  batch dim
+        a_shape[2] == b_shape[1],  //  K dim
     ensures
         contraction_shapes_match(&batched_gemm_as_contraction(), &a_shape, &b_shape),
 {
     let spec = batched_gemm_as_contraction();
-    // Batch: gather_shape(a, [0]) = [a[0]], gather_shape(b, [0]) = [b[0]]
+    //  Batch: gather_shape(a, [0]) = [a[0]], gather_shape(b, [0]) = [b[0]]
     assert(gather_shape(&a_shape, &spec.batch_modes_a) =~=
            gather_shape(&b_shape, &spec.batch_modes_b));
-    // Contraction: gather_shape(a, [2]) = [a[2]], gather_shape(b, [1]) = [b[1]]
+    //  Contraction: gather_shape(a, [2]) = [a[2]], gather_shape(b, [1]) = [b[1]]
     assert(gather_shape(&a_shape, &spec.contraction_modes_a) =~=
            gather_shape(&b_shape, &spec.contraction_modes_b));
 }
 
-/// Batched GEMM contraction output shape is (batch, M, N).
+///  Batched GEMM contraction output shape is (batch, M, N).
 pub proof fn lemma_batched_gemm_contraction_output_shape(a_shape: Seq<nat>, b_shape: Seq<nat>)
     requires
         a_shape.len() == 3,
@@ -1197,7 +1197,7 @@ pub proof fn lemma_batched_gemm_contraction_output_shape(a_shape: Seq<nat>, b_sh
     assert(batch.add(free_a).add(free_b) =~= seq![a_shape[0], a_shape[1], b_shape[2]]);
 }
 
-/// Batched GEMM contraction admissibility.
+///  Batched GEMM contraction admissibility.
 pub proof fn lemma_batched_gemm_contraction_admissible(a_shape: Seq<nat>, b_shape: Seq<nat>)
     requires
         a_shape.len() == 3,
@@ -1211,7 +1211,7 @@ pub proof fn lemma_batched_gemm_contraction_admissible(a_shape: Seq<nat>, b_shap
     lemma_batched_gemm_contraction_shapes_match(a_shape, b_shape);
 }
 
-/// Batched GEMM reduction size = K (a_shape[2]).
+///  Batched GEMM reduction size = K (a_shape[2]).
 pub proof fn lemma_batched_gemm_reduction_size(a_shape: Seq<nat>)
     requires a_shape.len() == 3,
     ensures contraction_reduction_size(&batched_gemm_as_contraction(), &a_shape) == a_shape[2],
@@ -1221,7 +1221,7 @@ pub proof fn lemma_batched_gemm_reduction_size(a_shape: Seq<nat>)
     lemma_gathered_product_single(&a_shape, 2);
 }
 
-/// gathered_product of two modes = shape[m0] * shape[m1].
+///  gathered_product of two modes = shape[m0] * shape[m1].
 pub proof fn lemma_gathered_product_two(shape: &Seq<nat>, m0: nat, m1: nat)
     requires
         m0 < shape.len(),
@@ -1243,11 +1243,11 @@ pub proof fn lemma_gathered_product_two(shape: &Seq<nat>, m0: nat, m1: nat)
     );
 }
 
-// ══════════════════════════════════════════════════════════════
-// Epilogue partition proofs (Feature 2 Round 4)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Epilogue partition proofs (Feature 2 Round 4)
+//  ══════════════════════════════════════════════════════════════
 
-/// Local partition at any thread_id produces a valid residual layout.
+///  Local partition at any thread_id produces a valid residual layout.
 pub proof fn lemma_local_partition_valid(
     tensor: &DividedLayout, tv_layout: &LayoutSpec, thread_id: nat,
 )
@@ -1262,7 +1262,7 @@ pub proof fn lemma_local_partition_valid(
     crate::proof::slice_lemmas::lemma_slice_valid(&tensor.layout, 0, thread_id);
 }
 
-/// Per-thread element count: all threads get the same shape (hence same size).
+///  Per-thread element count: all threads get the same shape (hence same size).
 pub proof fn lemma_local_partition_uniform_shape(
     tensor: &DividedLayout, tv_layout: &LayoutSpec,
     t1: nat, t2: nat,
@@ -1279,10 +1279,10 @@ pub proof fn lemma_local_partition_uniform_shape(
 {
     crate::proof::slice_lemmas::lemma_slice_mode0(&tensor.layout, t1);
     crate::proof::slice_lemmas::lemma_slice_mode0(&tensor.layout, t2);
-    // Both slice at mode 0, so shape = layout.shape.skip(1) for both
+    //  Both slice at mode 0, so shape = layout.shape.skip(1) for both
 }
 
-/// Thread disjointness: distinct thread_ids produce disjoint offset sets.
+///  Thread disjointness: distinct thread_ids produce disjoint offset sets.
 pub proof fn lemma_local_partition_disjoint(
     tensor: &DividedLayout, tv_layout: &LayoutSpec,
     t1: nat, t2: nat, i: nat, j: nat,
@@ -1306,7 +1306,7 @@ pub proof fn lemma_local_partition_disjoint(
     crate::proof::tiling_lemmas::lemma_slice_disjoint(&tensor.layout, t1, t2, i, j);
 }
 
-/// Thread coverage: every element of the tensor is assigned to some thread.
+///  Thread coverage: every element of the tensor is assigned to some thread.
 pub proof fn lemma_local_partition_coverage(
     tensor: &DividedLayout, tv_layout: &LayoutSpec, x: nat,
 )
@@ -1329,7 +1329,7 @@ pub proof fn lemma_local_partition_coverage(
     crate::proof::tiling_lemmas::lemma_partition_coverage(&tensor.layout, x);
 }
 
-/// Epilogue partition offset is 0 (thread_id = 0, so offset = 0 * stride[0] = 0).
+///  Epilogue partition offset is 0 (thread_id = 0, so offset = 0 * stride[0] = 0).
 pub proof fn lemma_epilogue_partition_offset_zero(
     c_tile: &DividedLayout, thread_layout: &LayoutSpec,
 )
@@ -1340,23 +1340,23 @@ pub proof fn lemma_epilogue_partition_offset_zero(
     ensures
         epilogue_partition(c_tile, thread_layout).1 == 0int,
 {
-    // epilogue_partition = local_partition(c_tile, thread_layout, 0)
-    // local_partition.1 = slice_offset(&c_tile.layout, 0, 0) = 0 * stride[0] = 0
+    //  epilogue_partition = local_partition(c_tile, thread_layout, 0)
+    //  local_partition.1 = slice_offset(&c_tile.layout, 0, 0) = 0 * stride[0] = 0
 }
 
-// ══════════════════════════════════════════════════════════════
-// Contraction structural lemmas (Feature 4 Round 4)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Contraction structural lemmas (Feature 4 Round 4)
+//  ══════════════════════════════════════════════════════════════
 
-/// gather_shape length = modes length.
+///  gather_shape length = modes length.
 pub proof fn lemma_gather_shape_len(shape: &Seq<nat>, modes: &Seq<nat>)
     ensures
         gather_shape(shape, modes).len() == modes.len(),
 {
-    // Direct from Seq::new definition
+    //  Direct from Seq::new definition
 }
 
-/// Contraction output rank = batch + free_a + free_b.
+///  Contraction output rank = batch + free_a + free_b.
 pub proof fn lemma_contraction_output_rank(
     spec: &ContractionSpec, a_shape: &Seq<nat>, b_shape: &Seq<nat>,
 )
@@ -1374,7 +1374,7 @@ pub proof fn lemma_contraction_output_rank(
         batch.len() + free_a.len() + free_b.len());
 }
 
-/// GEMM output rank = 2 (M and N dimensions).
+///  GEMM output rank = 2 (M and N dimensions).
 pub proof fn lemma_gemm_contraction_output_rank(a_shape: Seq<nat>, b_shape: Seq<nat>)
     requires a_shape.len() == 2, b_shape.len() == 2,
     ensures
@@ -1383,7 +1383,7 @@ pub proof fn lemma_gemm_contraction_output_rank(a_shape: Seq<nat>, b_shape: Seq<
     lemma_contraction_output_rank(&gemm_as_contraction(), &a_shape, &b_shape);
 }
 
-/// Batched GEMM output rank = 3 (batch, M, N).
+///  Batched GEMM output rank = 3 (batch, M, N).
 pub proof fn lemma_batched_gemm_contraction_output_rank(a_shape: Seq<nat>, b_shape: Seq<nat>)
     requires a_shape.len() == 3, b_shape.len() == 3,
     ensures
@@ -1392,7 +1392,7 @@ pub proof fn lemma_batched_gemm_contraction_output_rank(a_shape: Seq<nat>, b_sha
     lemma_contraction_output_rank(&batched_gemm_as_contraction(), &a_shape, &b_shape);
 }
 
-/// GEMM contraction output matches C layout shape requirements.
+///  GEMM contraction output matches C layout shape requirements.
 pub proof fn lemma_gemm_contraction_matches_c(
     a_shape: Seq<nat>, b_shape: Seq<nat>, c_layout: &LayoutSpec,
 )
@@ -1413,15 +1413,15 @@ pub proof fn lemma_gemm_contraction_matches_c(
     assert(out =~= seq![a_shape[0], b_shape[1]]);
 }
 
-/// gathered_product is 1 for empty modes.
+///  gathered_product is 1 for empty modes.
 pub proof fn lemma_gathered_product_empty(shape: &Seq<nat>)
     ensures
         gathered_product(shape, &Seq::<nat>::empty()) == 1nat,
 {
-    // Base case of gathered_product definition
+    //  Base case of gathered_product definition
 }
 
-/// gathered_product is positive when all gathered shapes are positive.
+///  gathered_product is positive when all gathered shapes are positive.
 pub proof fn lemma_gathered_product_positive(shape: Seq<nat>, modes: Seq<nat>)
     requires
         forall|i: nat| i < modes.len() ==>
@@ -1432,13 +1432,13 @@ pub proof fn lemma_gathered_product_positive(shape: Seq<nat>, modes: Seq<nat>)
     decreases modes.len(),
 {
     if modes.len() == 0 {
-        // Base: gathered_product = 1 > 0
+        //  Base: gathered_product = 1 > 0
     } else {
         let last = modes.last();
         let dl = modes.drop_last();
-        // last mode has positive shape
+        //  last mode has positive shape
         assert(shape[last as int] > 0);
-        // Induction: drop_last modes satisfy precondition
+        //  Induction: drop_last modes satisfy precondition
         assert forall|i: nat| i < dl.len() implies
             (#[trigger] dl[i as int]) < shape.len()
             && shape[dl[i as int] as int] > 0
@@ -1446,7 +1446,7 @@ pub proof fn lemma_gathered_product_positive(shape: Seq<nat>, modes: Seq<nat>)
             assert(dl[i as int] == modes[i as int]);
         };
         lemma_gathered_product_positive(shape, dl);
-        // shape[last] > 0 * rest > 0 > 0
+        //  shape[last] > 0 * rest > 0 > 0
         vstd::arithmetic::mul::lemma_mul_strictly_positive(
             shape[last as int] as int,
             gathered_product(&shape, &modes.drop_last()) as int,
@@ -1454,11 +1454,11 @@ pub proof fn lemma_gathered_product_positive(shape: Seq<nat>, modes: Seq<nat>)
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// MAC K-tile splitting proofs (Feature 3 Round 6)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  MAC K-tile splitting proofs (Feature 3 Round 6)
+//  ══════════════════════════════════════════════════════════════
 
-/// Two-tile MAC accumulation: tiled_mac over [k_start, k_end) splits at k_mid.
+///  Two-tile MAC accumulation: tiled_mac over [k_start, k_end) splits at k_mid.
 pub proof fn lemma_mac_accumulate<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -1476,7 +1476,7 @@ pub proof fn lemma_mac_accumulate<R: Ring>(
     );
 }
 
-/// Predicated MAC equals tiled MAC for valid range (k_end <= k_size).
+///  Predicated MAC equals tiled MAC for valid range (k_end <= k_size).
 pub proof fn lemma_predicated_mac_equals_tiled<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -1489,11 +1489,11 @@ pub proof fn lemma_predicated_mac_equals_tiled<R: Ring>(
         gemm_predicated_mac_value::<R>(a_val, b_val, i, j, k_start, k_end, k_size).eqv(
             gemm_tiled_mac_value::<R>(a_val, b_val, i, j, k_start, k_end)),
 {
-    // Direct from lemma_predicated_mac_all_valid
+    //  Direct from lemma_predicated_mac_all_valid
     lemma_predicated_mac_all_valid::<R>(a_val, b_val, i, j, k_start, k_end, k_size);
 }
 
-/// Predicated MAC with padding: when k_start <= k_size <= k_end, pad zeros don't contribute.
+///  Predicated MAC with padding: when k_start <= k_size <= k_end, pad zeros don't contribute.
 pub proof fn lemma_predicated_mac_padding_zero<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -1506,7 +1506,7 @@ pub proof fn lemma_predicated_mac_padding_zero<R: Ring>(
         gemm_predicated_mac_value::<R>(a_val, b_val, i, j, k_start, k_end, k_size).eqv(
             gemm_tiled_mac_value::<R>(a_val, b_val, i, j, k_start, k_size)),
 {
-    // Split predicated sum at k_size: [k_start, k_size) all valid + [k_size, k_end) all zero
+    //  Split predicated sum at k_size: [k_start, k_size) all valid + [k_size, k_end) all zero
     let f = |k: int|
         if (k as nat) < k_size {
             a_val(i, k as nat).mul(b_val(k as nat, j))
@@ -1515,27 +1515,27 @@ pub proof fn lemma_predicated_mac_padding_zero<R: Ring>(
         };
     let g = |k: int| a_val(i, k as nat).mul(b_val(k as nat, j));
 
-    // Split at k_size
+    //  Split at k_size
     verus_algebra::summation::lemma_sum_split::<R>(f, k_start as int, k_size as int, k_end as int);
-    // sum(f, k_start, k_end) ≡ sum(f, k_start, k_size) + sum(f, k_size, k_end)
+    //  sum(f, k_start, k_end) ≡ sum(f, k_start, k_size) + sum(f, k_size, k_end)
 
-    // sum(f, k_start, k_size) ≡ sum(g, k_start, k_size): all valid
+    //  sum(f, k_start, k_size) ≡ sum(g, k_start, k_size): all valid
     lemma_predicated_mac_all_valid::<R>(a_val, b_val, i, j, k_start, k_size, k_size);
 
-    // sum(f, k_size, k_end) ≡ 0: all past k_size
+    //  sum(f, k_size, k_end) ≡ 0: all past k_size
     lemma_predicated_mac_tail_zero::<R>(a_val, b_val, i, j, k_size, k_end, k_size);
 
-    // Combine: sum(f, k_start, k_end) ≡ tiled_mac(k_start, k_size) + 0 ≡ tiled_mac(k_start, k_size)
-    // Need: sum(f, k_start, k_size).add(sum(f, k_size, k_end)) ≡ tiled_mac + 0
+    //  Combine: sum(f, k_start, k_end) ≡ tiled_mac(k_start, k_size) + 0 ≡ tiled_mac(k_start, k_size)
+    //  Need: sum(f, k_start, k_size).add(sum(f, k_size, k_end)) ≡ tiled_mac + 0
     verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence::<R>(
         sum::<R>(f, k_start as int, k_size as int),
         gemm_tiled_mac_value::<R>(a_val, b_val, i, j, k_start, k_size),
         sum::<R>(f, k_size as int, k_end as int),
         R::zero(),
     );
-    // tiled_mac + 0 ≡ tiled_mac
+    //  tiled_mac + 0 ≡ tiled_mac
     R::axiom_add_zero_right(gemm_tiled_mac_value::<R>(a_val, b_val, i, j, k_start, k_size));
-    // Chain transitivity
+    //  Chain transitivity
     R::axiom_eqv_transitive(
         sum::<R>(f, k_start as int, k_end as int),
         sum::<R>(f, k_start as int, k_size as int).add(sum::<R>(f, k_size as int, k_end as int)),
@@ -1548,8 +1548,8 @@ pub proof fn lemma_predicated_mac_padding_zero<R: Ring>(
     );
 }
 
-/// K-tile MAC splitting: full MAC = sum of tiled MACs over K-tiles.
-/// Each tile covers [t*bk, min((t+1)*bk, K)).
+///  K-tile MAC splitting: full MAC = sum of tiled MACs over K-tiles.
+///  Each tile covers [t*bk, min((t+1)*bk, K)).
 pub proof fn lemma_mac_k_tile_split<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -1557,21 +1557,21 @@ pub proof fn lemma_mac_k_tile_split<R: Ring>(
 )
     requires bk > 0, k_size > 0,
     ensures
-        // Full MAC equals sum of tiles from 0 to k_size, split at bk boundaries
+        //  Full MAC equals sum of tiles from 0 to k_size, split at bk boundaries
         gemm_mac_value::<R>(a_val, b_val, i, j, k_size).eqv(
             gemm_tiled_mac_value::<R>(a_val, b_val, i, j, 0, k_size)),
 {
-    // gemm_mac_value is sum(f, 0, k_size) and gemm_tiled_mac_value(0, k_size) is
-    // also sum(f, 0, k_size) — they are definitionally equal.
+    //  gemm_mac_value is sum(f, 0, k_size) and gemm_tiled_mac_value(0, k_size) is
+    //  also sum(f, 0, k_size) — they are definitionally equal.
     R::axiom_eqv_reflexive(
         gemm_mac_value::<R>(a_val, b_val, i, j, k_size));
 }
 
-// ══════════════════════════════════════════════════════════════
-// Copy operation proofs (Feature 4 Round 6)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Copy operation proofs (Feature 4 Round 6)
+//  ══════════════════════════════════════════════════════════════
 
-/// Column-major SMEM has identity offset: data lands at logical position.
+///  Column-major SMEM has identity offset: data lands at logical position.
 pub proof fn lemma_smem_identity_offset(smem_base: &LayoutSpec, x: nat)
     requires
         smem_base.valid(),
@@ -1587,8 +1587,8 @@ pub proof fn lemma_smem_identity_offset(smem_base: &LayoutSpec, x: nat)
     );
 }
 
-/// G2S copy preserves tile identity: for column-major SMEM,
-/// the data at global tile position x ends up at SMEM position x.
+///  G2S copy preserves tile identity: for column-major SMEM,
+///  the data at global tile position x ends up at SMEM position x.
 pub proof fn lemma_g2s_offset_identity(
     g2s_copy: &LayoutSpec, smem_base: &LayoutSpec,
     tile_m: nat, tile_k: nat, x: nat,
@@ -1600,11 +1600,11 @@ pub proof fn lemma_g2s_offset_identity(
     ensures
         smem_base.offset(x) == x as int,
 {
-    // g2s_stage_valid → smem_base.valid() and size >= tile_m * tile_k
+    //  g2s_stage_valid → smem_base.valid() and size >= tile_m * tile_k
     lemma_smem_identity_offset(smem_base, x);
 }
 
-/// S2R copy offset consistency: thread_id * val_size + val_idx < s2r size.
+///  S2R copy offset consistency: thread_id * val_size + val_idx < s2r size.
 pub proof fn lemma_s2r_offset_consistency(
     s2r_copy: &LayoutSpec, mma_thr: &LayoutSpec, mma_val: &LayoutSpec,
     thread_id: nat, val_idx: nat,
@@ -1616,7 +1616,7 @@ pub proof fn lemma_s2r_offset_consistency(
     ensures
         thread_id * mma_val.size() + val_idx < s2r_copy.size(),
 {
-    // s2r_stage_valid → s2r_copy.size() >= mma_thr.size() * mma_val.size()
+    //  s2r_stage_valid → s2r_copy.size() >= mma_thr.size() * mma_val.size()
     assert(thread_id * mma_val.size() + val_idx < mma_thr.size() * mma_val.size())
         by (nonlinear_arith)
         requires
@@ -1626,8 +1626,8 @@ pub proof fn lemma_s2r_offset_consistency(
             mma_val.size() > 0;
 }
 
-/// Copy pipeline data flow: G2S followed by S2R preserves data identity
-/// for column-major SMEM.
+///  Copy pipeline data flow: G2S followed by S2R preserves data identity
+///  for column-major SMEM.
 pub proof fn lemma_copy_pipeline_identity(
     smem_base: &LayoutSpec, tile_size: nat, x: nat,
 )
@@ -1642,11 +1642,11 @@ pub proof fn lemma_copy_pipeline_identity(
     lemma_smem_identity_offset(smem_base, x);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Swizzle+Divide SMEM composition proofs (Feature 3 Round 7)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Swizzle+Divide SMEM composition proofs (Feature 3 Round 7)
+//  ══════════════════════════════════════════════════════════════
 
-/// Divided column-major SMEM tile has identity offset.
+///  Divided column-major SMEM tile has identity offset.
 pub proof fn lemma_smem_divide_identity(
     smem_base: &LayoutSpec, thread_tile: &LayoutSpec, x: nat,
 )
@@ -1661,9 +1661,9 @@ pub proof fn lemma_smem_divide_identity(
     crate::proof::divide_lemmas::lemma_divide_offset_column_major(smem_base, thread_tile, x);
 }
 
-/// Swizzled divided SMEM: each element gets a unique swizzled address.
-/// Since divide has identity offset for column-major layouts,
-/// swizzle(divide.offset(x)) == swizzle(x), and swizzle is injective.
+///  Swizzled divided SMEM: each element gets a unique swizzled address.
+///  Since divide has identity offset for column-major layouts,
+///  swizzle(divide.offset(x)) == swizzle(x), and swizzle is injective.
 pub proof fn lemma_smem_swizzle_divide_injective(
     smem_base: &LayoutSpec, thread_tile: &LayoutSpec,
     b_bits: nat, m_bits: nat, s_bits: nat,
@@ -1681,17 +1681,17 @@ pub proof fn lemma_smem_swizzle_divide_injective(
                 != swizzle(#[trigger] logical_divide_linear(smem_base, thread_tile).offset(j) as nat, b_bits, m_bits, s_bits),
 {
     let sz = shape_size(smem_base.shape);
-    // First establish identity offset for all elements
+    //  First establish identity offset for all elements
     assert forall|x: nat| x < sz implies
         #[trigger] logical_divide_linear(smem_base, thread_tile).offset(x) == x as int
     by {
         lemma_smem_divide_identity(smem_base, thread_tile, x);
     };
 
-    // Swizzle is injective on [0, 2^(m+s+b))
+    //  Swizzle is injective on [0, 2^(m+s+b))
     crate::proof::swizzle_lemmas::lemma_swizzle_bijection_on_domain(b_bits, m_bits, s_bits);
 
-    // Combine: distinct x,y → distinct swizzle(x), swizzle(y)
+    //  Combine: distinct x,y → distinct swizzle(x), swizzle(y)
     assert forall|i: nat, j: nat|
         i < sz && j < sz && i != j
     implies
@@ -1700,13 +1700,13 @@ pub proof fn lemma_smem_swizzle_divide_injective(
     by {
         assert(logical_divide_linear(smem_base, thread_tile).offset(i) == i as int);
         assert(logical_divide_linear(smem_base, thread_tile).offset(j) == j as int);
-        // i, j < sz <= pow2(m+s+b), and i != j, so swizzle(i) != swizzle(j)
+        //  i, j < sz <= pow2(m+s+b), and i != j, so swizzle(i) != swizzle(j)
         assert(i < pow2(m_bits + s_bits + b_bits));
         assert(j < pow2(m_bits + s_bits + b_bits));
     };
 }
 
-/// SM80 instantiation: SMEM tile with B=3,M=0,S=3 swizzle after divide is injective.
+///  SM80 instantiation: SMEM tile with B=3,M=0,S=3 swizzle after divide is injective.
 pub proof fn lemma_sm80_smem_tile_swizzle_divide(
     smem_base: &LayoutSpec, thread_tile: &LayoutSpec,
 )
@@ -1714,7 +1714,7 @@ pub proof fn lemma_sm80_smem_tile_swizzle_divide(
         divide_admissible(smem_base, thread_tile),
         smem_base.stride =~= column_major_strides(smem_base.shape),
         thread_tile.stride =~= column_major_strides(thread_tile.shape),
-        shape_size(smem_base.shape) <= pow2(6),  // 2^(0+3+3) = 64 ... B+M+S bits
+        shape_size(smem_base.shape) <= pow2(6),  //  2^(0+3+3) = 64 ... B+M+S bits
     ensures
         forall|i: nat, j: nat|
             i < shape_size(smem_base.shape) && j < shape_size(smem_base.shape) && i != j
@@ -1724,12 +1724,12 @@ pub proof fn lemma_sm80_smem_tile_swizzle_divide(
     lemma_smem_swizzle_divide_injective(smem_base, thread_tile, 3, 0, 3);
 }
 
-// ══════════════════════════════════════════════════════════════
-// logical_divide (correct compose) SMEM proofs
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  logical_divide (correct compose) SMEM proofs
+//  ══════════════════════════════════════════════════════════════
 
-/// Divided column-major SMEM tile has identity offset (using correct compose).
-/// No admissibility required — same preconditions as the compose_linear version.
+///  Divided column-major SMEM tile has identity offset (using correct compose).
+///  No admissibility required — same preconditions as the compose_linear version.
 pub proof fn lemma_smem_divide_identity_compose(
     smem_base: &LayoutSpec, thread_tile: &LayoutSpec, x: nat,
 )
@@ -1745,8 +1745,8 @@ pub proof fn lemma_smem_divide_identity_compose(
         smem_base, thread_tile, x);
 }
 
-/// Swizzled divided SMEM injectivity (using correct compose).
-/// No admissibility required.
+///  Swizzled divided SMEM injectivity (using correct compose).
+///  No admissibility required.
 pub proof fn lemma_smem_swizzle_divide_injective_compose(
     smem_base: &LayoutSpec, thread_tile: &LayoutSpec,
     b_bits: nat, m_bits: nat, s_bits: nat,
@@ -1785,7 +1785,7 @@ pub proof fn lemma_smem_swizzle_divide_injective_compose(
     };
 }
 
-/// SM80 instantiation with correct compose. No admissibility required.
+///  SM80 instantiation with correct compose. No admissibility required.
 pub proof fn lemma_sm80_smem_tile_swizzle_divide_compose(
     smem_base: &LayoutSpec, thread_tile: &LayoutSpec,
 )
@@ -1803,18 +1803,18 @@ pub proof fn lemma_sm80_smem_tile_swizzle_divide_compose(
     lemma_smem_swizzle_divide_injective_compose(smem_base, thread_tile, 3, 0, 3);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Bank conflict analysis for SMEM
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Bank conflict analysis for SMEM
+//  ══════════════════════════════════════════════════════════════
 
-/// SM80 swizzled SMEM tile is bank-conflict-free for 32 banks.
-/// This means any warp of 32 threads accessing consecutive elements
-/// will hit different banks (no serialization).
+///  SM80 swizzled SMEM tile is bank-conflict-free for 32 banks.
+///  This means any warp of 32 threads accessing consecutive elements
+///  will hit different banks (no serialization).
 ///
-/// Proof: swizzle with B=3,M=0,S=3 is injective on [0, 64).
-/// The divided layout has identity offset (logical_divide(x) = x).
-/// So swizzle(divide.offset(i)) = swizzle(i), which is injective.
-/// Distinct values trivially map to distinct bank indices.
+///  Proof: swizzle with B=3,M=0,S=3 is injective on [0, 64).
+///  The divided layout has identity offset (logical_divide(x) = x).
+///  So swizzle(divide.offset(i)) = swizzle(i), which is injective.
+///  Distinct values trivially map to distinct bank indices.
 pub proof fn lemma_sm80_smem_bank_conflict_free(
     smem_base: &LayoutSpec, thread_tile: &LayoutSpec,
     count: nat,
@@ -1826,22 +1826,22 @@ pub proof fn lemma_sm80_smem_bank_conflict_free(
         shape_size(smem_base.shape) <= pow2(6),
         count <= shape_size(smem_base.shape),
     ensures
-        // For any pair of threads in [0, count) accessing swizzled SMEM:
-        // their bank indices are distinct (no bank conflicts)
+        //  For any pair of threads in [0, count) accessing swizzled SMEM:
+        //  their bank indices are distinct (no bank conflicts)
         forall|i: nat, j: nat|
             i < count && j < count && i != j
             ==> swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(i) as nat, 3, 0, 3)
                 != swizzle(#[trigger] logical_divide(smem_base, thread_tile).offset(j) as nat, 3, 0, 3),
 {
-    // From existing: swizzled divide injectivity
+    //  From existing: swizzled divide injectivity
     lemma_smem_swizzle_divide_injective_compose(smem_base, thread_tile, 3, 0, 3);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Row-major GEMM support
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Row-major GEMM support
+//  ══════════════════════════════════════════════════════════════
 
-/// Column-major layout has non-negative strides.
+///  Column-major layout has non-negative strides.
 proof fn lemma_cm_nonneg(shape: Seq<nat>)
     requires shape_valid(shape), shape.len() > 0,
     ensures make_column_major(shape).non_negative_strides(),
@@ -1878,7 +1878,7 @@ proof fn lemma_cm_nonneg(shape: Seq<nat>)
     }
 }
 
-/// Column-major layout is sorted (strides non-decreasing).
+///  Column-major layout is sorted (strides non-decreasing).
 proof fn lemma_cm_sorted(shape: Seq<nat>)
     requires shape_valid(shape), shape.len() > 0,
     ensures make_column_major(shape).is_sorted(),
@@ -1907,7 +1907,7 @@ proof fn lemma_cm_sorted(shape: Seq<nat>)
         crate::proof::inverse_lemmas::lemma_column_major_strides_first(rest_shape);
         crate::proof::injectivity_lemmas::lemma_column_major_strides_len(rest_shape);
         vstd::arithmetic::mul::lemma_mul_basics(s0 as int);
-        // Establish stride values
+        //  Establish stride values
         assert forall|k: int| 0 <= k < cm_rest.len()
         implies l.stride[k + 1] == (s0 as int) * #[trigger] cm_rest[k]
         by {
@@ -1942,8 +1942,8 @@ proof fn lemma_cm_sorted(shape: Seq<nat>)
     }
 }
 
-/// Column-major layout is valid + sorted + tractable + non-negative + stride[0] > 0.
-/// General rank (not just 2D).
+///  Column-major layout is valid + sorted + tractable + non-negative + stride[0] > 0.
+///  General rank (not just 2D).
 pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
     requires
         shape_valid(shape),
@@ -1962,23 +1962,23 @@ pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
     crate::proof::inverse_lemmas::lemma_column_major_strides_first(shape);
     let l = make_column_major(shape);
 
-    // Valid
+    //  Valid
     assert(l.valid()) by {
         assert forall|i: int| 0 <= i < l.shape.len() implies #[trigger] l.shape[i] > 0 by {};
     };
-    // Non-negative + sorted from helpers
+    //  Non-negative + sorted from helpers
     lemma_cm_nonneg(shape);
     lemma_cm_sorted(shape);
 
     if shape.len() == 1 {
-        // Rank 1: tractable trivially true (no pairs)
+        //  Rank 1: tractable trivially true (no pairs)
         assert(l.is_tractable()) by {
             assert forall|i: int| 0 <= i < l.stride.len() as int - 1
             implies #[trigger] l.tractable_at(i) by {};
         };
     } else {
-        // cm(shape) = [1] ++ scale(cm(skip(1)), shape[0])
-        // The skip(1) part is also column-major, so by IH it's sorted+tractable.
+        //  cm(shape) = [1] ++ scale(cm(skip(1)), shape[0])
+        //  The skip(1) part is also column-major, so by IH it's sorted+tractable.
 
         let s0 = shape.first();
         let rest_shape = shape.skip(1);
@@ -1987,23 +1987,23 @@ pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
             implies #[trigger] rest_shape[i] > 0 by { assert(rest_shape[i] == shape[i + 1]); };
         };
 
-        // cm(shape) = [1] ++ scale(cm(rest_shape), s0)
+        //  cm(shape) = [1] ++ scale(cm(rest_shape), s0)
         let cm_rest = column_major_strides(rest_shape);
         assert(l.stride =~= seq![1int].add(scale_strides_spec(cm_rest, s0 as int)));
 
-        // IH: cm(rest_shape) is sorted+tractable+non-negative
-        // rest_shape.len() >= 1 since shape.len() >= 2
+        //  IH: cm(rest_shape) is sorted+tractable+non-negative
+        //  rest_shape.len() >= 1 since shape.len() >= 2
         assert(rest_shape.len() > 0);
         lemma_cm_sorted_tractable(rest_shape);
         let l_rest = make_column_major(rest_shape);
-        // l_rest.stride == cm_rest
+        //  l_rest.stride == cm_rest
         assert(l_rest.stride =~= cm_rest);
 
         crate::proof::inverse_lemmas::lemma_column_major_strides_first(rest_shape);
         crate::proof::injectivity_lemmas::lemma_column_major_strides_len(rest_shape);
         vstd::arithmetic::mul::lemma_mul_basics(s0 as int);
 
-        // Establish stride values for all indices
+        //  Establish stride values for all indices
         assert(l.stride[0] == 1int);
         assert forall|k: int| 0 <= k < cm_rest.len()
         implies l.stride[k + 1] == (s0 as int) * #[trigger] cm_rest[k]
@@ -2013,54 +2013,54 @@ pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
                 == scale_strides_spec(cm_rest, s0 as int)[k]);
         };
 
-        // tractable: stride[0]*shape[0] = 1*s0 = s0. stride[1] = s0*cm_rest[0].
-        // s0 % s0 == 0 trivially? No: stride[1] % (stride[0]*shape[0]) = (s0*cm_rest[0]) % s0.
-        // cm_rest[0] = 1 if rest non-empty, so stride[1] = s0. s0 % s0 == 0. ✓
-        // For i > 0: stride[i]*shape[i] = s0*cm_rest[i-1]*shape[i].
-        //   stride[i+1] = s0*cm_rest[i].
-        //   tractable_at(i) needs stride[i+1] % (stride[i]*shape[i]) == 0.
-        //   = (s0*cm_rest[i]) % (s0*cm_rest[i-1]*shape[i]) == 0.
-        //   = s0 * (cm_rest[i] % (cm_rest[i-1]*shape[i])) == 0 (if s0 divides...) hmm, complex.
-        // Actually, cm_rest is sorted+tractable for rest_shape (by IH).
-        // cm_rest.tractable_at(i-1) gives: cm_rest[i] % (cm_rest[i-1] * rest_shape[i-1]) == 0.
-        // And rest_shape[i-1] = shape[i].
-        // So cm_rest[i] % (cm_rest[i-1] * shape[i]) == 0.
-        // stride[i+1] = s0 * cm_rest[i]. stride[i]*shape[i] = s0*cm_rest[i-1]*shape[i].
-        // stride[i+1] % (stride[i]*shape[i]) = (s0*cm_rest[i]) % (s0*cm_rest[i-1]*shape[i]).
-        // = s0 * cm_rest[i] is a multiple of s0*cm_rest[i-1]*shape[i] iff
-        //   cm_rest[i] is a multiple of cm_rest[i-1]*shape[i], which we know from tractable.
+        //  tractable: stride[0]*shape[0] = 1*s0 = s0. stride[1] = s0*cm_rest[0].
+        //  s0 % s0 == 0 trivially? No: stride[1] % (stride[0]*shape[0]) = (s0*cm_rest[0]) % s0.
+        //  cm_rest[0] = 1 if rest non-empty, so stride[1] = s0. s0 % s0 == 0. ✓
+        //  For i > 0: stride[i]*shape[i] = s0*cm_rest[i-1]*shape[i].
+        //    stride[i+1] = s0*cm_rest[i].
+        //    tractable_at(i) needs stride[i+1] % (stride[i]*shape[i]) == 0.
+        //    = (s0*cm_rest[i]) % (s0*cm_rest[i-1]*shape[i]) == 0.
+        //    = s0 * (cm_rest[i] % (cm_rest[i-1]*shape[i])) == 0 (if s0 divides...) hmm, complex.
+        //  Actually, cm_rest is sorted+tractable for rest_shape (by IH).
+        //  cm_rest.tractable_at(i-1) gives: cm_rest[i] % (cm_rest[i-1] * rest_shape[i-1]) == 0.
+        //  And rest_shape[i-1] = shape[i].
+        //  So cm_rest[i] % (cm_rest[i-1] * shape[i]) == 0.
+        //  stride[i+1] = s0 * cm_rest[i]. stride[i]*shape[i] = s0*cm_rest[i-1]*shape[i].
+        //  stride[i+1] % (stride[i]*shape[i]) = (s0*cm_rest[i]) % (s0*cm_rest[i-1]*shape[i]).
+        //  = s0 * cm_rest[i] is a multiple of s0*cm_rest[i-1]*shape[i] iff
+        //    cm_rest[i] is a multiple of cm_rest[i-1]*shape[i], which we know from tractable.
 
-        // tractable
+        //  tractable
         assert(l.is_tractable()) by {
         assert forall|i: int| 0 <= i < l.stride.len() as int - 1
         implies #[trigger] l.tractable_at(i) by {
             if i == 0 {
-                // stride[0]*shape[0] = 1*s0 = s0. stride[1] = s0*cm_rest[0] = s0*1 = s0.
-                // s0 > 0 and stride[1] % s0 == 0.
+                //  stride[0]*shape[0] = 1*s0 = s0. stride[1] = s0*cm_rest[0] = s0*1 = s0.
+                //  s0 > 0 and stride[1] % s0 == 0.
                 assert((l.shape[0] as int) * l.stride[0] == s0 as int);
                 assert(l.stride[1] == (s0 as int) * cm_rest[0]);
                 assert(cm_rest[0] == 1int);
                 vstd::arithmetic::mul::lemma_mul_basics(s0 as int);
                 assert(l.stride[1] == s0 as int);
             } else {
-                // l.stride[i] = s0 * cm_rest[i-1], l.stride[i+1] = s0 * cm_rest[i]
-                // l.shape[i] = rest_shape[i-1]
-                // product = l.shape[i] * l.stride[i] = rest_shape[i-1] * s0 * cm_rest[i-1]
-                //         = s0 * (rest_shape[i-1] * cm_rest[i-1])
-                // From IH tractable: cm_rest[i] % (rest_shape[i-1] * cm_rest[i-1]) == 0
-                // So s0 * cm_rest[i] % (s0 * rest_shape[i-1] * cm_rest[i-1]) == 0
+                //  l.stride[i] = s0 * cm_rest[i-1], l.stride[i+1] = s0 * cm_rest[i]
+                //  l.shape[i] = rest_shape[i-1]
+                //  product = l.shape[i] * l.stride[i] = rest_shape[i-1] * s0 * cm_rest[i-1]
+                //          = s0 * (rest_shape[i-1] * cm_rest[i-1])
+                //  From IH tractable: cm_rest[i] % (rest_shape[i-1] * cm_rest[i-1]) == 0
+                //  So s0 * cm_rest[i] % (s0 * rest_shape[i-1] * cm_rest[i-1]) == 0
                 assert(l.stride[i] == (s0 as int) * cm_rest[i - 1]);
                 assert(l.stride[i + 1] == (s0 as int) * cm_rest[i]);
                 assert(l.shape[i] == rest_shape[i - 1]);
 
-                // IH: l_rest.tractable_at(i-1)
+                //  IH: l_rest.tractable_at(i-1)
                 assert(l_rest.tractable_at(i - 1));
                 let sp_rest = (rest_shape[i - 1] as int) * cm_rest[i - 1];
                 assert(sp_rest > 0);
                 assert(cm_rest[i] % sp_rest == 0);
 
-                // Scale: (s0 * cm_rest[i]) % (s0 * sp_rest) == 0
-                // product = shape[i] * stride[i]
+                //  Scale: (s0 * cm_rest[i]) % (s0 * sp_rest) == 0
+                //  product = shape[i] * stride[i]
                 let sh_i = l.shape[i] as int;
                 let st_i = l.stride[i];
                 assert(sh_i == rest_shape[i - 1] as int);
@@ -2071,14 +2071,14 @@ pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
                     assert(l.stride[i] >= l.stride[0]);
                 };
                 let sp_l = sh_i * st_i;
-                // cm_rest[i] % sp_rest == 0 → cm_rest[i] = sp_rest * q for some q
+                //  cm_rest[i] % sp_rest == 0 → cm_rest[i] = sp_rest * q for some q
                 vstd::arithmetic::div_mod::lemma_fundamental_div_mod(cm_rest[i], sp_rest);
                 let q_div = cm_rest[i] / sp_rest;
                 assert(cm_rest[i] == sp_rest * q_div + cm_rest[i] % sp_rest);
                 assert(cm_rest[i] == sp_rest * q_div);
-                // l.stride[i+1] = s0 * cm_rest[i] = s0 * sp_rest * q_div
-                // sp_l = sh_i * s0 * cm_rest[i-1] = s0 * (sh_i * cm_rest[i-1]) = s0 * sp_rest
-                // So l.stride[i+1] = sp_l * q_div. Hence l.stride[i+1] % sp_l == 0.
+                //  l.stride[i+1] = s0 * cm_rest[i] = s0 * sp_rest * q_div
+                //  sp_l = sh_i * s0 * cm_rest[i-1] = s0 * (sh_i * cm_rest[i-1]) = s0 * sp_rest
+                //  So l.stride[i+1] = sp_l * q_div. Hence l.stride[i+1] % sp_l == 0.
                 assert(l.stride[i + 1] == (s0 as int) * (sp_rest * q_div)) by (nonlinear_arith)
                     requires l.stride[i + 1] == (s0 as int) * cm_rest[i],
                              cm_rest[i] == sp_rest * q_div;
@@ -2099,8 +2099,8 @@ pub proof fn lemma_cm_sorted_tractable(shape: Seq<nat>)
     }
 }
 
-/// If each tile dimension divides the corresponding A dimension,
-/// then shape_size(tile) divides shape_size(a).
+///  If each tile dimension divides the corresponding A dimension,
+///  then shape_size(tile) divides shape_size(a).
 proof fn lemma_shape_divisibility(a: Seq<nat>, t: Seq<nat>)
     requires
         shape_valid(a), shape_valid(t),
@@ -2130,10 +2130,10 @@ proof fn lemma_shape_divisibility(a: Seq<nat>, t: Seq<nat>)
             assert(t_rest[i] == t[i + 1]);
         };
         lemma_shape_divisibility(a_rest, t_rest);
-        // IH: size(a_rest) % size(t_rest) == 0
-        // size(a) = a[0] * size(a_rest). size(t) = t[0] * size(t_rest).
-        // a[0] % t[0] == 0. size(a_rest) % size(t_rest) == 0.
-        // So a[0]*size(a_rest) % (t[0]*size(t_rest)) == 0.
+        //  IH: size(a_rest) % size(t_rest) == 0
+        //  size(a) = a[0] * size(a_rest). size(t) = t[0] * size(t_rest).
+        //  a[0] % t[0] == 0. size(a_rest) % size(t_rest) == 0.
+        //  So a[0]*size(a_rest) % (t[0]*size(t_rest)) == 0.
         crate::runtime::shape_helpers::lemma_shape_size_split(a, 1);
         assert(a.take(1) =~= seq![a.first()]);
         crate::proof::shape_lemmas::lemma_shape_size_single(a.first());
@@ -2142,8 +2142,8 @@ proof fn lemma_shape_divisibility(a: Seq<nat>, t: Seq<nat>)
         assert(t.take(1) =~= seq![t.first()]);
         crate::proof::shape_lemmas::lemma_shape_size_single(t.first());
         assert(t.skip(1) =~= t_rest);
-        // a[0] = t[0] * q0. size(a_rest) = size(t_rest) * q1.
-        // a[0]*size(a_rest) = t[0]*q0 * size(t_rest)*q1 = (t[0]*size(t_rest)) * (q0*q1).
+        //  a[0] = t[0] * q0. size(a_rest) = size(t_rest) * q1.
+        //  a[0]*size(a_rest) = t[0]*q0 * size(t_rest)*q1 = (t[0]*size(t_rest)) * (q0*q1).
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a.first() as int, t.first() as int);
         crate::proof::shape_lemmas::lemma_shape_size_positive(t_rest);
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
@@ -2165,8 +2165,8 @@ proof fn lemma_shape_divisibility(a: Seq<nat>, t: Seq<nat>)
     }
 }
 
-/// divide_admissible for column-major layouts when tile shapes divide A shapes.
-/// General rank (not just 2D).
+///  divide_admissible for column-major layouts when tile shapes divide A shapes.
+///  General rank (not just 2D).
 pub proof fn lemma_cm_divide_admissible(
     a_shape: Seq<nat>, tile_shape: Seq<nat>,
 )
@@ -2176,7 +2176,7 @@ pub proof fn lemma_cm_divide_admissible(
         a_shape.len() > 0,
         tile_shape.len() > 0,
         a_shape.len() == tile_shape.len(),
-        // Each tile dimension divides the corresponding A dimension
+        //  Each tile dimension divides the corresponding A dimension
         forall|i: int| 0 <= i < a_shape.len() ==>
             #[trigger] tile_shape[i] <= a_shape[i] && a_shape[i] % tile_shape[i] == 0,
     ensures
@@ -2191,47 +2191,47 @@ pub proof fn lemma_cm_divide_admissible(
     lemma_cm_sorted_tractable(tile_shape);
     crate::proof::injectivity_lemmas::lemma_column_major_strides_len(tile_shape);
 
-    // complement_admissible(tile, size(a)): need (size(a)) % (last stride_product of tile) == 0.
-    // For column-major tile: last stride_product = size(tile).
-    // size(tile) | size(a) because each tile_shape[i] | a_shape[i].
+    //  complement_admissible(tile, size(a)): need (size(a)) % (last stride_product of tile) == 0.
+    //  For column-major tile: last stride_product = size(tile).
+    //  size(tile) | size(a) because each tile_shape[i] | a_shape[i].
 
-    // Last stride_product of tile = tile.shape.last() * tile.stride.last()
-    // For column-major: this equals shape_size(tile_shape) (prefix product identity).
+    //  Last stride_product of tile = tile.shape.last() * tile.stride.last()
+    //  For column-major: this equals shape_size(tile_shape) (prefix product identity).
     let n = tile_shape.len() as int;
     crate::proof::divide_lemmas::lemma_cm_prefix_product_identity(tile_shape, (n - 1) as nat);
-    // cm[n-1] * size(skip(n-1)) = size(tile_shape). skip(n-1) = seq![last]. size = last.
-    // So cm[n-1] * last = size(tile_shape). And last_stride_product = last * cm[n-1] = size(tile).
-    // By commutativity: last_stride_product = size(tile_shape).
+    //  cm[n-1] * size(skip(n-1)) = size(tile_shape). skip(n-1) = seq![last]. size = last.
+    //  So cm[n-1] * last = size(tile_shape). And last_stride_product = last * cm[n-1] = size(tile).
+    //  By commutativity: last_stride_product = size(tile_shape).
 
     let tile_size = shape_size(tile_shape);
     let a_size = shape_size(a_shape);
 
-    // size(tile) | size(a): product of (tile_shape[i]) | product of (a_shape[i])
-    // because each factor divides.
-    // Prove by induction: size(tile_shape) | size(a_shape)
+    //  size(tile) | size(a): product of (tile_shape[i]) | product of (a_shape[i])
+    //  because each factor divides.
+    //  Prove by induction: size(tile_shape) | size(a_shape)
     lemma_shape_divisibility(a_shape, tile_shape);
 
-    // Bridge to complement_admissible form
+    //  Bridge to complement_admissible form
     assert(tile.stride[n - 1] > 0) by {
         crate::proof::composition_lemmas::lemma_sorted_stride_transitive(&tile, 0, n - 1);
     };
     assert((tile.shape.last() as int) * tile.stride.last() > 0) by (nonlinear_arith)
         requires (tile.shape.last() as int) > 0, tile.stride.last() > 0;
-    // last_stride_product == size(tile_shape)
-    // cm[n-1] * size(skip(n-1)) == size(tile_shape). skip(n-1) = [last]. size([last]) = last.
+    //  last_stride_product == size(tile_shape)
+    //  cm[n-1] * size(skip(n-1)) == size(tile_shape). skip(n-1) = [last]. size([last]) = last.
     assert(tile_shape.skip((n - 1) as int) =~= seq![tile_shape.last()]);
     crate::proof::shape_lemmas::lemma_shape_size_single(tile_shape.last());
-    // tile.stride.last() == tile.stride[n-1]
+    //  tile.stride.last() == tile.stride[n-1]
     assert(tile.stride.last() == tile.stride[n - 1]);
-    // tile.shape.last() == tile_shape.last() == shape_size(skip(n-1))
+    //  tile.shape.last() == tile_shape.last() == shape_size(skip(n-1))
     assert(tile.shape.last() == tile_shape.last());
     assert(shape_size(tile_shape.skip((n - 1) as int)) == tile_shape.last() as nat);
-    // So last_stride_product = stride[n-1] * shape_size(skip(n-1)) = tile_size
-    // Chain: stride[n-1] * tile_shape.last() == tile_size
-    // From prefix_product_identity: stride[n-1] * shape_size(skip(n-1)) == tile_size
-    // shape_size(skip(n-1)) == tile_shape.last()
-    // So stride[n-1] * tile_shape.last() == tile_size
-    // And tile.shape.last() == tile_shape.last(), tile.stride.last() == tile.stride[n-1]
+    //  So last_stride_product = stride[n-1] * shape_size(skip(n-1)) = tile_size
+    //  Chain: stride[n-1] * tile_shape.last() == tile_size
+    //  From prefix_product_identity: stride[n-1] * shape_size(skip(n-1)) == tile_size
+    //  shape_size(skip(n-1)) == tile_shape.last()
+    //  So stride[n-1] * tile_shape.last() == tile_size
+    //  And tile.shape.last() == tile_shape.last(), tile.stride.last() == tile.stride[n-1]
     assert(tile.stride[n - 1] * (tile_shape.last() as int) == tile_size as int) by (nonlinear_arith)
         requires
             tile.stride[n - 1] * (shape_size(tile_shape.skip((n - 1) as int)) as int) == tile_size as int,
@@ -2241,10 +2241,10 @@ pub proof fn lemma_cm_divide_admissible(
             tile.stride[n - 1] * (tile_shape.last() as int) == tile_size as int,
             tile.stride.last() == tile.stride[n - 1],
             tile.shape.last() == tile_shape.last();
-    // So (a_size) % (last_stride_product) == (a_size) % (tile_size) == 0
+    //  So (a_size) % (last_stride_product) == (a_size) % (tile_size) == 0
     assert((a_size as int) % ((tile.shape.last() as int) * tile.stride.last()) == 0);
 
-    // Explicitly assert complement_admissible
+    //  Explicitly assert complement_admissible
     crate::proof::injectivity_lemmas::lemma_column_major_strides_len(a_shape);
     assert(a.valid()) by {
         assert forall|i: int| 0 <= i < a.shape.len() implies #[trigger] a.shape[i] > 0 by {};
@@ -2258,33 +2258,33 @@ pub proof fn lemma_cm_divide_admissible(
     assert(crate::complement::complement_admissible(&tile, a_size));
 }
 
-/// Row-major (M, K) has the same offset as column-major (K, M) with transposed coordinates.
-/// Specifically: make_row_major([M, K]).offset(x) == make_column_major([K, M]).offset(x')
-/// where x' reverses the coordinate decomposition.
+///  Row-major (M, K) has the same offset as column-major (K, M) with transposed coordinates.
+///  Specifically: make_row_major([M, K]).offset(x) == make_column_major([K, M]).offset(x')
+///  where x' reverses the coordinate decomposition.
 ///
-/// This means row-major GEMM reduces to column-major GEMM on transposed shapes:
-/// - Row-major A[M, K] → column-major layout (K, M):(1, K) for divide/compose
-/// - A[i, k] in row-major = A'[k, i] in column-major (same memory address)
-/// 2D column-major strides are [1, shape[0]].
+///  This means row-major GEMM reduces to column-major GEMM on transposed shapes:
+///  - Row-major A[M, K] → column-major layout (K, M):(1, K) for divide/compose
+///  - A[i, k] in row-major = A'[k, i] in column-major (same memory address)
+///  2D column-major strides are [1, shape[0]].
 proof fn lemma_cm_2d_strides(s0: nat, s1: nat)
     requires s0 > 0, s1 > 0,
     ensures
         column_major_strides(seq![s0, s1]) =~= seq![1int, s0 as int],
 {
-    // cm(seq![s0, s1]) = [1] ++ scale(cm(seq![s1]), s0)
-    // cm(seq![s1]) = [1] ++ scale(cm(seq![]), s1) = [1] ++ scale([], s1) = [1]
+    //  cm(seq![s0, s1]) = [1] ++ scale(cm(seq![s1]), s0)
+    //  cm(seq![s1]) = [1] ++ scale(cm(seq![]), s1) = [1] ++ scale([], s1) = [1]
     assert(seq![s0, s1].skip(1) =~= seq![s1]);
     assert(seq![s1].skip(1) =~= Seq::<nat>::empty());
     assert(column_major_strides(Seq::<nat>::empty()) =~= Seq::<int>::empty());
     assert(scale_strides_spec(Seq::<int>::empty(), s1 as int) =~= Seq::<int>::empty());
     assert(column_major_strides(seq![s1]) =~= seq![1int]);
-    // scale_strides([1], s0) = [1 * s0] = [s0]
+    //  scale_strides([1], s0) = [1 * s0] = [s0]
     assert(scale_strides_spec(seq![1int], s0 as int).len() == 1);
     assert(scale_strides_spec(seq![1int], s0 as int)[0] == 1int * (s0 as int));
     vstd::arithmetic::mul::lemma_mul_basics(s0 as int);
 }
 
-/// 2D column-major layout is sorted + tractable (enables complement_admissible).
+///  2D column-major layout is sorted + tractable (enables complement_admissible).
 proof fn lemma_cm_2d_sorted_tractable(s0: nat, s1: nat)
     requires s0 > 0, s1 > 0,
     ensures ({
@@ -2300,20 +2300,20 @@ proof fn lemma_cm_2d_sorted_tractable(s0: nat, s1: nat)
     let l = make_column_major(seq![s0, s1]);
     assert(l.shape =~= seq![s0, s1]);
     assert(l.stride =~= seq![1int, s0 as int]);
-    // valid
+    //  valid
     assert(l.valid()) by {
         assert forall|i: int| 0 <= i < l.shape.len() implies #[trigger] l.shape[i] > 0 by {};
     };
-    // sorted: stride[0] = 1 <= s0 = stride[1]
+    //  sorted: stride[0] = 1 <= s0 = stride[1]
     assert(l.is_sorted()) by {
         assert forall|i: int| 0 <= i < l.stride.len() as int - 1
         implies l.stride[i] <= #[trigger] l.stride[i + 1] by {};
     };
-    // tractable: stride[0]*shape[0] = 1*s0 = s0. stride[1] = s0. s0 % s0 == 0.
+    //  tractable: stride[0]*shape[0] = 1*s0 = s0. stride[1] = s0. s0 % s0 == 0.
     assert(l.is_tractable()) by {
         assert forall|i: int| 0 <= i < l.stride.len() as int - 1
         implies #[trigger] l.tractable_at(i) by {
-            // tractable_at(0): product = shape[0]*stride[0] = s0*1 = s0. stride[1] = s0. s0 % s0 == 0.
+            //  tractable_at(0): product = shape[0]*stride[0] = s0*1 = s0. stride[1] = s0. s0 % s0 == 0.
             assert((l.shape[0] as int) * l.stride[0] == s0 as int) by {
                 vstd::arithmetic::mul::lemma_mul_basics(s0 as int);
             };
@@ -2321,13 +2321,13 @@ proof fn lemma_cm_2d_sorted_tractable(s0: nat, s1: nat)
             assert(l.tractable_at(0));
         };
     };
-    // non-negative + stride[0] > 0
+    //  non-negative + stride[0] > 0
     assert(l.non_negative_strides()) by {
         assert forall|i: int| 0 <= i < l.stride.len() implies #[trigger] l.stride[i] >= 0 by {};
     };
 }
 
-/// divide_admissible for 2D column-major layouts when tile shapes divide A shapes.
+///  divide_admissible for 2D column-major layouts when tile shapes divide A shapes.
 pub proof fn lemma_cm_2d_divide_admissible(
     a0: nat, a1: nat, t0: nat, t1: nat,
 )
@@ -2347,18 +2347,18 @@ pub proof fn lemma_cm_2d_divide_admissible(
     lemma_cm_2d_sorted_tractable(t0, t1);
     lemma_cm_2d_strides(t0, t1);
 
-    // complement_admissible(tile, size(a))
-    // size(a) = a0 * a1. tile size = t0 * t1. t0|a0 and t1|a1 → t0*t1 | a0*a1.
+    //  complement_admissible(tile, size(a))
+    //  size(a) = a0 * a1. tile size = t0 * t1. t0|a0 and t1|a1 → t0*t1 | a0*a1.
     crate::proof::shape_lemmas::lemma_shape_size_single(a0);
     crate::runtime::shape_helpers::lemma_shape_size_split(seq![a0, a1], 1);
     assert(seq![a0, a1].take(1) =~= seq![a0]);
     crate::proof::shape_lemmas::lemma_shape_size_single(a1);
     assert(seq![a0, a1].skip(1) =~= seq![a1]);
 
-    // Last stride_product of tile: shape[1] * stride[1] = t1 * t0
+    //  Last stride_product of tile: shape[1] * stride[1] = t1 * t0
     assert(tile.stride[1] == t0 as int);
     assert((tile.shape.last() as int) * tile.stride.last() == (t1 as int) * (t0 as int));
-    // (a0*a1) % (t0*t1) == 0: from a0 = t0*q0, a1 = t1*q1, a0*a1 = (t0*t1)*(q0*q1)
+    //  (a0*a1) % (t0*t1) == 0: from a0 = t0*q0, a1 = t1*q1, a0*a1 = (t0*t1)*(q0*q1)
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a0 as int, t0 as int);
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(a1 as int, t1 as int);
     let q0 = a0 / t0;
@@ -2372,30 +2372,30 @@ pub proof fn lemma_cm_2d_divide_admissible(
     assert(((t0 * t1) as int) * ((q0 * q1) as int) == (a0 * a1) as int) by (nonlinear_arith)
         requires a0 * a1 == (t0 * t1) * (q0 * q1);
 
-    // shape_size(a.shape) == a0 * a1
+    //  shape_size(a.shape) == a0 * a1
     assert(shape_size(seq![a0, a1]) == a0 * a1);
     let m_val = shape_size(a.shape);
     assert(m_val == a0 * a1);
     assert(m_val > 0nat) by (nonlinear_arith) requires a0 > 0, a1 > 0, m_val == a0 * a1;
 
-    // tile.shape = [t0, t1], tile.stride = [1, t0]
+    //  tile.shape = [t0, t1], tile.stride = [1, t0]
     assert(tile.shape =~= seq![t0, t1]);
     assert(tile.stride =~= seq![1int, t0 as int]);
     assert(tile.shape.last() == t1);
     assert(tile.stride.last() == t0 as int);
-    // Divisibility: m_val % (t1 * t0) == 0 (commutative with t0 * t1)
-    // (a0*a1) % (t0*t1) == 0: use lemma_multiple_scaled
-    // a0 % t0 == 0 → (a1 * a0) % t0 == 0 (from multiple_scaled)
-    // Actually just use the fundamental decomposition:
-    // a0 = t0*q0, a1 = t1*q1, so a0*a1 = (t0*t1)*(q0*q1).
-    // Prove divisibility for complement_admissible
+    //  Divisibility: m_val % (t1 * t0) == 0 (commutative with t0 * t1)
+    //  (a0*a1) % (t0*t1) == 0: use lemma_multiple_scaled
+    //  a0 % t0 == 0 → (a1 * a0) % t0 == 0 (from multiple_scaled)
+    //  Actually just use the fundamental decomposition:
+    //  a0 = t0*q0, a1 = t1*q1, so a0*a1 = (t0*t1)*(q0*q1).
+    //  Prove divisibility for complement_admissible
     let last_prod: int = (tile.shape.last() as int) * tile.stride.last();
     assert(tile.shape.last() == t1);
     assert(tile.stride.last() == t0 as int);
     vstd::arithmetic::div_mod::lemma_mod_multiples_basic((q0 * q1) as int, last_prod);
-    // gives: ((q0*q1) * last_prod) % last_prod == 0
-    // Need: (m_val as int) % last_prod == 0
-    // Since m_val = a0*a1 = (t0*q0)*(t1*q1) = (t1*t0)*(q0*q1) = last_prod*(q0*q1)
+    //  gives: ((q0*q1) * last_prod) % last_prod == 0
+    //  Need: (m_val as int) % last_prod == 0
+    //  Since m_val = a0*a1 = (t0*q0)*(t1*q1) = (t1*t0)*(q0*q1) = last_prod*(q0*q1)
     assert((m_val as int) == ((q0 * q1) as int) * last_prod) by (nonlinear_arith)
         requires
             m_val as int == (a0 * a1) as int,
@@ -2404,12 +2404,12 @@ pub proof fn lemma_cm_2d_divide_admissible(
             (t0 * t1) as int == (t1 as int) * (t0 as int);
     assert((m_val as int) % ((tile.shape.last() as int) * tile.stride.last()) == 0);
 
-    // complement_admissible
+    //  complement_admissible
     assert(crate::complement::complement_admissible(&tile, m_val));
 }
 
-/// Row-major GEMM: after transposing A[M,K] to column-major (K,M),
-/// logical_divide has identity offset.
+///  Row-major GEMM: after transposing A[M,K] to column-major (K,M),
+///  logical_divide has identity offset.
 pub proof fn lemma_row_major_gemm_divide_identity(
     m: nat, k: nat,
     tile_k: nat, tile_m: nat,
@@ -2430,7 +2430,7 @@ pub proof fn lemma_row_major_gemm_divide_identity(
     let a_cm = make_column_major(seq![k, m]);
     let tile = make_column_major(seq![tile_k, tile_m]);
 
-    // General-rank divide admissibility
+    //  General-rank divide admissibility
     let ghost a_shape = seq![k, m];
     let ghost t_shape = seq![tile_k, tile_m];
     assert(shape_valid(a_shape)) by {
@@ -2444,7 +2444,7 @@ pub proof fn lemma_row_major_gemm_divide_identity(
     by {};
     lemma_cm_divide_admissible(a_shape, t_shape);
 
-    // shape_size(a_cm.shape) == k * m
+    //  shape_size(a_cm.shape) == k * m
     lemma_cm_2d_strides(k, m);
     crate::proof::shape_lemmas::lemma_shape_size_single(k);
     crate::runtime::shape_helpers::lemma_shape_size_split(seq![k, m], 1);
@@ -2457,12 +2457,12 @@ pub proof fn lemma_row_major_gemm_divide_identity(
         &a_cm, &tile, x);
 }
 
-// ══════════════════════════════════════════════════════════════
-// E2E GEMM correctness proofs (Feature 5 Round 6)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  E2E GEMM correctness proofs (Feature 5 Round 6)
+//  ══════════════════════════════════════════════════════════════
 
-/// Single CTA computes correct partial output:
-/// After processing all K-tiles, accumulator[i,j] ≡ gemm_mac_value(a, b, gi, gj, K).
+///  Single CTA computes correct partial output:
+///  After processing all K-tiles, accumulator[i,j] ≡ gemm_mac_value(a, b, gi, gj, K).
 pub proof fn lemma_cta_computes_mac<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -2471,16 +2471,16 @@ pub proof fn lemma_cta_computes_mac<R: Ring>(
     requires
         bk > 0, k_size > 0,
     ensures
-        // The full MAC over [0, k_size) equals the tiled MAC over [0, k_size)
+        //  The full MAC over [0, k_size) equals the tiled MAC over [0, k_size)
         gemm_mac_value::<R>(a_val, b_val, gi, gj, k_size).eqv(
             gemm_tiled_mac_value::<R>(a_val, b_val, gi, gj, 0, k_size)),
 {
     lemma_mac_k_tile_split::<R>(a_val, b_val, gi, gj, k_size, bk);
 }
 
-/// Master GEMM correctness theorem: gemm_mac_value IS the standard matrix multiply sum.
-/// This is a definitional theorem — gemm_mac_value(a, b, i, j, k) is literally
-/// sum_k(a(i,k) * b(k,j)), so the proof is reflexivity.
+///  Master GEMM correctness theorem: gemm_mac_value IS the standard matrix multiply sum.
+///  This is a definitional theorem — gemm_mac_value(a, b, i, j, k) is literally
+///  sum_k(a(i,k) * b(k,j)), so the proof is reflexivity.
 pub proof fn lemma_gemm_output_correct<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -2490,11 +2490,11 @@ pub proof fn lemma_gemm_output_correct<R: Ring>(
         gemm_mac_value::<R>(a_val, b_val, i, j, k).eqv(
             sum::<R>(|kk: int| a_val(i, kk as nat).mul(b_val(kk as nat, j)), 0, k as int)),
 {
-    // gemm_mac_value IS sum(|k| a(i,k)*b(k,j), 0, k) by definition
+    //  gemm_mac_value IS sum(|k| a(i,k)*b(k,j), 0, k) by definition
     R::axiom_eqv_reflexive(gemm_mac_value::<R>(a_val, b_val, i, j, k));
 }
 
-/// Full pipeline correctness: structural + data correctness combined.
+///  Full pipeline correctness: structural + data correctness combined.
 pub proof fn lemma_gemm_full_correctness<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -2515,26 +2515,26 @@ pub proof fn lemma_gemm_full_correctness<R: Ring>(
         smem_a.stride =~= column_major_strides(smem_a.shape),
         smem_b.stride =~= column_major_strides(smem_b.shape),
     ensures
-        // 1. Every output element is computed
+        //  1. Every output element is computed
         gemm_output_covered(m, n, bm, bn),
-        // 2. All K elements contribute
+        //  2. All K elements contribute
         k_reduction_complete(k, bk),
-        // 3. Outputs don't collide
+        //  3. Outputs don't collide
         gemm_output_injective(c_layout, m, n),
-        // 4. Data flows correctly through pipeline
+        //  4. Data flows correctly through pipeline
         forall|x: nat| x < smem_a.size() ==> smem_a.offset(x) == x as int,
         forall|x: nat| x < smem_b.size() ==> smem_b.offset(x) == x as int,
-        // 5. Each output element equals the MAC value (definitional)
+        //  5. Each output element equals the MAC value (definitional)
         forall|i: nat, j: nat| i < m && j < n ==>
             gemm_mac_value::<R>(a_val, b_val, i, j, k).eqv(
                 sum::<R>(|kk: int| a_val(i, kk as nat).mul(b_val(kk as nat, j)), 0, k as int)),
 {
-    // Structural correctness
+    //  Structural correctness
     lemma_gemm_pipeline_correct(m, n, k, bm, bn, bk,
         g2s_a, g2s_b, smem_a, smem_b, s2r_a, s2r_b,
         mma_thr, mma_val, a_layout, b_layout, c_layout);
 
-    // SMEM identity offsets
+    //  SMEM identity offsets
     assert forall|x: nat| x < smem_a.size() implies smem_a.offset(x) == x as int by {
         lemma_smem_identity_offset(smem_a, x);
     };
@@ -2542,7 +2542,7 @@ pub proof fn lemma_gemm_full_correctness<R: Ring>(
         lemma_smem_identity_offset(smem_b, x);
     };
 
-    // Data correctness: gemm_mac_value IS the sum by definition
+    //  Data correctness: gemm_mac_value IS the sum by definition
     assert forall|i: nat, j: nat| i < m && j < n implies
         gemm_mac_value::<R>(a_val, b_val, i, j, k).eqv(
             sum::<R>(|kk: int| a_val(i, kk as nat).mul(b_val(kk as nat, j)), 0, k as int))
@@ -2551,11 +2551,11 @@ pub proof fn lemma_gemm_full_correctness<R: Ring>(
     };
 }
 
-// ══════════════════════════════════════════════════════════════
-// K-loop pipeline safety proofs (Feature 4 Round 7)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  K-loop pipeline safety proofs (Feature 4 Round 7)
+//  ══════════════════════════════════════════════════════════════
 
-/// K-loop base case: accumulator starts at zero ≡ sum of 0 tiles.
+///  K-loop base case: accumulator starts at zero ≡ sum of 0 tiles.
 pub proof fn lemma_k_loop_base<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -2565,8 +2565,8 @@ pub proof fn lemma_k_loop_base<R: Ring>(
     ensures
         k_loop_acc_invariant::<R>(a_val, b_val, i, j, R::zero(), 0, bk, k_size),
 {
-    // iteration=0 → k_end = min(0*bk, k_size) = 0
-    // acc ≡ tiled_mac(0, 0) ≡ zero
+    //  iteration=0 → k_end = min(0*bk, k_size) = 0
+    //  acc ≡ tiled_mac(0, 0) ≡ zero
     lemma_mac_empty::<R>(a_val, b_val, i, j, 0);
     R::axiom_eqv_symmetric(
         gemm_tiled_mac_value::<R>(a_val, b_val, i, j, 0, 0),
@@ -2574,8 +2574,8 @@ pub proof fn lemma_k_loop_base<R: Ring>(
     );
 }
 
-/// K-loop iteration preserves accumulator invariant.
-/// After adding this tile's contribution, invariant holds for iteration+1.
+///  K-loop iteration preserves accumulator invariant.
+///  After adding this tile's contribution, invariant holds for iteration+1.
 pub proof fn lemma_k_loop_step<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -2585,7 +2585,7 @@ pub proof fn lemma_k_loop_step<R: Ring>(
     requires
         bk > 0,
         k_size > 0,
-        iteration * bk < k_size,  // not past the end
+        iteration * bk < k_size,  //  not past the end
         k_loop_acc_invariant::<R>(a_val, b_val, i, j, acc, iteration, bk, k_size),
     ensures ({
         let k_start = iteration * bk;
@@ -2598,46 +2598,46 @@ pub proof fn lemma_k_loop_step<R: Ring>(
     let k_end = if (iteration + 1) * bk <= k_size { (iteration + 1) * bk } else { k_size };
     let tile_mac = gemm_tiled_mac_value::<R>(a_val, b_val, i, j, k_start, k_end);
 
-    // Current invariant: acc ≡ tiled_mac(0, k_start)
-    // (since iteration * bk < k_size → k_end_for_iteration = iteration * bk = k_start)
+    //  Current invariant: acc ≡ tiled_mac(0, k_start)
+    //  (since iteration * bk < k_size → k_end_for_iteration = iteration * bk = k_start)
     assert(iteration * bk <= k_size) by (nonlinear_arith)
         requires iteration * bk < k_size;
     let prev_k_end = iteration * bk;
     assert(prev_k_end == k_start);
 
-    // acc ≡ tiled_mac(0, k_start)
+    //  acc ≡ tiled_mac(0, k_start)
     let prev_mac = gemm_tiled_mac_value::<R>(a_val, b_val, i, j, 0, k_start);
 
-    // k_start <= k_end: since k_start < k_size and k_end = min((iter+1)*bk, k_size) >= k_size or >= (iter+1)*bk > iter*bk = k_start
+    //  k_start <= k_end: since k_start < k_size and k_end = min((iter+1)*bk, k_size) >= k_size or >= (iter+1)*bk > iter*bk = k_start
     assert(k_start <= k_end) by (nonlinear_arith)
         requires iteration * bk < k_size, bk > 0nat,
             k_start == iteration * bk,
             k_end == (if (iteration + 1) * bk <= k_size { (iteration + 1) * bk } else { k_size });
 
-    // Split: tiled_mac(0, k_end) ≡ tiled_mac(0, k_start) + tiled_mac(k_start, k_end)
+    //  Split: tiled_mac(0, k_end) ≡ tiled_mac(0, k_start) + tiled_mac(k_start, k_end)
     lemma_mac_accumulate::<R>(a_val, b_val, i, j, 0, k_start, k_end);
 
-    // acc.add(tile_mac) ≡ prev_mac.add(tile_mac) ≡ tiled_mac(0, k_end)
-    // Step 1: acc.add(tile_mac) ≡ prev_mac.add(tile_mac) by congruence on acc ≡ prev_mac
+    //  acc.add(tile_mac) ≡ prev_mac.add(tile_mac) ≡ tiled_mac(0, k_end)
+    //  Step 1: acc.add(tile_mac) ≡ prev_mac.add(tile_mac) by congruence on acc ≡ prev_mac
     R::axiom_eqv_reflexive(tile_mac);
     verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence::<R>(
         acc, prev_mac, tile_mac, tile_mac,
     );
-    // acc.add(tile_mac) ≡ prev_mac.add(tile_mac)
+    //  acc.add(tile_mac) ≡ prev_mac.add(tile_mac)
 
-    // Step 2: prev_mac.add(tile_mac) ≡ tiled_mac(0, k_end) by symmetry of split
+    //  Step 2: prev_mac.add(tile_mac) ≡ tiled_mac(0, k_end) by symmetry of split
     let full_mac = gemm_tiled_mac_value::<R>(a_val, b_val, i, j, 0, k_end);
     R::axiom_eqv_symmetric(full_mac, prev_mac.add(tile_mac));
 
-    // Step 3: chain transitivity
+    //  Step 3: chain transitivity
     R::axiom_eqv_transitive(acc.add(tile_mac), prev_mac.add(tile_mac), full_mac);
 
-    // Now we need to show this matches k_loop_acc_invariant for iteration+1
-    // k_end_for_iter+1 = if (iteration+1)*bk <= k_size { (iteration+1)*bk } else { k_size }
-    // = k_end by definition. So acc.add(tile_mac) ≡ tiled_mac(0, k_end) = tiled_mac(0, k_end_iter+1).
+    //  Now we need to show this matches k_loop_acc_invariant for iteration+1
+    //  k_end_for_iter+1 = if (iteration+1)*bk <= k_size { (iteration+1)*bk } else { k_size }
+    //  = k_end by definition. So acc.add(tile_mac) ≡ tiled_mac(0, k_end) = tiled_mac(0, k_end_iter+1).
 }
 
-/// K-loop completion: after all tiles, acc ≡ full MAC.
+///  K-loop completion: after all tiles, acc ≡ full MAC.
 pub proof fn lemma_k_loop_complete<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -2652,24 +2652,24 @@ pub proof fn lemma_k_loop_complete<R: Ring>(
         acc.eqv(gemm_mac_value::<R>(a_val, b_val, i, j, k_size)),
 {
     let n_tiles = num_tiles_ceil(k_size, bk);
-    // k_end for iteration=n_tiles: if n_tiles*bk <= k_size then n_tiles*bk else k_size
-    // n_tiles = ceil_div(k_size, bk) → n_tiles*bk >= k_size → k_end = k_size
+    //  k_end for iteration=n_tiles: if n_tiles*bk <= k_size then n_tiles*bk else k_size
+    //  n_tiles = ceil_div(k_size, bk) → n_tiles*bk >= k_size → k_end = k_size
     assert(n_tiles * bk >= k_size) by {
         crate::proof::predication_lemmas::lemma_ceil_div_mul_ge(k_size, bk);
     };
-    // So acc ≡ tiled_mac(0, k_size)
+    //  So acc ≡ tiled_mac(0, k_size)
     let full_tiled = gemm_tiled_mac_value::<R>(a_val, b_val, i, j, 0, k_size);
-    // tiled_mac(0, k_size) ≡ mac_value(k_size) by definition (both are sum(f, 0, k_size))
+    //  tiled_mac(0, k_size) ≡ mac_value(k_size) by definition (both are sum(f, 0, k_size))
     R::axiom_eqv_reflexive(full_tiled);
-    // They're the same: gemm_mac_value = sum(f, 0, k) = gemm_tiled_mac_value(0, k)
+    //  They're the same: gemm_mac_value = sum(f, 0, k) = gemm_tiled_mac_value(0, k)
     R::axiom_eqv_transitive(acc, full_tiled, gemm_mac_value::<R>(a_val, b_val, i, j, k_size));
 }
 
-// ══════════════════════════════════════════════════════════════
-// Contraction instantiation proofs (Feature 2 Round 7)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Contraction instantiation proofs (Feature 2 Round 7)
+//  ══════════════════════════════════════════════════════════════
 
-/// Matrix-vector contraction has valid mode sets for rank-2 A, rank-1 x.
+///  Matrix-vector contraction has valid mode sets for rank-2 A, rank-1 x.
 pub proof fn lemma_matvec_contraction_valid()
     ensures contraction_mode_sets_valid(&matvec_as_contraction(), 2, 1),
 {
@@ -2679,7 +2679,7 @@ pub proof fn lemma_matvec_contraction_valid()
     assert(spec.free_modes_a[0] < 2);
 }
 
-/// Matrix-vector contraction shapes match when K dims agree.
+///  Matrix-vector contraction shapes match when K dims agree.
 pub proof fn lemma_matvec_contraction_shapes_match(a_shape: Seq<nat>, x_shape: Seq<nat>)
     requires
         a_shape.len() == 2,
@@ -2695,7 +2695,7 @@ pub proof fn lemma_matvec_contraction_shapes_match(a_shape: Seq<nat>, x_shape: S
            gather_shape(&x_shape, &spec.contraction_modes_b));
 }
 
-/// Matrix-vector contraction admissibility.
+///  Matrix-vector contraction admissibility.
 pub proof fn lemma_matvec_contraction_admissible(a_shape: Seq<nat>, x_shape: Seq<nat>)
     requires
         a_shape.len() == 2,
@@ -2708,7 +2708,7 @@ pub proof fn lemma_matvec_contraction_admissible(a_shape: Seq<nat>, x_shape: Seq
     lemma_matvec_contraction_shapes_match(a_shape, x_shape);
 }
 
-/// Matrix-vector output shape = (m,).
+///  Matrix-vector output shape = (m,).
 pub proof fn lemma_matvec_output_shape(a_shape: Seq<nat>, x_shape: Seq<nat>)
     requires a_shape.len() == 2, x_shape.len() == 1,
     ensures
@@ -2725,7 +2725,7 @@ pub proof fn lemma_matvec_output_shape(a_shape: Seq<nat>, x_shape: Seq<nat>)
     assert(batch.add(free_a).add(free_b) =~= seq![a_shape[0]]);
 }
 
-/// Matrix-vector reduction size = K (a_shape[1]).
+///  Matrix-vector reduction size = K (a_shape[1]).
 pub proof fn lemma_matvec_reduction_size(a_shape: Seq<nat>)
     requires a_shape.len() == 2,
     ensures contraction_reduction_size(&matvec_as_contraction(), &a_shape) == a_shape[1],
@@ -2735,7 +2735,7 @@ pub proof fn lemma_matvec_reduction_size(a_shape: Seq<nat>)
     lemma_gathered_product_single(&a_shape, 1);
 }
 
-/// Outer product contraction has valid mode sets for rank-1 inputs.
+///  Outer product contraction has valid mode sets for rank-1 inputs.
 pub proof fn lemma_outer_product_contraction_valid()
     ensures contraction_mode_sets_valid(&outer_product_as_contraction(), 1, 1),
 {
@@ -2744,7 +2744,7 @@ pub proof fn lemma_outer_product_contraction_valid()
     assert(spec.free_modes_b[0] < 1);
 }
 
-/// Outer product contraction shapes match (trivially — no contraction/batch modes).
+///  Outer product contraction shapes match (trivially — no contraction/batch modes).
 pub proof fn lemma_outer_product_contraction_shapes_match(u_shape: Seq<nat>, v_shape: Seq<nat>)
     requires u_shape.len() == 1, v_shape.len() == 1,
     ensures contraction_shapes_match(&outer_product_as_contraction(), &u_shape, &v_shape),
@@ -2756,7 +2756,7 @@ pub proof fn lemma_outer_product_contraction_shapes_match(u_shape: Seq<nat>, v_s
            gather_shape(&v_shape, &spec.contraction_modes_b));
 }
 
-/// Outer product contraction admissibility.
+///  Outer product contraction admissibility.
 pub proof fn lemma_outer_product_contraction_admissible(u_shape: Seq<nat>, v_shape: Seq<nat>)
     requires u_shape.len() == 1, v_shape.len() == 1,
     ensures contraction_admissible(&outer_product_as_contraction(), &u_shape, &v_shape),
@@ -2765,7 +2765,7 @@ pub proof fn lemma_outer_product_contraction_admissible(u_shape: Seq<nat>, v_sha
     lemma_outer_product_contraction_shapes_match(u_shape, v_shape);
 }
 
-/// Outer product output shape = (m, n).
+///  Outer product output shape = (m, n).
 pub proof fn lemma_outer_product_output_shape(u_shape: Seq<nat>, v_shape: Seq<nat>)
     requires u_shape.len() == 1, v_shape.len() == 1,
     ensures
@@ -2782,7 +2782,7 @@ pub proof fn lemma_outer_product_output_shape(u_shape: Seq<nat>, v_shape: Seq<na
     assert(batch.add(free_a).add(free_b) =~= seq![u_shape[0], v_shape[0]]);
 }
 
-/// Outer product reduction size = 1 (no contraction modes).
+///  Outer product reduction size = 1 (no contraction modes).
 pub proof fn lemma_outer_product_reduction_size(u_shape: Seq<nat>)
     requires u_shape.len() == 1,
     ensures contraction_reduction_size(&outer_product_as_contraction(), &u_shape) == 1nat,
@@ -2792,7 +2792,7 @@ pub proof fn lemma_outer_product_reduction_size(u_shape: Seq<nat>)
     lemma_gathered_product_empty(&u_shape);
 }
 
-/// Dot product contraction has valid mode sets for rank-1 inputs.
+///  Dot product contraction has valid mode sets for rank-1 inputs.
 pub proof fn lemma_dot_product_contraction_valid()
     ensures contraction_mode_sets_valid(&dot_product_as_contraction(), 1, 1),
 {
@@ -2801,7 +2801,7 @@ pub proof fn lemma_dot_product_contraction_valid()
     assert(spec.contraction_modes_b[0] < 1);
 }
 
-/// Dot product contraction shapes match when K dims agree.
+///  Dot product contraction shapes match when K dims agree.
 pub proof fn lemma_dot_product_contraction_shapes_match(a_shape: Seq<nat>, b_shape: Seq<nat>)
     requires
         a_shape.len() == 1,
@@ -2817,7 +2817,7 @@ pub proof fn lemma_dot_product_contraction_shapes_match(a_shape: Seq<nat>, b_sha
            gather_shape(&b_shape, &spec.contraction_modes_b));
 }
 
-/// Dot product contraction admissibility.
+///  Dot product contraction admissibility.
 pub proof fn lemma_dot_product_contraction_admissible(a_shape: Seq<nat>, b_shape: Seq<nat>)
     requires
         a_shape.len() == 1,
@@ -2830,7 +2830,7 @@ pub proof fn lemma_dot_product_contraction_admissible(a_shape: Seq<nat>, b_shape
     lemma_dot_product_contraction_shapes_match(a_shape, b_shape);
 }
 
-/// Dot product output shape = () (scalar — empty shape).
+///  Dot product output shape = () (scalar — empty shape).
 pub proof fn lemma_dot_product_output_shape(a_shape: Seq<nat>, b_shape: Seq<nat>)
     requires a_shape.len() == 1, b_shape.len() == 1,
     ensures
@@ -2847,7 +2847,7 @@ pub proof fn lemma_dot_product_output_shape(a_shape: Seq<nat>, b_shape: Seq<nat>
     assert(batch.add(free_a).add(free_b) =~= Seq::<nat>::empty());
 }
 
-/// Dot product reduction size = K (a_shape[0]).
+///  Dot product reduction size = K (a_shape[0]).
 pub proof fn lemma_dot_product_reduction_size(a_shape: Seq<nat>)
     requires a_shape.len() == 1,
     ensures contraction_reduction_size(&dot_product_as_contraction(), &a_shape) == a_shape[0],
@@ -2857,11 +2857,11 @@ pub proof fn lemma_dot_product_reduction_size(a_shape: Seq<nat>)
     lemma_gathered_product_single(&a_shape, 0);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Intra-CTA epilogue disjointness
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Intra-CTA epilogue disjointness
+//  ══════════════════════════════════════════════════════════════
 
-/// Within a single CTA tile, valid elements produce distinct C offsets.
+///  Within a single CTA tile, valid elements produce distinct C offsets.
 pub proof fn lemma_epilogue_intra_cta_disjoint(
     c_layout: &LayoutSpec, m: nat, n: nat, bm: nat, bn: nat,
     ti: nat, tj: nat,
@@ -2887,12 +2887,12 @@ pub proof fn lemma_epilogue_intra_cta_disjoint(
     let gi2 = ti * bm + ei2;
     let gj2 = tj * bn + ej2;
 
-    // Different element indices within same tile → different global indices
+    //  Different element indices within same tile → different global indices
     if ei1 != ei2 {
         assert(gi1 != gi2) by (nonlinear_arith)
             requires ei1 != ei2, gi1 == ti * bm + ei1, gi2 == ti * bm + ei2;
     } else {
-        // ei1 == ei2, so ej1 != ej2
+        //  ei1 == ei2, so ej1 != ej2
         assert(gj1 != gj2) by (nonlinear_arith)
             requires ej1 != ej2, gj1 == tj * bn + ej1, gj2 == tj * bn + ej2;
     }
@@ -2900,14 +2900,14 @@ pub proof fn lemma_epilogue_intra_cta_disjoint(
     lemma_gemm_c_offset_injective(c_layout, m, n, gi1, gj1, gi2, gj2);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Integer MAC bridge lemmas (Round 10)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Integer MAC bridge lemmas (Round 10)
+//  ══════════════════════════════════════════════════════════════
 
 use crate::runtime::gemm::*;
 
-/// sum_int_products over offsets from gemm_mac_offsets == gemm_int_mac_partial.
-/// Both use right-peeling recursion so the induction is straightforward.
+///  sum_int_products over offsets from gemm_mac_offsets == gemm_int_mac_partial.
+///  Both use right-peeling recursion so the induction is straightforward.
 pub proof fn lemma_sum_int_products_matches_partial(
     a_layout: &LayoutSpec, b_layout: &LayoutSpec,
     a_data: Seq<i64>, b_data: Seq<i64>,
@@ -2929,32 +2929,32 @@ pub proof fn lemma_sum_int_products_matches_partial(
 {
     let count = (k_end - k_start) as nat;
     if k_start >= k_end {
-        // Both are 0
+        //  Both are 0
     } else {
-        // Right-peel: count > 0
-        // sum_int_products peels element at index (count-1)
-        // gemm_int_mac_partial peels k = k_end - 1
+        //  Right-peel: count > 0
+        //  sum_int_products peels element at index (count-1)
+        //  gemm_int_mac_partial peels k = k_end - 1
         let prev_count = (count - 1) as nat;
         let last_idx = (count - 1) as nat;
         let last_k = (k_end - 1) as nat;
 
-        // The last element's offsets match:
-        // a_offs[last_idx] == gemm_a_offset(a_layout, i, k_start + last_idx) == gemm_a_offset(a_layout, i, last_k)
+        //  The last element's offsets match:
+        //  a_offs[last_idx] == gemm_a_offset(a_layout, i, k_start + last_idx) == gemm_a_offset(a_layout, i, last_k)
         assert(k_start + last_idx == last_k);
 
-        // Recursive call on prefix
+        //  Recursive call on prefix
         lemma_sum_int_products_matches_partial(
             a_layout, b_layout, a_data, b_data,
             a_offs, b_offs, i, j, k_start, last_k,
         );
 
-        // sum_int_products on prefix uses same a_offs, b_offs arrays but with count-1
-        // Need: prefix offsets still match for idx < prev_count
-        // This is true because prev_count < count = a_offs.len()
+        //  sum_int_products on prefix uses same a_offs, b_offs arrays but with count-1
+        //  Need: prefix offsets still match for idx < prev_count
+        //  This is true because prev_count < count = a_offs.len()
     }
 }
 
-/// gemm_int_mac_partial splits: partial(k_start, k_end) == partial(k_start, k_mid) + partial(k_mid, k_end).
+///  gemm_int_mac_partial splits: partial(k_start, k_end) == partial(k_start, k_mid) + partial(k_mid, k_end).
 pub proof fn lemma_int_mac_split(
     a_layout: &LayoutSpec, b_layout: &LayoutSpec,
     a_data: Seq<i64>, b_data: Seq<i64>,
@@ -2968,24 +2968,24 @@ pub proof fn lemma_int_mac_split(
     decreases k_end - k_mid,
 {
     if k_mid >= k_end {
-        // partial(k_mid, k_end) == 0
+        //  partial(k_mid, k_end) == 0
     } else {
-        // Right-peel the last element from partial(k_start, k_end) and partial(k_mid, k_end)
+        //  Right-peel the last element from partial(k_start, k_end) and partial(k_mid, k_end)
         let last_k = (k_end - 1) as nat;
         let product = (a_data[gemm_a_offset(a_layout, i, last_k) as int] as int)
             * (b_data[gemm_b_offset(b_layout, last_k, j) as int] as int);
 
-        // partial(k_start, k_end) = partial(k_start, last_k) + product
-        // partial(k_mid, k_end)   = partial(k_mid, last_k) + product
-        // By induction: partial(k_start, last_k) = partial(k_start, k_mid) + partial(k_mid, last_k)
-        // So: partial(k_start, k_end) = partial(k_start, k_mid) + partial(k_mid, last_k) + product
-        //                             = partial(k_start, k_mid) + partial(k_mid, k_end)
+        //  partial(k_start, k_end) = partial(k_start, last_k) + product
+        //  partial(k_mid, k_end)   = partial(k_mid, last_k) + product
+        //  By induction: partial(k_start, last_k) = partial(k_start, k_mid) + partial(k_mid, last_k)
+        //  So: partial(k_start, k_end) = partial(k_start, k_mid) + partial(k_mid, last_k) + product
+        //                              = partial(k_start, k_mid) + partial(k_mid, k_end)
         lemma_int_mac_split(a_layout, b_layout, a_data, b_data, i, j, k_start, k_mid, last_k);
     }
 }
 
-/// Bound on gemm_int_mac_partial: |partial(k_start, k_end)| <= (k_end - k_start) * acc_bound
-/// when each product is bounded by acc_bound.
+///  Bound on gemm_int_mac_partial: |partial(k_start, k_end)| <= (k_end - k_start) * acc_bound
+///  when each product is bounded by acc_bound.
 pub proof fn lemma_int_mac_partial_bound(
     a_layout: &LayoutSpec, b_layout: &LayoutSpec,
     a_data: Seq<i64>, b_data: Seq<i64>,
@@ -3005,7 +3005,7 @@ pub proof fn lemma_int_mac_partial_bound(
     decreases k_end - k_start,
 {
     if k_start >= k_end {
-        // base: partial == 0
+        //  base: partial == 0
     } else {
         let prev = (k_end - 1) as nat;
         lemma_int_mac_partial_bound(a_layout, b_layout, a_data, b_data, i, j, k_start, prev, acc_bound);
@@ -3023,7 +3023,7 @@ pub proof fn lemma_int_mac_partial_bound(
     }
 }
 
-/// The last tile ends at k_size.
+///  The last tile ends at k_size.
 pub proof fn lemma_last_tile_end(k_size: nat, bk: nat)
     requires bk > 0, k_size > 0,
     ensures tile_k_end((num_tiles_ceil(k_size, bk) - 1) as nat, bk, k_size) == k_size,
@@ -3031,11 +3031,11 @@ pub proof fn lemma_last_tile_end(k_size: nat, bk: nat)
     let k_tiles = num_tiles_ceil(k_size, bk);
     let last = (k_tiles - 1) as nat;
 
-    // k_tiles = ceil(k_size / bk) >= 1
+    //  k_tiles = ceil(k_size / bk) >= 1
     crate::proof::predication_lemmas::lemma_ceil_div_mul_ge(k_size, bk);
     assert(k_tiles * bk >= k_size);
-    // k_tiles >= 1 because k_size > 0 and bk > 0
-    // ceil_div(k_size, bk) = (k_size + bk - 1) / bk >= bk / bk = 1
+    //  k_tiles >= 1 because k_size > 0 and bk > 0
+    //  ceil_div(k_size, bk) = (k_size + bk - 1) / bk >= bk / bk = 1
     assert(k_tiles >= 1) by {
         assert(k_size + bk - 1 >= bk) by (nonlinear_arith)
             requires k_size >= 1nat;
@@ -3044,32 +3044,32 @@ pub proof fn lemma_last_tile_end(k_size: nat, bk: nat)
             vstd::arithmetic::div_mod::lemma_div_by_self(bk as int);
         };
     };
-    // tile_k_end(last, bk, k_size) = min((last+1)*bk, k_size) = min(k_tiles*bk, k_size)
-    // k_tiles*bk >= k_size, so min = k_size
+    //  tile_k_end(last, bk, k_size) = min((last+1)*bk, k_size) = min(k_tiles*bk, k_size)
+    //  k_tiles*bk >= k_size, so min = k_size
     assert(tile_k_end(last, bk, k_size) == k_size);
 }
 
-/// tile_k_end(t, bk, k_size) relates to t: tile_k_end(0) = min(bk, k_size) and
-/// tile_k_end(t) = t*bk if (t+1)*bk <= k_size, else k_size.
-/// Key: tile_k_end(t) == min((t+1)*bk, k_size).
-/// And for t == 0: tile_k_end starts from 0 (i.e., partial(0, tile_k_end(0))).
+///  tile_k_end(t, bk, k_size) relates to t: tile_k_end(0) = min(bk, k_size) and
+///  tile_k_end(t) = t*bk if (t+1)*bk <= k_size, else k_size.
+///  Key: tile_k_end(t) == min((t+1)*bk, k_size).
+///  And for t == 0: tile_k_end starts from 0 (i.e., partial(0, tile_k_end(0))).
 pub proof fn lemma_tile_k_end_prev(t: nat, bk: nat, k_size: nat)
     requires bk > 0, k_size > 0, t > 0, t <= num_tiles_ceil(k_size, bk),
     ensures
         tile_k_end((t - 1) as nat, bk, k_size) == if t * bk <= k_size { t * bk } else { k_size },
 {
     let prev = (t - 1) as nat;
-    // tile_k_end(prev, bk, k_size) = if (prev+1)*bk <= k_size { (prev+1)*bk } else { k_size }
-    // = if t*bk <= k_size { t*bk } else { k_size }
+    //  tile_k_end(prev, bk, k_size) = if (prev+1)*bk <= k_size { (prev+1)*bk } else { k_size }
+    //  = if t*bk <= k_size { t*bk } else { k_size }
     assert((prev + 1) == t);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Ring-generic bridge: from_int(gemm_int_mac) ≡ gemm_mac_value
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Ring-generic bridge: from_int(gemm_int_mac) ≡ gemm_mac_value
+//  ══════════════════════════════════════════════════════════════
 
-/// from_int distributes over gemm_int_mac_partial:
-/// from_int(partial(k_start, k_end)) ≡ sum(|k| from_int(a[k]*b[k]), k_start, k_end).
+///  from_int distributes over gemm_int_mac_partial:
+///  from_int(partial(k_start, k_end)) ≡ sum(|k| from_int(a[k]*b[k]), k_start, k_end).
 proof fn lemma_from_int_distributes_over_int_mac<R: Ring>(
     a_layout: &LayoutSpec, b_layout: &LayoutSpec,
     a_data: Seq<i64>, b_data: Seq<i64>,
@@ -3090,10 +3090,10 @@ proof fn lemma_from_int_distributes_over_int_mac<R: Ring>(
         * (b_data[gemm_b_offset(b_layout, k as nat, j) as int] as int));
 
     if k_start >= k_end {
-        // Base: both sides are zero
+        //  Base: both sides are zero
         lemma_from_int_zero::<R>();
         verus_algebra::summation::lemma_sum_empty::<R>(f, k_start as int, k_end as int);
-        // from_int(0).eqv(R::zero()) and sum(f,lo,lo).eqv(R::zero())
+        //  from_int(0).eqv(R::zero()) and sum(f,lo,lo).eqv(R::zero())
         R::axiom_eqv_symmetric(sum::<R>(f, k_start as int, k_end as int), R::zero());
         R::axiom_eqv_transitive(
             from_int::<R>(0),
@@ -3110,24 +3110,24 @@ proof fn lemma_from_int_distributes_over_int_mac<R: Ring>(
         let prod = (a_data[gemm_a_offset(a_layout, i, last) as int] as int)
                    * (b_data[gemm_b_offset(b_layout, last, j) as int] as int);
 
-        // IH: from_int(partial) ≡ sum(f, k_start, last)
+        //  IH: from_int(partial) ≡ sum(f, k_start, last)
         lemma_from_int_distributes_over_int_mac::<R>(a_layout, b_layout, a_data, b_data, i, j, k_start, last);
 
-        // from_int(partial + prod) ≡ from_int(partial) + from_int(prod)
+        //  from_int(partial + prod) ≡ from_int(partial) + from_int(prod)
         lemma_from_int_add::<R>(partial, prod);
 
-        // sum(f, k_start, k_end) ≡ sum(f, k_start, last) + f(last)
+        //  sum(f, k_start, k_end) ≡ sum(f, k_start, last) + f(last)
         verus_algebra::summation::lemma_sum_peel_last::<R>(f, k_start as int, k_end as int);
 
-        // Chain: from_int(partial).add(from_int(prod)) ≡ sum(f,k_start,last).add(f(last))
+        //  Chain: from_int(partial).add(from_int(prod)) ≡ sum(f,k_start,last).add(f(last))
         R::axiom_eqv_reflexive(from_int::<R>(prod));
         lemma_add_congruence::<R>(
             from_int::<R>(partial), sum::<R>(f, k_start as int, last as int),
             from_int::<R>(prod), from_int::<R>(prod),
         );
-        // LHS: from_int(partial+prod) ≡ from_int(partial).add(from_int(prod))
-        //       ≡ sum(f,k_start,last).add(f(last))
-        // RHS: sum(f,k_start,k_end) ≡ sum(f,k_start,last).add(f(last))
+        //  LHS: from_int(partial+prod) ≡ from_int(partial).add(from_int(prod))
+        //        ≡ sum(f,k_start,last).add(f(last))
+        //  RHS: sum(f,k_start,k_end) ≡ sum(f,k_start,last).add(f(last))
         R::axiom_eqv_transitive(
             from_int::<R>(partial + prod),
             from_int::<R>(partial).add(from_int::<R>(prod)),
@@ -3142,12 +3142,12 @@ proof fn lemma_from_int_distributes_over_int_mac<R: Ring>(
             sum::<R>(f, k_start as int, last as int).add(f(last as int)),
             sum::<R>(f, k_start as int, k_end as int),
         );
-        // gemm_int_mac_partial(k_start, k_end) = partial + prod by definition
+        //  gemm_int_mac_partial(k_start, k_end) = partial + prod by definition
         assert(gemm_int_mac_partial(a_layout, b_layout, a_data, b_data, i, j, k_start, k_end) == partial + prod);
     }
 }
 
-/// Pointwise from_int(a*b) ≡ from_int(a) * from_int(b) lifts to sum congruence.
+///  Pointwise from_int(a*b) ≡ from_int(a) * from_int(b) lifts to sum congruence.
 proof fn lemma_from_int_product_to_ring_product<R: Ring>(
     a_layout: &LayoutSpec, b_layout: &LayoutSpec,
     a_data: Seq<i64>, b_data: Seq<i64>,
@@ -3171,7 +3171,7 @@ proof fn lemma_from_int_product_to_ring_product<R: Ring>(
     let g = |k: int| from_int::<R>(a_data[gemm_a_offset(a_layout, i, k as nat) as int] as int)
         .mul(from_int::<R>(b_data[gemm_b_offset(b_layout, k as nat, j) as int] as int));
 
-    // Pointwise: from_int(a*b) ≡ from_int(a) * from_int(b)
+    //  Pointwise: from_int(a*b) ≡ from_int(a) * from_int(b)
     assert forall|k: int| lo <= k < hi implies (#[trigger] f(k)).eqv(g(k)) by {
         let av = a_data[gemm_a_offset(a_layout, i, k as nat) as int] as int;
         let bv = b_data[gemm_b_offset(b_layout, k as nat, j) as int] as int;
@@ -3180,7 +3180,7 @@ proof fn lemma_from_int_product_to_ring_product<R: Ring>(
     verus_algebra::summation::lemma_sum_congruence::<R>(f, g, lo, hi);
 }
 
-/// Master bridge: from_int(gemm_int_mac(...)) ≡ gemm_mac_value<R>(embed_a_val, embed_b_val, ...).
+///  Master bridge: from_int(gemm_int_mac(...)) ≡ gemm_mac_value<R>(embed_a_val, embed_b_val, ...).
 pub proof fn lemma_gemm_ring_bridge<R: Ring>(
     a_layout: &LayoutSpec, b_layout: &LayoutSpec,
     a_data: Seq<i64>, b_data: Seq<i64>,
@@ -3196,42 +3196,42 @@ pub proof fn lemma_gemm_ring_bridge<R: Ring>(
     let a_val = embed_a_val::<R>(a_layout, a_data);
     let b_val = embed_b_val::<R>(b_layout, b_data);
 
-    // The int-product closure (matches lemma_from_int_distributes_over_int_mac ensures RHS)
+    //  The int-product closure (matches lemma_from_int_distributes_over_int_mac ensures RHS)
     let f_prod = |k: int| from_int::<R>(
         (a_data[gemm_a_offset(a_layout, i, k as nat) as int] as int)
         * (b_data[gemm_b_offset(b_layout, k as nat, j) as int] as int));
 
-    // The Ring-product closure matching gemm_mac_value's inner function
+    //  The Ring-product closure matching gemm_mac_value's inner function
     let f_mac = |k: int| a_val(i, k as nat).mul(b_val(k as nat, j));
 
-    // Step 1: from_int(gemm_int_mac) ≡ sum(f_prod, 0, k_size)
+    //  Step 1: from_int(gemm_int_mac) ≡ sum(f_prod, 0, k_size)
     lemma_from_int_distributes_over_int_mac::<R>(
         a_layout, b_layout, a_data, b_data, i, j, 0, k_size);
 
-    // Step 2: pointwise f_prod(k) ≡ f_mac(k) by from_int_mul + embed unfolding
+    //  Step 2: pointwise f_prod(k) ≡ f_mac(k) by from_int_mul + embed unfolding
     assert forall|k: int| 0 <= k < k_size as int implies (#[trigger] f_prod(k)).eqv(f_mac(k)) by {
         let av = a_data[gemm_a_offset(a_layout, i, k as nat) as int] as int;
         let bv = b_data[gemm_b_offset(b_layout, k as nat, j) as int] as int;
         lemma_from_int_mul::<R>(av, bv);
     };
 
-    // Step 3: sum(f_prod) ≡ sum(f_mac) by congruence
+    //  Step 3: sum(f_prod) ≡ sum(f_mac) by congruence
     verus_algebra::summation::lemma_sum_congruence::<R>(f_prod, f_mac, 0, k_size as int);
 
-    // Step 4: chain from_int(mac) ≡ sum(f_prod) ≡ sum(f_mac)
+    //  Step 4: chain from_int(mac) ≡ sum(f_prod) ≡ sum(f_mac)
     R::axiom_eqv_transitive(
         from_int::<R>(gemm_int_mac(a_layout, b_layout, a_data, b_data, i, j, k_size)),
         sum::<R>(f_prod, 0, k_size as int),
         sum::<R>(f_mac, 0, k_size as int),
     );
-    // sum(f_mac) == gemm_mac_value(a_val, b_val, i, j, k_size) by definition
+    //  sum(f_mac) == gemm_mac_value(a_val, b_val, i, j, k_size) by definition
 }
 
-// ══════════════════════════════════════════════════════════════
-// Staged GEMM: shared-memory MAC equals direct MAC
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Staged GEMM: shared-memory MAC equals direct MAC
+//  ══════════════════════════════════════════════════════════════
 
-/// staged_int_mac over smem buffers equals gemm_int_mac_partial when smem data matches global data.
+///  staged_int_mac over smem buffers equals gemm_int_mac_partial when smem data matches global data.
 pub proof fn lemma_staged_mac_equals_direct(
     a_layout: &LayoutSpec, b_layout: &LayoutSpec,
     a_data: Seq<i64>, b_data: Seq<i64>,
@@ -3241,11 +3241,11 @@ pub proof fn lemma_staged_mac_equals_direct(
 )
     requires
         k_start <= k_end,
-        // smem_a row ei matches global A row gi for cols [k_start, k_end)
+        //  smem_a row ei matches global A row gi for cols [k_start, k_end)
         forall|c: nat| c < k_end - k_start ==>
             #[trigger] smem_a[(ei * stride_a + c) as int]
             == a_data[gemm_a_offset(a_layout, gi, k_start + c) as int],
-        // smem_b col ej matches global B col gj for rows [k_start, k_end)
+        //  smem_b col ej matches global B col gj for rows [k_start, k_end)
         forall|c: nat| c < k_end - k_start ==>
             #[trigger] smem_b[(c * stride_b + ej) as int]
             == b_data[gemm_b_offset(b_layout, k_start + c, gj) as int],
@@ -3256,44 +3256,44 @@ pub proof fn lemma_staged_mac_equals_direct(
 {
     let count = (k_end - k_start) as nat;
     if k_start >= k_end {
-        // Both sides are 0
+        //  Both sides are 0
     } else {
-        // Right-peel: both sides peel the last element (index count-1 / k_end-1)
+        //  Right-peel: both sides peel the last element (index count-1 / k_end-1)
         let last_c = (count - 1) as nat;
         let last_k = (k_end - 1) as nat;
 
-        // Inductive hypothesis: staged_int_mac(..., count-1) == partial(k_start, k_end-1)
+        //  Inductive hypothesis: staged_int_mac(..., count-1) == partial(k_start, k_end-1)
         lemma_staged_mac_equals_direct(
             a_layout, b_layout, a_data, b_data, smem_a, smem_b,
             gi, gj, ei, ej, k_start, last_k, stride_a, stride_b,
         );
 
-        // Last products match: smem_a[ei*stride_a + last_c] == a_data[A_off(gi, last_k)]
+        //  Last products match: smem_a[ei*stride_a + last_c] == a_data[A_off(gi, last_k)]
         assert(smem_a[(ei * stride_a + last_c) as int]
             == a_data[gemm_a_offset(a_layout, gi, last_k) as int]);
         assert(smem_b[(last_c * stride_b + ej) as int]
             == b_data[gemm_b_offset(b_layout, last_k, gj) as int]);
-        // Both sides = recursive part + last product, QED
+        //  Both sides = recursive part + last product, QED
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// End-to-end verified GEMM: all pieces connected
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  End-to-end verified GEMM: all pieces connected
+//  ══════════════════════════════════════════════════════════════
 
-/// End-to-end GEMM correctness for row-major matrices.
+///  End-to-end GEMM correctness for row-major matrices.
 ///
-/// Proves that for row-major A[M,K] * B[K,N] = C[M,N]:
-/// 1. The transposed column-major representation enables logical_divide
-/// 2. logical_divide has identity offset (no admissibility needed)
-/// 3. The contraction framework produces output shape (M, N)
-/// 4. The reduction size is K
-/// 5. The naive GEMM exec produces the right number of output elements
+///  Proves that for row-major A[M,K] * B[K,N] = C[M,N]:
+///  1. The transposed column-major representation enables logical_divide
+///  2. logical_divide has identity offset (no admissibility needed)
+///  3. The contraction framework produces output shape (M, N)
+///  4. The reduction size is K
+///  5. The naive GEMM exec produces the right number of output elements
 ///
-/// This is the capstone theorem connecting:
-/// - Layout algebra (compose, divide, complement)
-/// - Contraction semantics (GEMM as einsum)
-/// - Runtime execution (gemm_naive_exec)
+///  This is the capstone theorem connecting:
+///  - Layout algebra (compose, divide, complement)
+///  - Contraction semantics (GEMM as einsum)
+///  - Runtime execution (gemm_naive_exec)
 pub proof fn lemma_gemm_e2e_row_major<R: Ring>(
     a_val: spec_fn(nat, nat) -> R,
     b_val: spec_fn(nat, nat) -> R,
@@ -3306,22 +3306,22 @@ pub proof fn lemma_gemm_e2e_row_major<R: Ring>(
         tile_k <= k, tile_m <= m,
         k % tile_k == 0, m % tile_m == 0,
     ensures
-        // 1. Contraction framework matches GEMM
+        //  1. Contraction framework matches GEMM
         contraction_output_shape(&gemm_as_contraction(), &seq![m, k], &seq![k, n])
             =~= seq![m, n],
         contraction_reduction_size(&gemm_as_contraction(), &seq![m, k]) == k,
         contraction_admissible(&gemm_as_contraction(), &seq![m, k], &seq![k, n]),
-        // 2. Row-major A's transposed layout enables divide
+        //  2. Row-major A's transposed layout enables divide
         divide_admissible(
             &make_column_major(seq![k, m]),
             &make_column_major(seq![tile_k, tile_m])),
-        // 3. Divide has identity offset (stated per-element via the proof body)
+        //  3. Divide has identity offset (stated per-element via the proof body)
 {
-    // Contraction framework
+    //  Contraction framework
     crate::proof::contraction_lemmas::lemma_gemm_contraction_matches_spec::<R>(
         a_val, b_val, m, k, n);
 
-    // Divide admissibility (general rank)
+    //  Divide admissibility (general rank)
     let ghost a_shape = seq![k, m];
     let ghost t_shape = seq![tile_k, tile_m];
     assert(shape_valid(a_shape)) by {
@@ -3335,8 +3335,8 @@ pub proof fn lemma_gemm_e2e_row_major<R: Ring>(
     by {};
     lemma_cm_divide_admissible(a_shape, t_shape);
 
-    // Divide identity offset (proven for any x < k*m)
-    // Callers use lemma_row_major_gemm_divide_identity(m, k, tile_k, tile_m, x) per-element.
+    //  Divide identity offset (proven for any x < k*m)
+    //  Callers use lemma_row_major_gemm_divide_identity(m, k, tile_k, tile_m, x) per-element.
 }
 
-} // verus!
+} //  verus!

@@ -6,13 +6,13 @@ use super::shape_helpers::*;
 
 verus! {
 
-/// Helper: partial dot product at step k is within i64 range.
+///  Helper: partial dot product at step k is within i64 range.
 pub open spec fn partial_dot_in_range(coords: Seq<nat>, strides: Seq<int>, k: nat) -> bool {
     dot_product_nat_int(coords.take(k as int), strides.take(k as int)) >= i64::MIN as int &&
     dot_product_nat_int(coords.take(k as int), strides.take(k as int)) <= i64::MAX as int
 }
 
-/// Runtime layout: concrete Vec<u64> shape + Vec<i64> stride, with ghost LayoutSpec model.
+///  Runtime layout: concrete Vec<u64> shape + Vec<i64> stride, with ghost LayoutSpec model.
 pub struct RuntimeLayout {
     pub shape: Vec<u64>,
     pub stride: Vec<i64>,
@@ -27,7 +27,7 @@ impl View for RuntimeLayout {
 }
 
 impl RuntimeLayout {
-    /// Well-formedness: the concrete Vecs match the ghost model, and the model is valid.
+    ///  Well-formedness: the concrete Vecs match the ghost model, and the model is valid.
     pub open spec fn wf_spec(&self) -> bool {
         &&& self@.valid()
         &&& self.shape@.len() == self@.shape.len()
@@ -37,7 +37,7 @@ impl RuntimeLayout {
         &&& self@.size() <= u64::MAX as nat
     }
 
-    /// Create a new RuntimeLayout from shape and stride vectors.
+    ///  Create a new RuntimeLayout from shape and stride vectors.
     pub fn new(shape: Vec<u64>, stride: Vec<i64>) -> (result: RuntimeLayout)
         requires
             shape@.len() == stride@.len(),
@@ -62,7 +62,7 @@ impl RuntimeLayout {
         }
     }
 
-    /// Number of dimensions.
+    ///  Number of dimensions.
     pub fn rank(&self) -> (result: usize)
         requires self.wf_spec(),
         ensures result as nat == self@.rank(),
@@ -70,7 +70,7 @@ impl RuntimeLayout {
         self.shape.len()
     }
 
-    /// Total number of elements.
+    ///  Total number of elements.
     pub fn size(&self) -> (result: u64)
         requires self.wf_spec(),
         ensures result as nat == self@.size(),
@@ -79,7 +79,7 @@ impl RuntimeLayout {
         shape_size_exec(&self.shape)
     }
 
-    /// Bridge: wf_spec implies shape_valid_u64 on the concrete shape.
+    ///  Bridge: wf_spec implies shape_valid_u64 on the concrete shape.
     pub proof fn lemma_wf_shape_valid_u64(s: &Self)
         requires s.wf_spec(),
         ensures shape_valid_u64(s.shape@),
@@ -90,7 +90,7 @@ impl RuntimeLayout {
         }
     }
 
-    /// Compute the memory offset for a given linear index.
+    ///  Compute the memory offset for a given linear index.
     pub fn offset(&self, idx: u64) -> (result: i64)
         requires
             self.wf_spec(),
@@ -98,14 +98,14 @@ impl RuntimeLayout {
             (idx as nat) < self@.size(),
             self@.offset(idx as nat) >= i64::MIN as int,
             self@.offset(idx as nat) <= i64::MAX as int,
-            // Each partial dot product sum fits in i64
+            //  Each partial dot product sum fits in i64
             forall|k: nat| k <= self@.shape.len() ==>
                 #[trigger] partial_dot_in_range(delinearize(idx as nat, self@.shape), self@.stride, k),
         ensures
             result as int == self@.offset(idx as nat),
     {
         proof {
-            // Bridge wf_spec → shape_valid_u64
+            //  Bridge wf_spec → shape_valid_u64
             assert(shape_valid_u64(self.shape@)) by {
                 assert forall|j: int| 0 <= j < self.shape@.len() implies #[trigger] self.shape@[j] > 0 by {
                     assert(self@.shape[j] > 0);
@@ -129,7 +129,7 @@ impl RuntimeLayout {
             }
             assert(strides_to_int_seq(self.stride@) =~= self@.stride);
 
-            // Bridge non-negative strides to concrete Vec
+            //  Bridge non-negative strides to concrete Vec
             assert forall|j: int| 0 <= j < self.stride@.len() implies
                 #[trigger] self.stride@[j] >= 0
             by {
@@ -137,7 +137,7 @@ impl RuntimeLayout {
                 assert(self@.stride[j] == strides_to_int_seq(self.stride@)[j]);
             }
 
-            // Bridge partial sums from spec to concrete coords/strides
+            //  Bridge partial sums from spec to concrete coords/strides
             assert forall|k: nat| k <= coords@.len() implies
                 dot_product_nat_int(
                     shape_to_nat_seq(coords@).take(k as int),
@@ -155,7 +155,7 @@ impl RuntimeLayout {
         dot_product_exec(&coords, &self.stride)
     }
 
-    /// Check if all strides are non-negative.
+    ///  Check if all strides are non-negative.
     pub fn has_non_negative_strides(&self) -> (result: bool)
         requires self.wf_spec(),
         ensures result == self@.non_negative_strides(),
@@ -188,7 +188,7 @@ impl RuntimeLayout {
         true
     }
 
-    /// Check if strides are sorted (non-decreasing).
+    ///  Check if strides are sorted (non-decreasing).
     pub fn is_sorted(&self) -> (result: bool)
         requires self.wf_spec(),
         ensures result == self@.is_sorted(),
@@ -230,7 +230,7 @@ impl RuntimeLayout {
         true
     }
 
-    /// Check tractability: for adjacent modes, (M_i * d_i) divides d_{i+1}.
+    ///  Check tractability: for adjacent modes, (M_i * d_i) divides d_{i+1}.
     pub fn is_tractable(&self) -> (result: bool)
         requires
             self.wf_spec(),
@@ -283,8 +283,8 @@ impl RuntimeLayout {
                 return false;
             }
 
-            // Use abs(stride_next) so both operands of % are non-negative
-            // (Z3's EucMod bounds axiom only fires for non-negative dividend)
+            //  Use abs(stride_next) so both operands of % are non-negative
+            //  (Z3's EucMod bounds axiom only fires for non-negative dividend)
             let stride_next = self.stride[i + 1] as i128;
             let abs_next: i128 = if stride_next >= 0 { stride_next } else { -stride_next };
             let rem = abs_next % product;
@@ -329,7 +329,7 @@ impl RuntimeLayout {
         true
     }
 
-    /// Helper: if a % d == 0 and abs_a == |a|, then abs_a % d == 0
+    ///  Helper: if a % d == 0 and abs_a == |a|, then abs_a % d == 0
     proof fn lemma_abs_mod_zero(a: int, d: int, abs_a: int, is_nonneg: bool)
         requires
             d > 0,
@@ -352,7 +352,7 @@ impl RuntimeLayout {
         }
     }
 
-    /// Helper: if abs_a % d == 0 and abs_a == |a|, then a % d == 0
+    ///  Helper: if abs_a % d == 0 and abs_a == |a|, then a % d == 0
     proof fn lemma_abs_mod_zero_rev(a: int, d: int, abs_a: int, is_nonneg: bool)
         requires
             d > 0,
@@ -377,7 +377,7 @@ impl RuntimeLayout {
         }
     }
 
-    /// Compute cosize (minimum codomain size) for non-negative strides.
+    ///  Compute cosize (minimum codomain size) for non-negative strides.
     pub fn cosize(&self) -> (result: u64)
         requires
             self.wf_spec(),
@@ -440,9 +440,9 @@ impl RuntimeLayout {
     }
 }
 
-// === Helper lemmas ===
+//  === Helper lemmas ===
 
-/// shape_minus_one(s)[i] == (s[i] - 1) as nat
+///  shape_minus_one(s)[i] == (s[i] - 1) as nat
 pub proof fn lemma_shape_minus_one_index(s: Seq<nat>, i: nat)
     requires shape_valid(s), i < s.len(),
     ensures shape_minus_one(s).len() == s.len(),
@@ -493,7 +493,7 @@ proof fn lemma_shape_minus_one_skip(s: Seq<nat>)
     lemma_shape_minus_one_len(s);
 }
 
-/// dot_product take-step for Seq<nat> x Seq<int> (used by cosize computation).
+///  dot_product take-step for Seq<nat> x Seq<int> (used by cosize computation).
 proof fn lemma_dot_product_take_step_nat(coords: Seq<nat>, strides: Seq<int>, i: nat)
     requires coords.len() == strides.len(), i < coords.len(),
     ensures
@@ -530,7 +530,7 @@ proof fn lemma_dot_product_take_step_nat(coords: Seq<nat>, strides: Seq<int>, i:
     }
 }
 
-/// Partial dot product with non-negative terms <= full dot product.
+///  Partial dot product with non-negative terms <= full dot product.
 proof fn lemma_dot_product_partial_le_total_nat(coords: Seq<nat>, strides: Seq<int>, k: nat)
     requires
         coords.len() == strides.len(),
@@ -562,9 +562,9 @@ proof fn lemma_dot_product_partial_le_total_nat(coords: Seq<nat>, strides: Seq<i
     }
 }
 
-} // verus!
+} //  verus!
 
-// Display/Debug outside verus! macro (external_body impls)
+//  Display/Debug outside verus! macro (external_body impls)
 use std::fmt;
 
 #[cfg(verus_keep_ghost)]

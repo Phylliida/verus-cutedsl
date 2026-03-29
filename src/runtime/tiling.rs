@@ -9,7 +9,7 @@ use super::layout::RuntimeLayout;
 
 verus! {
 
-/// Runtime divided layout: a runtime layout + tile_rank metadata.
+///  Runtime divided layout: a runtime layout + tile_rank metadata.
 pub struct RuntimeDividedLayout {
     pub layout: RuntimeLayout,
     pub tile_rank: usize,
@@ -29,7 +29,7 @@ impl RuntimeDividedLayout {
     }
 }
 
-/// Zipped divide at runtime: computes logical_divide_linear(A, B) and tracks tile_rank.
+///  Zipped divide at runtime: computes logical_divide_linear(A, B) and tracks tile_rank.
 pub fn zipped_divide_exec(
     a: &RuntimeLayout,
     b: &RuntimeLayout,
@@ -102,11 +102,11 @@ pub fn zipped_divide_exec(
             stride: b_spec.stride.add(c_spec.stride),
         };
 
-        // Runtime→spec bridge
+        //  Runtime→spec bridge
         assert(crate::runtime::shape_to_nat_seq(zipped_shape@) =~= zipped_spec.shape);
         assert(crate::runtime::strides_to_int_seq(zipped_stride@) =~= zipped_spec.stride);
 
-        // shape_valid_u64: all entries > 0
+        //  shape_valid_u64: all entries > 0
         assert forall|k: int| 0 <= k < zipped_shape@.len()
         implies #[trigger] zipped_shape@[k] > 0u64
         by {
@@ -120,7 +120,7 @@ pub fn zipped_divide_exec(
             }
         };
 
-        // Zipped size fits u64: logical_divide_linear.shape =~= zipped_spec.shape
+        //  Zipped size fits u64: logical_divide_linear.shape =~= zipped_spec.shape
         crate::proof::tiling_lemmas::lemma_zipped_valid(&a@, &b@);
         crate::proof::composition_lemmas::lemma_compose_shape(a@, zipped_spec);
         assert(logical_divide_linear(&a@, &b@).shape =~= zipped_spec.shape);
@@ -137,14 +137,14 @@ pub fn zipped_divide_exec(
         };
         assert(zipped@ == zipped_spec);
 
-        // compose_exec: non-negative strides
+        //  compose_exec: non-negative strides
         assert forall|k: int| 0 <= k < zipped@.stride.len()
         implies #[trigger] zipped@.stride[k] >= 0
         by {
             assert(zipped_spec.stride[k] >= 0);
         };
 
-        // compose_exec: stride products fit i64
+        //  compose_exec: stride products fit i64
         assert forall|k: int| 0 <= k < zipped@.shape.len()
         implies (#[trigger] zipped@.stride[k]) * a@.stride.first() >= i64::MIN as int
             && zipped@.stride[k] * a@.stride.first() <= i64::MAX as int
@@ -153,7 +153,7 @@ pub fn zipped_divide_exec(
             assert(zipped_spec.stride[k] * a@.stride.first() <= i64::MAX as int);
         };
 
-        // compose_exec: compose_linear size fits u64
+        //  compose_exec: compose_linear size fits u64
         crate::proof::composition_lemmas::lemma_compose_shape(a@, zipped@);
     }
 
@@ -168,7 +168,7 @@ pub fn zipped_divide_exec(
         };
         assert(zipped@ == zipped_spec);
 
-        // tile_rank <= layout shape len
+        //  tile_rank <= layout shape len
         crate::proof::divide_lemmas::lemma_divide_rank(&a@, &b@);
     }
 
@@ -178,7 +178,7 @@ pub fn zipped_divide_exec(
     }
 }
 
-/// Extract tile_rank from a RuntimeDividedLayout.
+///  Extract tile_rank from a RuntimeDividedLayout.
 pub fn tile_rank(d: &RuntimeDividedLayout) -> (result: usize)
     requires d.wf_spec(),
     ensures result as nat == d.view_divided().tile_rank,
@@ -186,8 +186,8 @@ pub fn tile_rank(d: &RuntimeDividedLayout) -> (result: usize)
     d.tile_rank
 }
 
-/// Local partition at runtime: extract one thread's portion via slice.
-/// Returns (residual_layout, base_offset).
+///  Local partition at runtime: extract one thread's portion via slice.
+///  Returns (residual_layout, base_offset).
 pub fn local_partition_exec(
     tensor: &RuntimeDividedLayout,
     thread_id: u64,
@@ -196,10 +196,10 @@ pub fn local_partition_exec(
         tensor.wf_spec(),
         tensor.layout@.rank() > 0,
         (thread_id as nat) < tensor.layout@.shape[0],
-        // Offset fits i64
+        //  Offset fits i64
         (thread_id as int) * tensor.layout@.stride[0] >= i64::MIN as int,
         (thread_id as int) * tensor.layout@.stride[0] <= i64::MAX as int,
-        // Result size fits u64
+        //  Result size fits u64
         shape_size(crate::slice::slice_layout(&tensor.layout@, 0, thread_id as nat).shape) <= u64::MAX as nat,
     ensures ({
         let (rl, off) = result;
@@ -212,7 +212,7 @@ pub fn local_partition_exec(
     super::ops::slice_exec(&tensor.layout, 0, thread_id)
 }
 
-/// Make tiled copy at runtime: raked_product(atom, logical_product(thr, val)).
+///  Make tiled copy at runtime: raked_product(atom, logical_product(thr, val)).
 pub fn make_tiled_copy_exec(
     atom: &RuntimeLayout,
     thr_layout: &RuntimeLayout,
@@ -225,17 +225,17 @@ pub fn make_tiled_copy_exec(
         val_layout.wf_spec(),
         tiled_copy_admissible(&atom@, &thr_layout@, &val_layout@),
         cosize_thr as nat == thr_layout@.cosize_nonneg(),
-        // logical_product overflow bounds
+        //  logical_product overflow bounds
         forall|i: int| 0 <= i < val_layout@.stride.len() ==>
             #[trigger] val_layout@.stride[i] * (cosize_thr as int) >= i64::MIN as int &&
             val_layout@.stride[i] * (cosize_thr as int) <= i64::MAX as int,
         shape_size(logical_product(&thr_layout@, &val_layout@).shape) <= u64::MAX as nat,
-        // TV cosize bounds for raked_product
+        //  TV cosize bounds for raked_product
         logical_product(&thr_layout@, &val_layout@).cosize_nonneg() <= u64::MAX as nat,
         forall|i: int| 0 <= i < logical_product(&thr_layout@, &val_layout@).shape.len() ==>
             ((#[trigger] logical_product(&thr_layout@, &val_layout@).shape[i] - 1) as int)
             * logical_product(&thr_layout@, &val_layout@).stride[i] <= u64::MAX as int,
-        // raked_product overflow bounds
+        //  raked_product overflow bounds
         forall|i: int| 0 <= i < atom@.stride.len() ==>
             #[trigger] atom@.stride[i] * (logical_product(&thr_layout@, &val_layout@).cosize_nonneg() as int) >= i64::MIN as int &&
             atom@.stride[i] * (logical_product(&thr_layout@, &val_layout@).cosize_nonneg() as int) <= i64::MAX as int,
@@ -248,7 +248,7 @@ pub fn make_tiled_copy_exec(
 
     proof {
         assert(tv@ == logical_product(&thr_layout@, &val_layout@));
-        // tv has non-negative strides from tiled_copy_admissible
+        //  tv has non-negative strides from tiled_copy_admissible
         assert(tv@.non_negative_strides());
         assert(tv@.shape.len() > 0);
     }
@@ -257,7 +257,7 @@ pub fn make_tiled_copy_exec(
 
     proof {
         assert(cosize_tv as nat == tv@.cosize_nonneg());
-        // Bridge stride overflow for raked_product
+        //  Bridge stride overflow for raked_product
         assert forall|i: int| 0 <= i < atom@.stride.len()
         implies #[trigger] atom@.stride[i] * (cosize_tv as int) >= i64::MIN as int
             && atom@.stride[i] * (cosize_tv as int) <= i64::MAX as int
@@ -270,7 +270,7 @@ pub fn make_tiled_copy_exec(
     super::ops::raked_product_exec(atom, &tv, cosize_tv)
 }
 
-/// Extract tile shape from a RuntimeDividedLayout.
+///  Extract tile shape from a RuntimeDividedLayout.
 pub fn tile_shape_exec(d: &RuntimeDividedLayout) -> (result: Vec<u64>)
     requires
         d.wf_spec(),
@@ -310,7 +310,7 @@ pub fn tile_shape_exec(d: &RuntimeDividedLayout) -> (result: Vec<u64>)
     result
 }
 
-/// Extract rest shape from a RuntimeDividedLayout.
+///  Extract rest shape from a RuntimeDividedLayout.
 pub fn rest_shape_exec(d: &RuntimeDividedLayout) -> (result: Vec<u64>)
     requires
         d.wf_spec(),
@@ -350,7 +350,7 @@ pub fn rest_shape_exec(d: &RuntimeDividedLayout) -> (result: Vec<u64>)
     result
 }
 
-/// Compute tile size (product of tile shape elements).
+///  Compute tile size (product of tile shape elements).
 pub fn tile_size_exec(d: &RuntimeDividedLayout) -> (result: u64)
     requires
         d.wf_spec(),
@@ -362,7 +362,7 @@ pub fn tile_size_exec(d: &RuntimeDividedLayout) -> (result: u64)
     super::shape_helpers::shape_size_exec(&ts)
 }
 
-/// Compute number of tiles (product of rest shape elements).
+///  Compute number of tiles (product of rest shape elements).
 pub fn num_tiles_exec(d: &RuntimeDividedLayout) -> (result: u64)
     requires
         d.wf_spec(),
@@ -374,4 +374,4 @@ pub fn num_tiles_exec(d: &RuntimeDividedLayout) -> (result: u64)
     super::shape_helpers::shape_size_exec(&rs)
 }
 
-} // verus!
+} //  verus!

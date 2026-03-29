@@ -1,7 +1,7 @@
-/// Runtime implementations of scan/reduce primitives.
+///  Runtime implementations of scan/reduce primitives.
 ///
-/// Hillis-Steele inclusive scan: O(n log n) work, O(log n) depth.
-/// Tree reduce: derived from Hillis-Steele (take last element).
+///  Hillis-Steele inclusive scan: O(n log n) work, O(log n) depth.
+///  Tree reduce: derived from Hillis-Steele (take last element).
 use vstd::prelude::*;
 use verus_algebra::traits::*;
 use verus_algebra::summation::*;
@@ -13,34 +13,34 @@ use crate::proof::scan_lemmas::*;
 
 verus! {
 
-// ============================================================
-// ExecRing trait: bridges exec-level operations to spec-level Ring
-// ============================================================
+//  ============================================================
+//  ExecRing trait: bridges exec-level operations to spec-level Ring
+//  ============================================================
 
-/// Trait for exec-level ring elements that map to a spec-level Ring type.
+///  Trait for exec-level ring elements that map to a spec-level Ring type.
 ///
-/// Provides the three operations needed by scan algorithms:
-/// - `exec_add`: addition with overflow guard via `is_representable`
-/// - `exec_zero`: the additive identity
-/// - `exec_clone`: copy/clone (needed since Verus doesn't auto-clone tracked types)
+///  Provides the three operations needed by scan algorithms:
+///  - `exec_add`: addition with overflow guard via `is_representable`
+///  - `exec_zero`: the additive identity
+///  - `exec_clone`: copy/clone (needed since Verus doesn't auto-clone tracked types)
 ///
-/// Overflow handling uses `is_representable`: a predicate on spec values R
-/// that says whether a value can be stored as a T. The `exec_add` requires
-/// both operand views and their sum view to be representable.
+///  Overflow handling uses `is_representable`: a predicate on spec values R
+///  that says whether a value can be stored as a T. The `exec_add` requires
+///  both operand views and their sum view to be representable.
 pub trait ExecRing<R: Ring>: Sized {
-    /// View: map an exec element to its spec counterpart.
+    ///  View: map an exec element to its spec counterpart.
     spec fn view(&self) -> R;
 
-    /// Whether a spec value can be represented as this exec type.
-    /// For i64: i64::MIN <= v <= i64::MAX. For Rational: always true.
+    ///  Whether a spec value can be represented as this exec type.
+    ///  For i64: i64::MIN <= v <= i64::MAX. For Rational: always true.
     spec fn is_representable(v: R) -> bool;
 
-    /// is_representable respects eqv: if a.eqv(b) and is_representable(a), then is_representable(b).
+    ///  is_representable respects eqv: if a.eqv(b) and is_representable(a), then is_representable(b).
     proof fn lemma_representable_congruence(a: R, b: R)
         requires a.eqv(b), Self::is_representable(a),
         ensures Self::is_representable(b);
 
-    /// exec addition. Requires operands and result to be representable.
+    ///  exec addition. Requires operands and result to be representable.
     fn exec_add(&self, other: &Self) -> (result: Self)
         requires
             Self::is_representable(self.view()),
@@ -48,29 +48,29 @@ pub trait ExecRing<R: Ring>: Sized {
             Self::is_representable(self.view().add(other.view())),
         ensures result.view().eqv(self.view().add(other.view()));
 
-    /// exec zero.
+    ///  exec zero.
     fn exec_zero() -> (result: Self)
         ensures result.view().eqv(R::zero());
 
-    /// exec clone.
+    ///  exec clone.
     fn exec_clone(&self) -> (result: Self)
         ensures result.view().eqv(self.view());
 }
 
-/// Partial sum of viewed data.
+///  Partial sum of viewed data.
 pub open spec fn partial_sum_generic<T: ExecRing<R>, R: Ring>(data: Seq<T>, lo: int, hi: int) -> R {
     sum::<R>(|j: int| data[j].view(), lo, hi)
 }
 
-/// All partial sums of data (viewed through ExecRing) are representable.
+///  All partial sums of data (viewed through ExecRing) are representable.
 pub open spec fn all_partial_sums_representable<T: ExecRing<R>, R: Ring>(data: Seq<T>) -> bool {
     forall|lo: int, hi: int| 0 <= lo <= hi <= data.len() ==>
         T::is_representable(#[trigger] partial_sum_generic::<T, R>(data, lo, hi))
 }
 
-// ============================================================
-// i64 implementation of ExecRing<int>
-// ============================================================
+//  ============================================================
+//  i64 implementation of ExecRing<int>
+//  ============================================================
 
 impl ExecRing<int> for i64 {
     #[verifier::inline]
@@ -85,13 +85,13 @@ impl ExecRing<int> for i64 {
 
     proof fn lemma_representable_congruence(a: int, b: int)
     {
-        // For int: eqv is ==, so a == b. is_representable(a) implies is_representable(b).
+        //  For int: eqv is ==, so a == b. is_representable(a) implies is_representable(b).
     }
 
     fn exec_add(&self, other: &Self) -> (result: Self)
     {
-        // is_representable(self + other) means i64::MIN <= self+other <= i64::MAX
-        // a.add(b) == a + b for int, so this is safe
+        //  is_representable(self + other) means i64::MIN <= self+other <= i64::MAX
+        //  a.add(b) == a + b for int, so this is safe
         *self + *other
     }
 
@@ -106,9 +106,9 @@ impl ExecRing<int> for i64 {
     }
 }
 
-// ============================================================
-// u64 implementation of ExecRing<int>
-// ============================================================
+//  ============================================================
+//  u64 implementation of ExecRing<int>
+//  ============================================================
 
 impl ExecRing<int> for u64 {
     #[verifier::inline]
@@ -123,7 +123,7 @@ impl ExecRing<int> for u64 {
 
     proof fn lemma_representable_congruence(a: int, b: int)
     {
-        // For int: eqv is ==, so a == b. is_representable(a) implies is_representable(b).
+        //  For int: eqv is ==, so a == b. is_representable(a) implies is_representable(b).
     }
 
     fn exec_add(&self, other: &Self) -> (result: Self)
@@ -142,25 +142,25 @@ impl ExecRing<int> for u64 {
     }
 }
 
-/// Helper: partial_sum and partial_sum_generic are equal for i64/int.
-/// Both are sum over closures that compute data[j] as int, but Z3 treats the closures
-/// as distinct function symbols. Bridge by induction on sum's recursion.
+///  Helper: partial_sum and partial_sum_generic are equal for i64/int.
+///  Both are sum over closures that compute data[j] as int, but Z3 treats the closures
+///  as distinct function symbols. Bridge by induction on sum's recursion.
 pub proof fn lemma_partial_sums_equal(data: Seq<i64>, lo: int, hi: int)
     requires 0 <= lo, hi <= data.len(),
     ensures partial_sum(data, lo, hi) == partial_sum_generic::<i64, int>(data, lo, hi),
     decreases (if hi > lo { hi - lo } else { 0 }),
 {
     if hi <= lo {
-        // Both return Ring::zero() = 0
+        //  Both return Ring::zero() = 0
     } else {
         lemma_partial_sums_equal(data, lo + 1, hi);
-        // IH: sum(cls_PS, lo+1, hi) == sum(cls_PSG, lo+1, hi)
-        // Unfolding sum one step: f(lo) + sum(f, lo+1, hi) on each side
-        // cls_PS(lo) = data[lo] as int, cls_PSG(lo) = data[lo].view() = data[lo] as int
+        //  IH: sum(cls_PS, lo+1, hi) == sum(cls_PSG, lo+1, hi)
+        //  Unfolding sum one step: f(lo) + sum(f, lo+1, hi) on each side
+        //  cls_PS(lo) = data[lo] as int, cls_PSG(lo) = data[lo].view() = data[lo] as int
     }
 }
 
-/// Bridge: all_partial_sums_bounded ==> all_partial_sums_representable for i64.
+///  Bridge: all_partial_sums_bounded ==> all_partial_sums_representable for i64.
 pub proof fn lemma_bounded_implies_representable(data: Seq<i64>)
     requires all_partial_sums_bounded(data),
     ensures all_partial_sums_representable::<i64, int>(data),
@@ -171,13 +171,13 @@ pub proof fn lemma_bounded_implies_representable(data: Seq<i64>)
         )
     by {
         lemma_partial_sums_equal(data, lo, hi);
-        // Now Z3 knows partial_sum == partial_sum_generic, and all_partial_sums_bounded
-        // gives i64 range bounds on partial_sum.
+        //  Now Z3 knows partial_sum == partial_sum_generic, and all_partial_sums_bounded
+        //  gives i64 range bounds on partial_sum.
     }
 }
 
-/// Bridge: tree_reduce_state_generic<i64, int> matches tree_reduce_state on as_int_seq.
-/// Both specs recurse identically: int::add is `+`, i64::view() inlines to `as int`.
+///  Bridge: tree_reduce_state_generic<i64, int> matches tree_reduce_state on as_int_seq.
+///  Both specs recurse identically: int::add is `+`, i64::view() inlines to `as int`.
 pub proof fn lemma_tree_reduce_generic_eq_int(data: Seq<i64>, n: nat, level: nat)
     requires n == data.len(),
     ensures
@@ -186,17 +186,17 @@ pub proof fn lemma_tree_reduce_generic_eq_int(data: Seq<i64>, n: nat, level: nat
     decreases level,
 {
     if level == 0 {
-        // generic: Seq::new(n, |i| data[i].view()) = Seq::new(n, |i| data[i] as int)
-        // concrete: as_int_seq(data) = Seq::new(data.len(), |i| data[i] as int)
-        // Pointwise equal since n == data.len().
+        //  generic: Seq::new(n, |i| data[i].view()) = Seq::new(n, |i| data[i] as int)
+        //  concrete: as_int_seq(data) = Seq::new(data.len(), |i| data[i] as int)
+        //  Pointwise equal since n == data.len().
     } else {
         lemma_tree_reduce_generic_eq_int(data, n, (level - 1) as nat);
-        // IH gives prev_g =~= prev_int, so each element at this level is equal:
-        // int::add(a, b) is definitionally a + b.
+        //  IH gives prev_g =~= prev_int, so each element at this level is equal:
+        //  int::add(a, b) is definitionally a + b.
     }
 }
 
-/// Compute ceil(log2(n)) at runtime.
+///  Compute ceil(log2(n)) at runtime.
 pub fn log2_ceil_exec(n: u64) -> (result: u64)
     requires n > 0,
     ensures result as nat == log2_ceil(n as nat),
@@ -205,7 +205,7 @@ pub fn log2_ceil_exec(n: u64) -> (result: u64)
     if n <= 1 {
         return 0;
     }
-    // ceil(n/2) = n/2 + n%2, avoids overflow unlike (n+1)/2
+    //  ceil(n/2) = n/2 + n%2, avoids overflow unlike (n+1)/2
     let half: u64 = n / 2 + n % 2;
     proof {
         lemma_half_ceil_bounds(n as nat);
@@ -216,22 +216,22 @@ pub fn log2_ceil_exec(n: u64) -> (result: u64)
         if half as nat >= 2 {
             lemma_log2_ceil_lt(half as nat);
         }
-        // r < n, so 1 + r doesn't overflow u64
+        //  r < n, so 1 + r doesn't overflow u64
     }
     1 + r
 }
 
-// ============================================================
-// Generic Hillis-Steele specs and lemmas
-// ============================================================
+//  ============================================================
+//  Generic Hillis-Steele specs and lemmas
+//  ============================================================
 
-/// Generic hs_value: what element i should hold after `level` levels.
+///  Generic hs_value: what element i should hold after `level` levels.
 pub open spec fn hs_value_generic<T: ExecRing<R>, R: Ring>(data: Seq<T>, i: int, level: nat) -> R {
     let lo = if i + 1 - pow2(level) as int > 0 { i + 1 - pow2(level) as int } else { 0int };
     sum::<R>(|j: int| data[j].view(), lo, i + 1)
 }
 
-/// Generic hs_value addition lemma.
+///  Generic hs_value addition lemma.
 proof fn lemma_hs_addition_generic<T: ExecRing<R>, R: Ring>(data: Seq<T>, i: int, d: nat, n: nat)
     requires
         n as int == data.len(),
@@ -253,19 +253,19 @@ proof fn lemma_hs_addition_generic<T: ExecRing<R>, R: Ring>(data: Seq<T>, i: int
     assert(partner_lo == next_lo);
     assert(next_lo <= prev_lo);
 
-    // sum(f, next_lo, i+1) = sum(f, next_lo, prev_lo) + sum(f, prev_lo, i+1)
-    //                       = hs(partner, d) + hs(i, d)
+    //  sum(f, next_lo, i+1) = sum(f, next_lo, prev_lo) + sum(f, prev_lo, i+1)
+    //                        = hs(partner, d) + hs(i, d)
     lemma_sum_split::<R>(|j: int| data[j].view(), next_lo, prev_lo, i + 1);
-    // sum_split gives: sum(f, next_lo, i+1).eqv(sum(f, next_lo, prev_lo).add(sum(f, prev_lo, i+1)))
-    // which is: hs(i, d+1).eqv(hs(partner, d).add(hs(i, d)))
-    // We need: hs(i, d).add(hs(partner, d)).eqv(hs(i, d+1))
-    // By commutativity: a.add(b).eqv(b.add(a))
+    //  sum_split gives: sum(f, next_lo, i+1).eqv(sum(f, next_lo, prev_lo).add(sum(f, prev_lo, i+1)))
+    //  which is: hs(i, d+1).eqv(hs(partner, d).add(hs(i, d)))
+    //  We need: hs(i, d).add(hs(partner, d)).eqv(hs(i, d+1))
+    //  By commutativity: a.add(b).eqv(b.add(a))
     R::axiom_add_commutative(
         hs_value_generic::<T, R>(data, i, d),
         hs_value_generic::<T, R>(data, partner, d),
     );
-    // Now chain: hs(i,d).add(hs(partner,d)).eqv(hs(partner,d).add(hs(i,d)))
-    //        and hs(partner,d).add(hs(i,d)).eqv(hs(i,d+1))
+    //  Now chain: hs(i,d).add(hs(partner,d)).eqv(hs(partner,d).add(hs(i,d)))
+    //         and hs(partner,d).add(hs(i,d)).eqv(hs(i,d+1))
     R::axiom_eqv_symmetric(
         hs_value_generic::<T, R>(data, i, (d + 1) as nat),
         hs_value_generic::<T, R>(data, partner, d).add(
@@ -283,7 +283,7 @@ proof fn lemma_hs_addition_generic<T: ExecRing<R>, R: Ring>(data: Seq<T>, i: int
     );
 }
 
-/// Generic hs_value is unchanged when i < stride.
+///  Generic hs_value is unchanged when i < stride.
 proof fn lemma_hs_no_change_generic<T: ExecRing<R>, R: Ring>(data: Seq<T>, i: int, d: nat, n: nat)
     requires
         n as int == data.len(),
@@ -295,11 +295,11 @@ proof fn lemma_hs_no_change_generic<T: ExecRing<R>, R: Ring>(data: Seq<T>, i: in
         ),
 {
     assert(pow2((d + 1) as nat) == 2 * pow2(d));
-    // Both have lo = 0, so both = sum(f, 0, i+1). Reflexive.
+    //  Both have lo = 0, so both = sum(f, 0, i+1). Reflexive.
     R::axiom_eqv_reflexive(hs_value_generic::<T, R>(data, i, d));
 }
 
-/// Generic hs_value at sufficient level equals inclusive_scan.
+///  Generic hs_value at sufficient level equals inclusive_scan.
 proof fn lemma_hs_equals_inclusive_scan_generic<T: ExecRing<R>, R: Ring>(
     data: Seq<T>, i: int, level: nat,
 )
@@ -311,10 +311,10 @@ proof fn lemma_hs_equals_inclusive_scan_generic<T: ExecRing<R>, R: Ring>(
             inclusive_scan::<R>(Seq::new(data.len(), |j: int| data[j].view()))[i]
         ),
 {
-    // pow2(level) >= n > i+1, so lo = 0
-    // hs_value = sum(|j| data[j].view(), 0, i+1)
-    // inclusive_scan(view_seq)[i] = sum(|j| view_seq[j], 0, i+1)
-    // view_seq[j] = data[j].view(), so congruence gives equality
+    //  pow2(level) >= n > i+1, so lo = 0
+    //  hs_value = sum(|j| data[j].view(), 0, i+1)
+    //  inclusive_scan(view_seq)[i] = sum(|j| view_seq[j], 0, i+1)
+    //  view_seq[j] = data[j].view(), so congruence gives equality
     let view_seq = Seq::new(data.len(), |j: int| data[j].view());
     assert forall|j: int| 0 <= j < data.len() as int implies
         view_seq[j].eqv(data[j].view()) by {
@@ -327,7 +327,7 @@ proof fn lemma_hs_equals_inclusive_scan_generic<T: ExecRing<R>, R: Ring>(
     );
 }
 
-/// Generic Hillis-Steele inclusive scan.
+///  Generic Hillis-Steele inclusive scan.
 pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
     data: &Vec<T>, n: u64,
 ) -> (output: Vec<T>)
@@ -342,7 +342,7 @@ pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
             output@[i].view().eqv(
                 inclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i]
             ),
-        // Second ensures: direct partial_sum_generic form, avoids closure matching issues for callers
+        //  Second ensures: direct partial_sum_generic form, avoids closure matching issues for callers
         forall|i: int| 0 <= i < n as int ==>
             output@[i].view().eqv(
                 partial_sum_generic::<T, R>(data@, 0, i + 1)
@@ -351,7 +351,7 @@ pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
     let levels = log2_ceil_exec(n);
     let data_len = data.len();
 
-    // Initialize current buffer from data
+    //  Initialize current buffer from data
     let mut current: Vec<T> = Vec::new();
     let mut idx: u64 = 0;
     while idx < n
@@ -369,18 +369,18 @@ pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
     }
 
     proof {
-        // Base case: at level 0, current[i].view().eqv(data[i].view())
-        //   = hs_value_generic(data, i, 0)  (which is sum(f, i, i+1) = data[i].view())
+        //  Base case: at level 0, current[i].view().eqv(data[i].view())
+        //    = hs_value_generic(data, i, 0)  (which is sum(f, i, i+1) = data[i].view())
         assert forall|i: int| 0 <= i < n as int implies
             current@[i].view().eqv(
                 #[trigger] hs_value_generic::<T, R>(data@, i, 0)
             )
         by {
-            // hs_value_generic(data, i, 0) = sum(f, i, i+1) = data[i].view()
+            //  hs_value_generic(data, i, 0) = sum(f, i, i+1) = data[i].view()
             lemma_sum_single::<R>(|j: int| data@[j].view(), i);
-            // sum_single: sum(f, i, i+1).eqv(f(i)) = data[i].view()
-            // current[i].view().eqv(data[i].view()) from invariant
-            // By transitivity: current[i].view().eqv(hs_value(i, 0))
+            //  sum_single: sum(f, i, i+1).eqv(f(i)) = data[i].view()
+            //  current[i].view().eqv(data[i].view()) from invariant
+            //  By transitivity: current[i].view().eqv(hs_value(i, 0))
             R::axiom_eqv_symmetric(
                 sum::<R>(|j: int| data@[j].view(), i, i + 1),
                 data@[i].view(),
@@ -393,7 +393,7 @@ pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
         }
     }
 
-    // Apply Hillis-Steele levels
+    //  Apply Hillis-Steele levels
     let mut d: u64 = 0;
     let mut stride: u64 = 1;
     while d < levels
@@ -457,11 +457,11 @@ pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
                     let ghost hs_p = hs_value_generic::<T, R>(data@, pi, d as nat);
                     let ghost hs_next = hs_value_generic::<T, R>(data@, ii, (d + 1) as nat);
 
-                    // hs(i,d).add(hs(partner,d)).eqv(hs(i,d+1))
+                    //  hs(i,d).add(hs(partner,d)).eqv(hs(i,d+1))
                     lemma_hs_addition_generic::<T, R>(data@, ii, d as nat, n as nat);
 
-                    // hs_i, hs_p, hs_next are all partial sums, hence representable
-                    // Trigger all_partial_sums_representable by referencing partial_sum_generic
+                    //  hs_i, hs_p, hs_next are all partial sums, hence representable
+                    //  Trigger all_partial_sums_representable by referencing partial_sum_generic
                     let hs_i_lo = if ii + 1 - pow2(d as nat) as int > 0 {
                         ii + 1 - pow2(d as nat) as int
                     } else { 0int };
@@ -474,7 +474,7 @@ pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
                     assert(0 <= hs_i_lo && ii + 1 <= n as int);
                     assert(0 <= hs_p_lo && pi + 1 <= n as int);
                     assert(0 <= hs_next_lo && ii + 1 <= n as int);
-                    // Bridge hs_value to partial_sum_generic for trigger
+                    //  Bridge hs_value to partial_sum_generic for trigger
                     assert(hs_i.eqv(partial_sum_generic::<T, R>(data@, hs_i_lo, ii + 1))) by {
                         R::axiom_eqv_reflexive(hs_i);
                     }
@@ -484,27 +484,27 @@ pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
                     assert(hs_next.eqv(partial_sum_generic::<T, R>(data@, hs_next_lo, ii + 1))) by {
                         R::axiom_eqv_reflexive(hs_next);
                     }
-                    // Now Z3 knows is_representable for hs_i, hs_p, hs_next via trigger
+                    //  Now Z3 knows is_representable for hs_i, hs_p, hs_next via trigger
 
-                    // current views are eqv to hs values, bridge to is_representable
+                    //  current views are eqv to hs values, bridge to is_representable
                     R::axiom_eqv_symmetric(current@[ii].view(), hs_i);
                     T::lemma_representable_congruence(hs_i, current@[ii].view());
                     R::axiom_eqv_symmetric(current@[pi].view(), hs_p);
                     T::lemma_representable_congruence(hs_p, current@[pi].view());
 
-                    // current[i].view().add(current[partner].view()) is eqv to hs_i.add(hs_p)
+                    //  current[i].view().add(current[partner].view()) is eqv to hs_i.add(hs_p)
                     use verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence;
                     lemma_add_congruence::<R>(
                         current@[ii].view(), hs_i,
                         current@[pi].view(), hs_p,
                     );
-                    // hs_i.add(hs_p).eqv(hs_next)
+                    //  hs_i.add(hs_p).eqv(hs_next)
                     R::axiom_eqv_transitive(
                         current@[ii].view().add(current@[pi].view()),
                         hs_i.add(hs_p),
                         hs_next,
                     );
-                    // is_representable(current[i].view().add(current[partner].view()))
+                    //  is_representable(current[i].view().add(current[partner].view()))
                     R::axiom_eqv_symmetric(
                         current@[ii].view().add(current@[pi].view()),
                         hs_next,
@@ -516,8 +516,8 @@ pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
                 proof {
                     let ghost ii = i as int;
                     let ghost hs_next = hs_value_generic::<T, R>(data@, ii, (d + 1) as nat);
-                    // val.view().eqv(current[i].view().add(current[partner].view()))
-                    // current[i].view().add(current[partner].view()).eqv(hs_next)
+                    //  val.view().eqv(current[i].view().add(current[partner].view()))
+                    //  current[i].view().add(current[partner].view()).eqv(hs_next)
                     R::axiom_eqv_transitive(
                         val.view(),
                         current@[ii].view().add(current@[(ii - stride as int) as int].view()),
@@ -532,9 +532,9 @@ pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
                 proof {
                     let ghost ii = i as int;
                     lemma_hs_no_change_generic::<T, R>(data@, ii, d as nat, n as nat);
-                    // hs(i,d).eqv(hs(i,d+1))
-                    // current[i].view().eqv(hs(i,d))
-                    // clone.view().eqv(current[i].view())
+                    //  hs(i,d).eqv(hs(i,d+1))
+                    //  current[i].view().eqv(hs(i,d))
+                    //  clone.view().eqv(current[i].view())
                     R::axiom_eqv_transitive(
                         clone.view(),
                         current@[ii].view(),
@@ -571,20 +571,20 @@ pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
                 partial_sum_generic::<T, R>(data@, 0, i + 1)
             )
         by {
-            // current[i].view().eqv(hs(i, levels))
+            //  current[i].view().eqv(hs(i, levels))
             lemma_hs_equals_inclusive_scan_generic::<T, R>(data@, i, levels as nat);
-            // hs(i, levels).eqv(inclusive_scan(view_seq)[i])
+            //  hs(i, levels).eqv(inclusive_scan(view_seq)[i])
             R::axiom_eqv_transitive(
                 current@[i].view(),
                 hs_value_generic::<T, R>(data@, i, levels as nat),
                 inclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i],
             );
-            // hs(i, levels) = partial_sum_generic(data@, 0, i+1) when pow2(levels) >= n
-            // (lo = max(0, i+1-pow2(levels)) = 0 since i < n <= pow2(levels))
+            //  hs(i, levels) = partial_sum_generic(data@, 0, i+1) when pow2(levels) >= n
+            //  (lo = max(0, i+1-pow2(levels)) = 0 since i < n <= pow2(levels))
             assert(i + 1 - pow2(levels as nat) as int <= 0) by {
                 assert(pow2(levels as nat) >= data@.len());
             }
-            // Now Z3 sees hs_value_generic(...) = sum(cls, 0, i+1) = partial_sum_generic(...)
+            //  Now Z3 sees hs_value_generic(...) = sum(cls, 0, i+1) = partial_sum_generic(...)
             R::axiom_eqv_reflexive(hs_value_generic::<T, R>(data@, i, levels as nat));
             R::axiom_eqv_transitive(
                 current@[i].view(),
@@ -597,9 +597,9 @@ pub fn hillis_steele_generic_exec<T: ExecRing<R>, R: Ring>(
     current
 }
 
-/// Generic exclusive scan via Hillis-Steele + shift.
-/// result[0] = zero, result[i] = inclusive_scan(data)[i-1] for i > 0.
-/// O(n log n) work, O(log n) depth. No power-of-2 requirement.
+///  Generic exclusive scan via Hillis-Steele + shift.
+///  result[0] = zero, result[i] = inclusive_scan(data)[i-1] for i > 0.
+///  O(n log n) work, O(log n) depth. No power-of-2 requirement.
 pub fn exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
     data: &Vec<T>, n: u64,
 ) -> (output: Vec<T>)
@@ -614,7 +614,7 @@ pub fn exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             output@[i].view().eqv(
                 exclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i]
             ),
-        // Second ensures: partial_sum_generic form for delegation wrappers
+        //  Second ensures: partial_sum_generic form for delegation wrappers
         forall|i: int| 0 <= i < n as int ==>
             output@[i].view().eqv(
                 partial_sum_generic::<T, R>(data@, 0, i)
@@ -626,17 +626,17 @@ pub fn exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
     let incl_len = incl.len();
 
     let mut output: Vec<T> = Vec::new();
-    // output[0] = zero
+    //  output[0] = zero
     let z = T::exec_zero();
     proof {
         use crate::proof::scan_lemmas::lemma_exclusive_from_inclusive;
         lemma_exclusive_from_inclusive::<R>(view_seq, 0);
         R::axiom_eqv_reflexive(exclusive_scan::<R>(view_seq)[0]);
-        // partial_sum_generic(data, 0, 0) = sum(|j| data[j].view(), 0, 0) = R::zero() definitionally
+        //  partial_sum_generic(data, 0, 0) = sum(|j| data[j].view(), 0, 0) = R::zero() definitionally
     }
     output.push(z);
 
-    // output[i] = incl[i-1] for i > 0
+    //  output[i] = incl[i-1] for i > 0
     let mut i: u64 = 1;
     while i < n
         invariant
@@ -663,14 +663,14 @@ pub fn exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             use crate::proof::scan_lemmas::lemma_exclusive_from_inclusive;
             let pi = (i - 1) as int;
             lemma_exclusive_from_inclusive::<R>(view_seq, i as int);
-            // Bridge for exclusive_scan form
+            //  Bridge for exclusive_scan form
             R::axiom_eqv_transitive(
                 clone.view(),
                 incl@[pi].view(),
                 inclusive_scan::<R>(view_seq)[pi],
             );
-            // Bridge for partial_sum_generic form
-            // incl@[pi].view().eqv(partial_sum_generic(data, 0, pi+1)) = partial_sum_generic(data, 0, i)
+            //  Bridge for partial_sum_generic form
+            //  incl@[pi].view().eqv(partial_sum_generic(data, 0, pi+1)) = partial_sum_generic(data, 0, i)
             R::axiom_eqv_transitive(
                 clone.view(),
                 incl@[pi].view(),
@@ -684,8 +684,8 @@ pub fn exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
     output
 }
 
-/// Hillis-Steele inclusive scan. Creates a new output Vec.
-/// O(n log n) work, O(log n) depth.
+///  Hillis-Steele inclusive scan. Creates a new output Vec.
+///  O(n log n) work, O(log n) depth.
 pub fn hillis_steele_exec(data: &Vec<i64>, n: u64) -> (output: Vec<i64>)
     requires
         data@.len() == n as nat,
@@ -700,19 +700,19 @@ pub fn hillis_steele_exec(data: &Vec<i64>, n: u64) -> (output: Vec<i64>)
     proof { lemma_bounded_implies_representable(data@); }
     let result = hillis_steele_generic_exec::<i64, int>(data, n);
     proof {
-        // Generic new ensures: result@[i].view().eqv(partial_sum_generic(data@, 0, i+1))
-        // For i64/int: view() inlines, eqv is ==, so:
-        //   result@[i] as int == partial_sum_generic(data@, 0, i+1)
-        // Bridge chain: partial_sum_generic == partial_sum == inclusive_scan_int
+        //  Generic new ensures: result@[i].view().eqv(partial_sum_generic(data@, 0, i+1))
+        //  For i64/int: view() inlines, eqv is ==, so:
+        //    result@[i] as int == partial_sum_generic(data@, 0, i+1)
+        //  Bridge chain: partial_sum_generic == partial_sum == inclusive_scan_int
         assert forall|i: int| 0 <= i < n as int implies
             result@[i] as int == inclusive_scan_int(data@)[i]
         by {
-            // Step 1: partial_sum_generic == partial_sum (by induction on sum)
+            //  Step 1: partial_sum_generic == partial_sum (by induction on sum)
             lemma_partial_sums_equal(data@, 0, i + 1);
-            // Step 2: partial_sum == inclusive_scan_int (by sum_congruence)
-            // partial_sum(data@, 0, i+1) uses closure |j| data@[j] as int
-            // inclusive_scan_int(data@)[i] uses closure |j| as_int_seq(data@)[j]
-            // These are pointwise equal: as_int_seq(data@)[j] == data@[j] as int
+            //  Step 2: partial_sum == inclusive_scan_int (by sum_congruence)
+            //  partial_sum(data@, 0, i+1) uses closure |j| data@[j] as int
+            //  inclusive_scan_int(data@)[i] uses closure |j| as_int_seq(data@)[j]
+            //  These are pointwise equal: as_int_seq(data@)[j] == data@[j] as int
             assert forall|j: int| 0 <= j < i + 1 implies
                 (data@[j] as int).eqv(as_int_seq(data@)[j])
             by {
@@ -728,7 +728,7 @@ pub fn hillis_steele_exec(data: &Vec<i64>, n: u64) -> (output: Vec<i64>)
     result
 }
 
-/// Reduce: sum all elements. Uses Hillis-Steele and returns the last element.
+///  Reduce: sum all elements. Uses Hillis-Steele and returns the last element.
 pub fn reduce_exec(data: &Vec<i64>, n: u64) -> (result: i64)
     requires
         data@.len() == n as nat,
@@ -743,11 +743,11 @@ pub fn reduce_exec(data: &Vec<i64>, n: u64) -> (result: i64)
     scan[(n - 1) as usize]
 }
 
-// ============================================================
-// Generic tree reduce specs, lemmas, and exec
-// ============================================================
+//  ============================================================
+//  Generic tree reduce specs, lemmas, and exec
+//  ============================================================
 
-/// Generic tree reduce state: what each position holds after `level` levels.
+///  Generic tree reduce state: what each position holds after `level` levels.
 pub open spec fn tree_reduce_state_generic<T: ExecRing<R>, R: Ring>(
     data: Seq<T>, n: nat, level: nat,
 ) -> Seq<R>
@@ -769,7 +769,7 @@ pub open spec fn tree_reduce_state_generic<T: ExecRing<R>, R: Ring>(
     }
 }
 
-/// Generic tree reduce invariant: active positions hold correct sums via eqv.
+///  Generic tree reduce invariant: active positions hold correct sums via eqv.
 proof fn lemma_tree_reduce_invariant_all_generic<T: ExecRing<R>, R: Ring>(
     data: Seq<T>, n: nat, total_levels: nat, level: nat,
 )
@@ -811,7 +811,7 @@ proof fn lemma_tree_reduce_invariant_all_generic<T: ExecRing<R>, R: Ring>(
             crate::proof::swizzle_lemmas::lemma_pow2_positive((level - 1) as nat);
             crate::proof::swizzle_lemmas::lemma_pow2_positive(level);
 
-            // (i+1) % ns == 0 => (i+1) % stride == 0
+            //  (i+1) % ns == 0 => (i+1) % stride == 0
             vstd::arithmetic::div_mod::lemma_fundamental_div_mod(i + 1, ns as int);
             let q = (i + 1) / (ns as int);
             assert(i + 1 == ns as int * q);
@@ -827,7 +827,7 @@ proof fn lemma_tree_reduce_invariant_all_generic<T: ExecRing<R>, R: Ring>(
             assert(i >= stride as int) by (nonlinear_arith)
                 requires i + 1 == ns as int * q, q >= 1, ns == 2 * stride as int, stride > 0;
 
-            // Partner active at level-1
+            //  Partner active at level-1
             let p = i - stride as int;
             assert((p + 1) % (stride as int) == 0) by {
                 assert(p + 1 == stride as int * (2 * q - 1)) by (nonlinear_arith)
@@ -846,14 +846,14 @@ proof fn lemma_tree_reduce_invariant_all_generic<T: ExecRing<R>, R: Ring>(
             assert(lo >= 0) by (nonlinear_arith)
                 requires lo == i + 1 - ns as int, i + 1 == ns as int * q, q >= 1, ns > 0;
 
-            // sum_split: sum(f, lo, i+1).eqv(sp.add(si))
+            //  sum_split: sum(f, lo, i+1).eqv(sp.add(si))
             lemma_sum_split::<R>(f, lo, i + 1 - stride as int, i + 1);
 
-            // add_congruence: prev[i].add(prev[p]).eqv(si.add(sp))
+            //  add_congruence: prev[i].add(prev[p]).eqv(si.add(sp))
             use verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence;
             lemma_add_congruence::<R>(prev[i], si, prev[p], sp);
 
-            // commutativity + transitivity chain
+            //  commutativity + transitivity chain
             R::axiom_add_commutative(si, sp);
             R::axiom_eqv_transitive(prev[i].add(prev[p]), si.add(sp), sp.add(si));
             R::axiom_eqv_symmetric(sum::<R>(f, lo, i + 1), sp.add(si));
@@ -863,7 +863,7 @@ proof fn lemma_tree_reduce_invariant_all_generic<T: ExecRing<R>, R: Ring>(
     }
 }
 
-/// All values in tree_reduce_state_generic are representable.
+///  All values in tree_reduce_state_generic are representable.
 proof fn lemma_tree_reduce_all_representable<T: ExecRing<R>, R: Ring>(
     data: Seq<T>, n: nat, total_levels: nat, level: nat,
 )
@@ -914,7 +914,7 @@ proof fn lemma_tree_reduce_all_representable<T: ExecRing<R>, R: Ring>(
                     partial_sum_generic::<T, R>(data, lo, j + 1), state[j],
                 );
             } else {
-                // Non-active: state[j] == prev[j] by spec definition
+                //  Non-active: state[j] == prev[j] by spec definition
                 let prev = tree_reduce_state_generic::<T, R>(
                     data, n, (level - 1) as nat);
                 assert(state[j] == prev[j]);
@@ -923,7 +923,7 @@ proof fn lemma_tree_reduce_all_representable<T: ExecRing<R>, R: Ring>(
     }
 }
 
-/// Generic in-place tree reduce.
+///  Generic in-place tree reduce.
 pub fn tree_reduce_in_place_generic_exec<T: ExecRing<R>, R: Ring>(
     data: &mut Vec<T>, n: u64, levels: u64,
 )
@@ -957,11 +957,11 @@ pub fn tree_reduce_in_place_generic_exec<T: ExecRing<R>, R: Ring>(
         lemma_tree_reduce_all_representable::<T, R>(
             original_data, n as nat, total_levels, 0,
         );
-        // Bridge: tree_reduce_state_generic at level 0 == original data views
+        //  Bridge: tree_reduce_state_generic at level 0 == original data views
         assert forall|j: int| 0 <= j < n as int implies
             T::is_representable(data@[j].view())
         by {
-            // state_generic(data, n, 0)[j] == data[j].view() by spec unfolding
+            //  state_generic(data, n, 0)[j] == data[j].view() by spec unfolding
             assert(tree_reduce_state_generic::<T, R>(
                 original_data, n as nat, 0)[j] == original_data[j].view());
         }
@@ -1041,13 +1041,13 @@ pub fn tree_reduce_in_place_generic_exec<T: ExecRing<R>, R: Ring>(
             if (i + 1) % step == 0 && i >= stride {
                 let partner = (i - stride) as usize;
 
-                // Capture pre-mutation views for proof chains
+                //  Capture pre-mutation views for proof chains
                 let ghost old_i_view = data@[i as int].view();
                 let ghost old_p_view = data@[partner as int].view();
 
                 proof {
-                    // Partner is not active at level d+1:
-                    // next_state[partner] == prev_state[partner]
+                    //  Partner is not active at level d+1:
+                    //  next_state[partner] == prev_state[partner]
                     let pi = partner as int + 1;
                     assert(pi == i as int + 1 - stride as int);
                     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
@@ -1073,20 +1073,20 @@ pub fn tree_reduce_in_place_generic_exec<T: ExecRing<R>, R: Ring>(
                     assert(pow2((d + 1) as nat) == 2 * pow2(d as nat));
                     assert(next_state[partner as int] == prev_state[partner as int]);
 
-                    // Bridge partner view to prev_state
-                    // partner < i, so data[partner].view().eqv(next_state[partner])
-                    //   = prev_state[partner]
+                    //  Bridge partner view to prev_state
+                    //  partner < i, so data[partner].view().eqv(next_state[partner])
+                    //    = prev_state[partner]
 
-                    // Prove sum is representable for exec_add
+                    //  Prove sum is representable for exec_add
                     use verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence;
                     lemma_add_congruence::<R>(
                         old_i_view, prev_state[i as int],
                         old_p_view, prev_state[partner as int],
                     );
-                    // old_i_view.add(old_p_view).eqv(prev_state[i].add(prev_state[partner]))
+                    //  old_i_view.add(old_p_view).eqv(prev_state[i].add(prev_state[partner]))
                     assert(next_state[i as int]
                         == prev_state[i as int].add(prev_state[partner as int]));
-                    // old_i_view.add(old_p_view).eqv(next_state[i])
+                    //  old_i_view.add(old_p_view).eqv(next_state[i])
                     R::axiom_eqv_symmetric(
                         old_i_view.add(old_p_view), next_state[i as int],
                     );
@@ -1099,15 +1099,15 @@ pub fn tree_reduce_in_place_generic_exec<T: ExecRing<R>, R: Ring>(
                 data.set(i as usize, val);
 
                 proof {
-                    // val.view().eqv(old_i_view.add(old_p_view)) from exec_add
-                    // old_i_view.add(old_p_view).eqv(next_state[i]) proved above
-                    // data@[i] == val, so data@[i].view() == val.view()
+                    //  val.view().eqv(old_i_view.add(old_p_view)) from exec_add
+                    //  old_i_view.add(old_p_view).eqv(next_state[i]) proved above
+                    //  data@[i] == val, so data@[i].view() == val.view()
                     R::axiom_eqv_transitive(
                         data@[i as int].view(),
                         old_i_view.add(old_p_view),
                         next_state[i as int],
                     );
-                    // is_representable(data@[i].view())
+                    //  is_representable(data@[i].view())
                     R::axiom_eqv_symmetric(
                         data@[i as int].view(), next_state[i as int]);
                     T::lemma_representable_congruence(
@@ -1116,8 +1116,8 @@ pub fn tree_reduce_in_place_generic_exec<T: ExecRing<R>, R: Ring>(
             } else {
                 proof {
                     assert(pow2((d + 1) as nat) == 2 * pow2(d as nat));
-                    // Non-active: next_state[i] == prev_state[i]
-                    // data@[i].view().eqv(prev_state[i]) == next_state[i]
+                    //  Non-active: next_state[i] == prev_state[i]
+                    //  data@[i].view().eqv(prev_state[i]) == next_state[i]
                 }
             }
 
@@ -1126,7 +1126,7 @@ pub fn tree_reduce_in_place_generic_exec<T: ExecRing<R>, R: Ring>(
 
         proof {
             assert(pow2((d + 1) as nat) == 2 * pow2(d as nat));
-            // Re-establish representability for all positions
+            //  Re-establish representability for all positions
             assert forall|j: int| 0 <= j < n as int implies
                 T::is_representable(data@[j].view())
             by {
@@ -1139,14 +1139,14 @@ pub fn tree_reduce_in_place_generic_exec<T: ExecRing<R>, R: Ring>(
     }
 }
 
-// ============================================================
-// Generic Blelloch exclusive scan
-// ============================================================
+//  ============================================================
+//  Generic Blelloch exclusive scan
+//  ============================================================
 
-/// Expected value at position j after k Blelloch down-sweep levels (generic Ring version).
+///  Expected value at position j after k Blelloch down-sweep levels (generic Ring version).
 ///
-/// Positions at the current stride hold exclusive prefix sums (via eqv).
-/// Other positions hold their up-sweep (tree reduce) values.
+///  Positions at the current stride hold exclusive prefix sums (via eqv).
+///  Other positions hold their up-sweep (tree reduce) values.
 pub open spec fn blelloch_expected_generic<T: ExecRing<R>, R: Ring>(
     data: Seq<T>, n: nat, total_levels: nat, k: nat, j: int,
 ) -> R
@@ -1160,7 +1160,7 @@ pub open spec fn blelloch_expected_generic<T: ExecRing<R>, R: Ring>(
     }
 }
 
-/// Generic inner loop invariant: processed positions match dk+1 expected, others match dk expected.
+///  Generic inner loop invariant: processed positions match dk+1 expected, others match dk expected.
 pub open spec fn ds_inner_inv_generic<T: ExecRing<R>, R: Ring>(
     data_view: Seq<T>, j: int, ri: int, stride: int, step: int,
     orig: Seq<T>, n: nat, total_levels: nat, dk: nat,
@@ -1174,7 +1174,7 @@ pub open spec fn ds_inner_inv_generic<T: ExecRing<R>, R: Ring>(
     }
 }
 
-/// Tree reduce state is stable across levels for positions not active at those levels.
+///  Tree reduce state is stable across levels for positions not active at those levels.
 proof fn lemma_tree_reduce_stable_range_generic<T: ExecRing<R>, R: Ring>(
     data: Seq<T>, n: nat, start: nat, end_level: nat, i: int,
 )
@@ -1196,8 +1196,8 @@ proof fn lemma_tree_reduce_stable_range_generic<T: ExecRing<R>, R: Ring>(
     }
 }
 
-/// At the "exact level" d in the tree reduce, position i holds
-/// partial_sum_generic(data, i+1-pow2(d), i+1) via eqv.
+///  At the "exact level" d in the tree reduce, position i holds
+///  partial_sum_generic(data, i+1-pow2(d), i+1) via eqv.
 proof fn lemma_tree_reduce_value_at_exact_level_generic<T: ExecRing<R>, R: Ring>(
     data: Seq<T>, n: nat, total_levels: nat, d: nat, i: int,
 )
@@ -1215,9 +1215,9 @@ proof fn lemma_tree_reduce_value_at_exact_level_generic<T: ExecRing<R>, R: Ring>
     lemma_tree_reduce_invariant_all_generic::<T, R>(data, n, total_levels, d);
 
     if d == total_levels {
-        // state at level total_levels: invariant gives the result
+        //  state at level total_levels: invariant gives the result
     } else {
-        // Stability: state doesn't change from level d to total_levels
+        //  Stability: state doesn't change from level d to total_levels
         assert forall|L: nat| d < L && L <= total_levels
         implies (i + 1) % (pow2(L) as int) != 0
         by {
@@ -1227,12 +1227,12 @@ proof fn lemma_tree_reduce_value_at_exact_level_generic<T: ExecRing<R>, R: Ring>
             }
         };
         lemma_tree_reduce_stable_range_generic::<T, R>(data, n, d, total_levels, i);
-        // state[total_levels][i] == state[d][i] (structural), and
-        // state[d][i].eqv(partial_sum_generic(...)) from invariant
+        //  state[total_levels][i] == state[d][i] (structural), and
+        //  state[d][i].eqv(partial_sum_generic(...)) from invariant
     }
 }
 
-/// All blelloch_expected_generic values are representable.
+///  All blelloch_expected_generic values are representable.
 proof fn lemma_blelloch_expected_representable<T: ExecRing<R>, R: Ring>(
     data: Seq<T>, n: nat, total_levels: nat, k: nat, j: int,
 )
@@ -1248,7 +1248,7 @@ proof fn lemma_blelloch_expected_representable<T: ExecRing<R>, R: Ring>(
 {
     let s = pow2((total_levels - k) as nat);
     if (j + 1) % (s as int) == 0 {
-        // partial_sum_generic(data, 0, j+1-s) — representable by all_partial_sums_representable
+        //  partial_sum_generic(data, 0, j+1-s) — representable by all_partial_sums_representable
         crate::proof::swizzle_lemmas::lemma_pow2_positive((total_levels - k) as nat);
         vstd::arithmetic::div_mod::lemma_fundamental_div_mod(j + 1, s as int);
         let q = (j + 1) / (s as int);
@@ -1258,12 +1258,12 @@ proof fn lemma_blelloch_expected_representable<T: ExecRing<R>, R: Ring>(
         assert(j + 1 - s as int >= 0) by (nonlinear_arith)
             requires j + 1 == s as int * q, q >= 1, s > 0;
     } else {
-        // tree_reduce_state_generic value — representable by lemma
+        //  tree_reduce_state_generic value — representable by lemma
         lemma_tree_reduce_all_representable::<T, R>(data, n, total_levels, total_levels);
     }
 }
 
-/// Generic Blelloch exclusive scan (in-place).
+///  Generic Blelloch exclusive scan (in-place).
 pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
     data: &mut Vec<T>, n: u64,
 )
@@ -1283,14 +1283,14 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
     let levels = log2_ceil_exec(n);
     let data_len = data.len();
 
-    // Handle n = 1: exclusive_scan[0] = sum(data, 0, 0) = zero()
+    //  Handle n = 1: exclusive_scan[0] = sum(data, 0, 0) = zero()
     if n == 1 {
         let zero_val = T::exec_zero();
         data.set(0, zero_val);
         proof {
             lemma_sum_empty::<R>(|j: int| original_data[j].view(), 0, 0);
-            // zero_val.view().eqv(R::zero()) and sum(f, 0, 0).eqv(R::zero())
-            // => zero_val.view().eqv(sum(f, 0, 0)) = partial_sum_generic(orig, 0, 0)
+            //  zero_val.view().eqv(R::zero()) and sum(f, 0, 0).eqv(R::zero())
+            //  => zero_val.view().eqv(sum(f, 0, 0)) = partial_sum_generic(orig, 0, 0)
             R::axiom_eqv_symmetric(
                 partial_sum_generic::<T, R>(original_data, 0, 0), R::zero());
             R::axiom_eqv_transitive(
@@ -1300,21 +1300,21 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
         return;
     }
 
-    // n >= 2, so levels >= 1
+    //  n >= 2, so levels >= 1
     proof { lemma_pow2_log2_ceil_exact(n as nat); }
     let ghost total_levels = levels as nat;
 
-    // ============================================================
-    // UP-SWEEP (generic tree reduce)
-    // ============================================================
+    //  ============================================================
+    //  UP-SWEEP (generic tree reduce)
+    //  ============================================================
     tree_reduce_in_place_generic_exec::<T, R>(data, n, levels);
 
-    // ============================================================
-    // ROOT ZEROING
-    // ============================================================
+    //  ============================================================
+    //  ROOT ZEROING
+    //  ============================================================
     let zero_val = T::exec_zero();
     proof {
-        // Save tree reduce postcondition
+        //  Save tree reduce postcondition
         assert forall|j: int| 0 <= j < n as int implies
             data@[j].view().eqv(
                 tree_reduce_state_generic::<T, R>(original_data, n as nat, total_levels)[j])
@@ -1324,7 +1324,7 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
     data.set((n - 1) as usize, zero_val);
 
     proof {
-        // Establish blelloch_expected_generic at dk=0
+        //  Establish blelloch_expected_generic at dk=0
         assert forall|j: int| 0 <= j < n as int implies
             data@[j].view().eqv(
                 blelloch_expected_generic::<T, R>(
@@ -1332,27 +1332,27 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
         by {
             let s = pow2(total_levels);
             if j == n as int - 1 {
-                // data[n-1] = zero_val, expected = partial_sum_generic(orig, 0, 0) = sum(f,0,0)
+                //  data[n-1] = zero_val, expected = partial_sum_generic(orig, 0, 0) = sum(f,0,0)
                 assert((j + 1) % (s as int) == 0) by {
                     assert(j + 1 == n as int);
                     assert(n as nat == s);
                     assert((j + 1) % (s as int) == (s as int) % (s as int));
                 };
                 lemma_sum_empty::<R>(|i: int| original_data[i].view(), 0, 0);
-                // zero_val.view().eqv(R::zero()) and sum(f,0,0).eqv(R::zero())
+                //  zero_val.view().eqv(R::zero()) and sum(f,0,0).eqv(R::zero())
                 R::axiom_eqv_symmetric(
                     partial_sum_generic::<T, R>(original_data, 0, 0), R::zero());
                 R::axiom_eqv_transitive(
                     data@[j].view(), R::zero(),
                     partial_sum_generic::<T, R>(original_data, 0, 0));
             } else {
-                // data[j] unchanged, expected = tree_reduce_state_generic[j]
+                //  data[j] unchanged, expected = tree_reduce_state_generic[j]
                 assert((j + 1) % (s as int) != 0) by {
                     assert(0 < j + 1 && j + 1 < n as int);
                     assert(n as nat == s);
                     vstd::arithmetic::div_mod::lemma_small_mod((j + 1) as nat, s);
                 };
-                // data@[j] == pre_zero_data[j] (unchanged by set at n-1)
+                //  data@[j] == pre_zero_data[j] (unchanged by set at n-1)
                 assert(data@[j].view().eqv(
                     tree_reduce_state_generic::<T, R>(
                         original_data, n as nat, total_levels)[j]));
@@ -1360,9 +1360,9 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
         }
     }
 
-    // ============================================================
-    // DOWN-SWEEP
-    // ============================================================
+    //  ============================================================
+    //  DOWN-SWEEP
+    //  ============================================================
     let mut dk: u64 = 0;
     let mut ds_stride: u64 = n / 2;
     proof {
@@ -1373,7 +1373,7 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 pow2(total_levels) == n as nat,
                 pow2(total_levels) == 2 * pow2((total_levels - 1) as nat),
                 ds_stride == n / 2, n > 1;
-        // Representability at dk=0
+        //  Representability at dk=0
         assert forall|j: int| 0 <= j < n as int implies
             T::is_representable(data@[j].view())
         by {
@@ -1436,7 +1436,7 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             assert((ri as int + 1) % (step as int) == 0) by {
                 assert(ri as int + 1 == step as int);
             };
-            // No pairs processed initially
+            //  No pairs processed initially
             assert forall|j: int| #![trigger data@[j]] 0 <= j < n as int
             implies ds_inner_inv_generic::<T, R>(
                 data@, j, ri as int, stride as int, step as int,
@@ -1477,13 +1477,13 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             let right = ri as usize;
             let left = (ri - stride) as usize;
 
-            // Capture old views
+            //  Capture old views
             let ghost old_right_view = data@[right as int].view();
             let ghost old_left_view = data@[left as int].view();
 
             proof {
                 let li = ri as int - stride as int;
-                // Left is unprocessed: (li+1) % step == stride, and partner ri >= ri
+                //  Left is unprocessed: (li+1) % step == stride, and partner ri >= ri
                 assert((li + 1) % (step as int) == stride as int) by {
                     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
                         (ri + 1) as int, step as int);
@@ -1501,19 +1501,19 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                     );
                 };
 
-                // Both unprocessed: match prev expected
+                //  Both unprocessed: match prev expected
                 assert(!ds_pair_processed(ri as int, ri as int, stride as int, step as int));
                 assert(!ds_pair_processed(li, ri as int, stride as int, step as int));
 
-                // Prove sum is representable for exec_add
-                // old_left.view().eqv(expected_dk(left))
-                // old_right.view().eqv(expected_dk(right))
-                // sum = expected_dk(left).add(expected_dk(right))
-                // Need: sum.eqv(expected_dk+1(right)), and expected_dk+1(right) is representable
+                //  Prove sum is representable for exec_add
+                //  old_left.view().eqv(expected_dk(left))
+                //  old_right.view().eqv(expected_dk(right))
+                //  sum = expected_dk(left).add(expected_dk(right))
+                //  Need: sum.eqv(expected_dk+1(right)), and expected_dk+1(right) is representable
                 lemma_blelloch_expected_representable::<T, R>(
                     original_data, n as nat, total_levels, (dk + 1) as nat, ri as int);
 
-                // Show old_left + old_right is representable via eqv chain
+                //  Show old_left + old_right is representable via eqv chain
                 use verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence;
                 let exp_left = blelloch_expected_generic::<T, R>(
                     original_data, n as nat, total_levels, dk as nat, li);
@@ -1521,21 +1521,21 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                     original_data, n as nat, total_levels, dk as nat, ri as int);
                 lemma_add_congruence::<R>(
                     old_left_view, exp_left, old_right_view, exp_right);
-                // old_left.add(old_right).eqv(exp_left.add(exp_right))
+                //  old_left.add(old_right).eqv(exp_left.add(exp_right))
 
-                // Now prove exp_left.add(exp_right).eqv(expected_dk+1(right))
-                // expected_dk(right) = partial_sum_generic(orig, 0, ri+1-s_prev)
+                //  Now prove exp_left.add(exp_right).eqv(expected_dk+1(right))
+                //  expected_dk(right) = partial_sum_generic(orig, 0, ri+1-s_prev)
                 let s_prev = pow2((total_levels - dk) as nat);
                 assert(s_prev == 2 * stride as nat);
                 assert((ri as int + 1) % (s_prev as int) == 0);
-                // expected_dk(left): (li+1) % s_prev == stride != 0, so = tree_reduce[li]
+                //  expected_dk(left): (li+1) % s_prev == stride != 0, so = tree_reduce[li]
                 assert((li + 1) % (s_prev as int) != 0) by (nonlinear_arith)
                     requires (li + 1) % (step as int) == stride as int,
                              step == 2 * stride, stride > 0,
                              s_prev == 2 * stride as nat;
-                // tree_reduce[li] at exact level d = total_levels - dk - 1
+                //  tree_reduce[li] at exact level d = total_levels - dk - 1
                 let d = (total_levels - dk - 1) as nat;
-                // First prove (li+1) % stride == 0
+                //  First prove (li+1) % stride == 0
                 assert((li + 1) % (stride as int) == 0) by {
                     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
                         li + 1, step as int);
@@ -1557,15 +1557,15 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 }
                 lemma_tree_reduce_value_at_exact_level_generic::<T, R>(
                     original_data, n as nat, total_levels, d, li);
-                // tree_reduce[li].eqv(partial_sum_generic(orig, li+1-stride, li+1))
-                // = partial_sum_generic(orig, ri+1-s_prev, ri+1-stride)
+                //  tree_reduce[li].eqv(partial_sum_generic(orig, li+1-stride, li+1))
+                //  = partial_sum_generic(orig, ri+1-s_prev, ri+1-stride)
                 assert(li + 1 - stride as int == ri as int + 1 - s_prev as int) by (nonlinear_arith)
                     requires li == ri as int - stride as int, s_prev == 2 * stride as nat;
 
-                // Now: exp_left = tree_reduce[li].eqv(partial_sum_generic(orig, ri+1-s_prev, ri+1-stride))
-                //       exp_right = partial_sum_generic(orig, 0, ri+1-s_prev)
-                // Sum split: partial_sum_generic(orig, 0, ri+1-stride).eqv(
-                //   partial_sum_generic(orig, 0, ri+1-s_prev).add(partial_sum_generic(orig, ri+1-s_prev, ri+1-stride)))
+                //  Now: exp_left = tree_reduce[li].eqv(partial_sum_generic(orig, ri+1-s_prev, ri+1-stride))
+                //        exp_right = partial_sum_generic(orig, 0, ri+1-s_prev)
+                //  Sum split: partial_sum_generic(orig, 0, ri+1-stride).eqv(
+                //    partial_sum_generic(orig, 0, ri+1-s_prev).add(partial_sum_generic(orig, ri+1-s_prev, ri+1-stride)))
                 let f = |j: int| original_data[j].view();
                 let lo = ri as int + 1 - s_prev as int;
                 let mid = ri as int + 1 - stride as int;
@@ -1579,32 +1579,32 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                     requires lo == ri as int + 1 - s_prev as int,
                              ri as int + 1 == s_prev as int * q, q >= 1, s_prev > 0;
                 lemma_sum_split::<R>(f, 0, lo, mid);
-                // sum(f, 0, mid).eqv(sum(f, 0, lo).add(sum(f, lo, mid)))
-                // = partial_sum(orig, 0, mid).eqv(exp_right.add(exp_left_val))
-                // where exp_left_val = partial_sum(orig, lo, mid) and exp_left.eqv(exp_left_val)
+                //  sum(f, 0, mid).eqv(sum(f, 0, lo).add(sum(f, lo, mid)))
+                //  = partial_sum(orig, 0, mid).eqv(exp_right.add(exp_left_val))
+                //  where exp_left_val = partial_sum(orig, lo, mid) and exp_left.eqv(exp_left_val)
 
-                // Chain: old_left.add(old_right).eqv(exp_left.add(exp_right))
-                // exp_left.eqv(partial_sum(orig, lo, mid)) [from exact level]
-                // Need: exp_left.add(exp_right).eqv(partial_sum(orig, lo, mid).add(exp_right))
+                //  Chain: old_left.add(old_right).eqv(exp_left.add(exp_right))
+                //  exp_left.eqv(partial_sum(orig, lo, mid)) [from exact level]
+                //  Need: exp_left.add(exp_right).eqv(partial_sum(orig, lo, mid).add(exp_right))
                 let psg_lo_mid = partial_sum_generic::<T, R>(original_data, lo, mid);
                 R::axiom_eqv_reflexive(exp_right);
                 lemma_add_congruence::<R>(exp_left, psg_lo_mid, exp_right, exp_right);
-                // exp_left.add(exp_right).eqv(psg_lo_mid.add(exp_right))
+                //  exp_left.add(exp_right).eqv(psg_lo_mid.add(exp_right))
 
-                // Commutativity: psg_lo_mid.add(exp_right).eqv(exp_right.add(psg_lo_mid))
+                //  Commutativity: psg_lo_mid.add(exp_right).eqv(exp_right.add(psg_lo_mid))
                 R::axiom_add_commutative(psg_lo_mid, exp_right);
                 R::axiom_eqv_transitive(
                     exp_left.add(exp_right), psg_lo_mid.add(exp_right),
                     exp_right.add(psg_lo_mid));
 
-                // sum_split gave: sum(f,0,mid).eqv(sum(f,0,lo).add(sum(f,lo,mid)))
-                // = partial_sum(0,mid).eqv(exp_right.add(psg_lo_mid))
+                //  sum_split gave: sum(f,0,mid).eqv(sum(f,0,lo).add(sum(f,lo,mid)))
+                //  = partial_sum(0,mid).eqv(exp_right.add(psg_lo_mid))
                 R::axiom_eqv_symmetric(
                     partial_sum_generic::<T, R>(original_data, 0, mid),
                     exp_right.add(psg_lo_mid));
 
-                // Chain: old_left.add(old_right).eqv(exp_left.add(exp_right))
-                //        .eqv(exp_right.add(psg_lo_mid)).eqv(partial_sum(0, mid))
+                //  Chain: old_left.add(old_right).eqv(exp_left.add(exp_right))
+                //         .eqv(exp_right.add(psg_lo_mid)).eqv(partial_sum(0, mid))
                 R::axiom_eqv_transitive(
                     old_left_view.add(old_right_view),
                     exp_left.add(exp_right),
@@ -1614,7 +1614,7 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                     exp_right.add(psg_lo_mid),
                     partial_sum_generic::<T, R>(original_data, 0, mid));
 
-                // expected_dk+1(right): (ri+1) % stride == 0, so partial_sum(0, ri+1-stride) = partial_sum(0, mid)
+                //  expected_dk+1(right): (ri+1) % stride == 0, so partial_sum(0, ri+1-stride) = partial_sum(0, mid)
                 assert((ri as int + 1) % (stride as int) == 0) by {
                     crate::proof::swizzle_lemmas::lemma_mod_pow2_weaken(
                         (ri as int + 1) as nat,
@@ -1622,7 +1622,7 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                         (total_levels - dk - 1) as nat);
                 };
 
-                // Representability of the sum value
+                //  Representability of the sum value
                 R::axiom_eqv_symmetric(
                     old_left_view.add(old_right_view),
                     partial_sum_generic::<T, R>(original_data, 0, mid));
@@ -1630,13 +1630,13 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                     partial_sum_generic::<T, R>(original_data, 0, mid),
                     old_left_view.add(old_right_view));
 
-                // Left position: expected_dk+1(li)
-                // (li+1) % stride == 0 (shown above), so expected_dk+1(li) = partial_sum(0, li+1-stride)
-                // = partial_sum(0, ri+1-s_prev) = exp_right
-                // old_right.view().eqv(exp_right) already established
-                // And expected_dk+1(li) matches exp_right
+                //  Left position: expected_dk+1(li)
+                //  (li+1) % stride == 0 (shown above), so expected_dk+1(li) = partial_sum(0, li+1-stride)
+                //  = partial_sum(0, ri+1-s_prev) = exp_right
+                //  old_right.view().eqv(exp_right) already established
+                //  And expected_dk+1(li) matches exp_right
 
-                // Representability for left (clone of right)
+                //  Representability for left (clone of right)
                 lemma_blelloch_expected_representable::<T, R>(
                     original_data, n as nat, total_levels, (dk + 1) as nat, li);
             }
@@ -1651,27 +1651,27 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 let s_prev = pow2((total_levels - dk) as nat);
                 let mid = ri as int + 1 - stride as int;
 
-                // Prove data[ri].view().eqv(expected_dk+1(ri))
-                // sum_val.view().eqv(old_left_view.add(old_right_view))
-                // old_left_view.add(old_right_view).eqv(partial_sum(0, mid))
-                // expected_dk+1(ri) = partial_sum(0, mid)
+                //  Prove data[ri].view().eqv(expected_dk+1(ri))
+                //  sum_val.view().eqv(old_left_view.add(old_right_view))
+                //  old_left_view.add(old_right_view).eqv(partial_sum(0, mid))
+                //  expected_dk+1(ri) = partial_sum(0, mid)
                 R::axiom_eqv_transitive(
                     data@[ri as int].view(),
                     old_left_view.add(old_right_view),
                     partial_sum_generic::<T, R>(original_data, 0, mid));
 
-                // Prove data[li].view().eqv(expected_dk+1(li))
-                // old_right_clone.view().eqv(old_right_view)
-                // old_right_view.eqv(expected_dk(ri)) = partial_sum(0, ri+1-s_prev)
+                //  Prove data[li].view().eqv(expected_dk+1(li))
+                //  old_right_clone.view().eqv(old_right_view)
+                //  old_right_view.eqv(expected_dk(ri)) = partial_sum(0, ri+1-s_prev)
                 let exp_right = blelloch_expected_generic::<T, R>(
                     original_data, n as nat, total_levels, dk as nat, ri as int);
                 R::axiom_eqv_transitive(
                     data@[li].view(), old_right_view, exp_right);
-                // expected_dk+1(li) = partial_sum(0, li+1-stride) = partial_sum(0, ri+1-s_prev)
+                //  expected_dk+1(li) = partial_sum(0, li+1-stride) = partial_sum(0, ri+1-s_prev)
                 assert(li + 1 - stride as int == ri as int + 1 - s_prev as int) by (nonlinear_arith)
                     requires li == ri as int - stride as int, s_prev == 2 * stride as nat;
 
-                // Representability
+                //  Representability
                 R::axiom_eqv_symmetric(data@[ri as int].view(),
                     partial_sum_generic::<T, R>(original_data, 0, mid));
                 T::lemma_representable_congruence(
@@ -1682,7 +1682,7 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 T::lemma_representable_congruence(exp_right, data@[li].view());
             }
 
-            // Advance ri
+            //  Advance ri
             let ghost old_ri = ri as int;
             if ri + step < n {
                 ri = ri + step;
@@ -1738,7 +1738,7 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             }
         }
 
-        // After inner loop: all pairs processed, data matches dk+1 expected
+        //  After inner loop: all pairs processed, data matches dk+1 expected
         proof {
             let ghost num_pairs = pow2(dk as nat);
             crate::proof::swizzle_lemmas::lemma_pow2_mul(
@@ -1757,11 +1757,11 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 assert(new_stride == stride as nat);
 
                 if (j + 1) % (step as int) == 0 && j >= stride as int {
-                    // Right position: processed
+                    //  Right position: processed
                     assert(ds_pair_processed(
                         j, ri as int, stride as int, step as int));
                 } else if (j + 1) % (step as int) == stride as int {
-                    // Left position: show its partner exists (partner < n)
+                    //  Left position: show its partner exists (partner < n)
                     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(
                         j + 1, (2 * stride as int));
                     let q_left = (j + 1) / (2 * stride as int);
@@ -1784,12 +1784,12 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                     assert(ds_pair_processed(
                         j, ri as int, stride as int, step as int));
                 } else {
-                    // Unchanged position
+                    //  Unchanged position
                     assert(!ds_pair_processed(
                         j, ri as int, stride as int, step as int));
-                    // expected_dk+1(j): (j+1) % stride != 0 → tree_reduce[j]
-                    // data[j].eqv(expected_dk(j)) = tree_reduce[j] (since (j+1)%s_prev != 0)
-                    // expected_dk+1(j) = tree_reduce[j] (since (j+1)%stride != 0)
+                    //  expected_dk+1(j): (j+1) % stride != 0 → tree_reduce[j]
+                    //  data[j].eqv(expected_dk(j)) = tree_reduce[j] (since (j+1)%s_prev != 0)
+                    //  expected_dk+1(j) = tree_reduce[j] (since (j+1)%stride != 0)
                     let s_prev = pow2((total_levels - dk) as nat);
                     crate::proof::scan_blelloch_lemmas::lemma_else_branch_not_divisible(
                         j, stride as nat, s_prev);
@@ -1804,7 +1804,7 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 }
             }
 
-            // Representability at dk+1
+            //  Representability at dk+1
             assert forall|j: int| 0 <= j < n as int implies
                 T::is_representable(data@[j].view())
             by {
@@ -1837,23 +1837,23 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
         }
     }
 
-    // ============================================================
-    // FINAL: dk == levels, expected = exclusive prefix sum
-    // ============================================================
+    //  ============================================================
+    //  FINAL: dk == levels, expected = exclusive prefix sum
+    //  ============================================================
     proof {
         assert forall|j: int| 0 <= j < n as int
         implies data@[j].view().eqv(
             partial_sum_generic::<T, R>(original_data, 0, j))
         by {
-            // At dk = total_levels, stride = pow2(0) = 1, divides all j+1
+            //  At dk = total_levels, stride = pow2(0) = 1, divides all j+1
             assert((total_levels - total_levels) as nat == 0nat);
             assert(pow2(0nat) == 1nat);
             let s = pow2((total_levels - total_levels) as nat);
             assert(s == 1nat);
             assert((j + 1) % 1int == 0int);
             assert((j + 1) % (s as int) == 0);
-            // blelloch_expected_generic(orig, n, levels, levels, j)
-            //   = partial_sum_generic(orig, 0, j+1-1) = partial_sum_generic(orig, 0, j)
+            //  blelloch_expected_generic(orig, n, levels, levels, j)
+            //    = partial_sum_generic(orig, 0, j+1-1) = partial_sum_generic(orig, 0, j)
             assert(blelloch_expected_generic::<T, R>(
                 original_data, n as nat, total_levels, levels as nat, j)
                 == partial_sum_generic::<T, R>(original_data, 0, j));
@@ -1861,13 +1861,13 @@ pub fn blelloch_exclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
     }
 }
 
-// ============================================================
-// Blelloch exclusive scan (i64) — shared helpers + thin wrapper
-// ============================================================
+//  ============================================================
+//  Blelloch exclusive scan (i64) — shared helpers + thin wrapper
+//  ============================================================
 
-/// ds_pair_processed(j, new_ri, ...) == ds_pair_processed(j, old_ri, ...)
-/// when j != old_ri and j != old_ri - stride, and new_ri > old_ri with new_ri <= old_ri + step.
-/// The only newly processed positions when advancing ri are old_ri (right) and old_ri - stride (left).
+///  ds_pair_processed(j, new_ri, ...) == ds_pair_processed(j, old_ri, ...)
+///  when j != old_ri and j != old_ri - stride, and new_ri > old_ri with new_ri <= old_ri + step.
+///  The only newly processed positions when advancing ri are old_ri (right) and old_ri - stride (left).
 proof fn lemma_ds_pair_processed_frame(
     j: int, old_ri: int, new_ri: int, stride: int, step: int, n: int,
 )
@@ -1885,19 +1885,19 @@ proof fn lemma_ds_pair_processed_frame(
         ds_pair_processed(j, new_ri, stride, step)
         == ds_pair_processed(j, old_ri, stride, step),
 {
-    // Right case: (j+1) % step == 0 && j >= stride && j < ri
-    // The only difference is j < old_ri+step vs j < old_ri
-    // For j in [old_ri, old_ri+step): could j satisfy (j+1)%step==0 && j >= stride?
-    // j != old_ri, so j > old_ri. Then j in (old_ri, old_ri+step).
-    // (j+1)%step==0 means j+1 = step*k. old_ri+1 = step*q, so j+1 > step*q.
-    // Next multiple: step*(q+1) = old_ri+1+step = old_ri+step+1. But j < old_ri+step, so j+1 <= old_ri+step < old_ri+step+1. So no multiple in range.
+    //  Right case: (j+1) % step == 0 && j >= stride && j < ri
+    //  The only difference is j < old_ri+step vs j < old_ri
+    //  For j in [old_ri, old_ri+step): could j satisfy (j+1)%step==0 && j >= stride?
+    //  j != old_ri, so j > old_ri. Then j in (old_ri, old_ri+step).
+    //  (j+1)%step==0 means j+1 = step*k. old_ri+1 = step*q, so j+1 > step*q.
+    //  Next multiple: step*(q+1) = old_ri+1+step = old_ri+step+1. But j < old_ri+step, so j+1 <= old_ri+step < old_ri+step+1. So no multiple in range.
     if (j + 1) % step == 0 && j >= stride {
-        // j < old_ri iff j < old_ri + step (since j != old_ri and there's no other multiple in [old_ri, old_ri+step))
+        //  j < old_ri iff j < old_ri + step (since j != old_ri and there's no other multiple in [old_ri, old_ri+step))
         if j >= old_ri {
-            // j > old_ri (since j != old_ri), j < old_ri + step (for the new case)
-            // (j+1) % step == 0 and j+1 > old_ri + 1 = step*q
-            // Next multiple after step*q is step*(q+1) = old_ri+1+step
-            // j+1 <= old_ri+step, so j+1 < step*(q+1). Contradiction with (j+1)%step==0 and j+1 > step*q
+            //  j > old_ri (since j != old_ri), j < old_ri + step (for the new case)
+            //  (j+1) % step == 0 and j+1 > old_ri + 1 = step*q
+            //  Next multiple after step*q is step*(q+1) = old_ri+1+step
+            //  j+1 <= old_ri+step, so j+1 < step*(q+1). Contradiction with (j+1)%step==0 and j+1 > step*q
             vstd::arithmetic::div_mod::lemma_fundamental_div_mod(j + 1, step);
             vstd::arithmetic::div_mod::lemma_fundamental_div_mod(old_ri + 1, step);
             let qj = (j + 1) / step;
@@ -1912,23 +1912,23 @@ proof fn lemma_ds_pair_processed_frame(
                 requires j + 1 == step * qj, qj >= qr + 1, step > 0;
             assert(j >= old_ri + step) by (nonlinear_arith)
                 requires j + 1 >= step * (qr + 1), old_ri + 1 == step * qr, step > 0;
-            // j >= old_ri + step contradicts j < old_ri + step (from old_ri+step <= n and j < n... wait, j could equal old_ri + step)
-            // Actually we need j < old_ri + step for the claim. But j >= old_ri + step means j is NOT in [old_ri, old_ri+step)
-            // So ds_pair_processed(j, old_ri+step, ...) requires j < old_ri+step, but j >= old_ri+step: false = false ✓
-            // And ds_pair_processed(j, old_ri, ...) requires j < old_ri, but j >= old_ri: false ✓
-            // Both false, so equal ✓
+            //  j >= old_ri + step contradicts j < old_ri + step (from old_ri+step <= n and j < n... wait, j could equal old_ri + step)
+            //  Actually we need j < old_ri + step for the claim. But j >= old_ri + step means j is NOT in [old_ri, old_ri+step)
+            //  So ds_pair_processed(j, old_ri+step, ...) requires j < old_ri+step, but j >= old_ri+step: false = false ✓
+            //  And ds_pair_processed(j, old_ri, ...) requires j < old_ri, but j >= old_ri: false ✓
+            //  Both false, so equal ✓
         }
     }
-    // Left case: (j+1) % step == stride && j + stride < ri
+    //  Left case: (j+1) % step == stride && j + stride < ri
     if (j + 1) % step == stride {
-        // j + stride < old_ri iff j + stride < old_ri + step (for j != old_ri - stride)
+        //  j + stride < old_ri iff j + stride < old_ri + step (for j != old_ri - stride)
         if j + stride >= old_ri {
-            // j + stride >= old_ri and j != old_ri - stride, so j + stride > old_ri, i.e., j + stride >= old_ri + 1
-            // (j+1)%step == stride means j+1 = step*k + stride, so j+stride = step*k + 2*stride - 1 = step*(k+1) - 1
-            // old_ri = step*q - 1 (from (old_ri+1)%step==0)
-            // j + stride = step*(k+1) - 1 >= old_ri + 1 = step*q, so step*(k+1) >= step*q + 1, k+1 > q, k >= q
-            // j + stride = step*(k+1) - 1. For j + stride < old_ri + step = step*(q+1) - 1: step*(k+1) - 1 < step*(q+1) - 1, k < q.
-            // But k >= q, contradiction. So j + stride >= old_ri + step.
+            //  j + stride >= old_ri and j != old_ri - stride, so j + stride > old_ri, i.e., j + stride >= old_ri + 1
+            //  (j+1)%step == stride means j+1 = step*k + stride, so j+stride = step*k + 2*stride - 1 = step*(k+1) - 1
+            //  old_ri = step*q - 1 (from (old_ri+1)%step==0)
+            //  j + stride = step*(k+1) - 1 >= old_ri + 1 = step*q, so step*(k+1) >= step*q + 1, k+1 > q, k >= q
+            //  j + stride = step*(k+1) - 1. For j + stride < old_ri + step = step*(q+1) - 1: step*(k+1) - 1 < step*(q+1) - 1, k < q.
+            //  But k >= q, contradiction. So j + stride >= old_ri + step.
             vstd::arithmetic::div_mod::lemma_fundamental_div_mod(j + 1, step);
             vstd::arithmetic::div_mod::lemma_fundamental_div_mod(old_ri + 1, step);
             let kj = (j + 1) / step;
@@ -1948,7 +1948,7 @@ proof fn lemma_ds_pair_processed_frame(
     }
 }
 
-/// No pairs are processed when ri = step - 1 (initial state of inner loop).
+///  No pairs are processed when ri = step - 1 (initial state of inner loop).
 proof fn lemma_no_pairs_processed_initially(j: int, stride: int, step: int)
     requires
         stride > 0,
@@ -1956,7 +1956,7 @@ proof fn lemma_no_pairs_processed_initially(j: int, stride: int, step: int)
         j >= 0,
     ensures !ds_pair_processed(j, step - 1, stride, step),
 {
-    // Right case: (j+1) % step == 0 && j >= stride && j < step-1
+    //  Right case: (j+1) % step == 0 && j >= stride && j < step-1
     if (j + 1) % step == 0 {
         if j >= stride {
             vstd::arithmetic::div_mod::lemma_fundamental_div_mod(j + 1, step);
@@ -1966,33 +1966,33 @@ proof fn lemma_no_pairs_processed_initially(j: int, stride: int, step: int)
                 requires j + 1 == step * q, step > 0, j >= 0;
             assert(j >= step - 1) by (nonlinear_arith)
                 requires j + 1 == step * q, q >= 1, step > 0;
-            // j >= step - 1 means j < step - 1 is false
+            //  j >= step - 1 means j < step - 1 is false
         }
     }
-    // Left case: (j+1) % step == stride && j + stride < step - 1
+    //  Left case: (j+1) % step == stride && j + stride < step - 1
     if (j + 1) % step == stride {
         if j + stride < step - 1 {
             assert(j + 1 < step) by (nonlinear_arith)
                 requires j + stride < step - 1, step == 2 * stride, stride > 0;
             assert(j + 1 >= 1);
             vstd::arithmetic::div_mod::lemma_small_mod((j + 1) as nat, step as nat);
-            // (j+1) % step == j+1, but we assumed (j+1) % step == stride
-            // j+1 == stride but j + stride < step - 1 = 2*stride - 1 => j < stride - 1 => j+1 < stride
+            //  (j+1) % step == j+1, but we assumed (j+1) % step == stride
+            //  j+1 == stride but j + stride < step - 1 = 2*stride - 1 => j < stride - 1 => j+1 < stride
             assert(false);
         }
     }
 }
 
-/// Whether position j has been processed in the down-sweep inner loop.
-/// A position is processed if it's a right position of a processed pair (j < ri)
-/// or the left partner of a processed pair (j + stride < ri).
+///  Whether position j has been processed in the down-sweep inner loop.
+///  A position is processed if it's a right position of a processed pair (j < ri)
+///  or the left partner of a processed pair (j + stride < ri).
 pub open spec fn ds_pair_processed(j: int, ri: int, stride: int, step: int) -> bool {
     ((j + 1) % step == 0 && j >= stride && j < ri)
     || ((j + 1) % step == stride && j + stride < ri)
 }
 
-/// In-place tree reduce (up-sweep phase shared by Blelloch and Brent-Kung).
-/// After completion, data[j] == tree_reduce_state(as_int_seq(old(data)), n, levels)[j].
+///  In-place tree reduce (up-sweep phase shared by Blelloch and Brent-Kung).
+///  After completion, data[j] == tree_reduce_state(as_int_seq(old(data)), n, levels)[j].
 pub fn tree_reduce_in_place_exec(data: &mut Vec<i64>, n: u64, levels: u64)
     requires
         old(data)@.len() == n as nat,
@@ -2012,14 +2012,14 @@ pub fn tree_reduce_in_place_exec(data: &mut Vec<i64>, n: u64, levels: u64)
     tree_reduce_in_place_generic_exec::<i64, int>(data, n, levels);
     proof {
         lemma_tree_reduce_generic_eq_int(old_data, n as nat, levels as nat);
-        // generic: data@[j].view().eqv(tree_reduce_state_generic(old_data, n, levels)[j])
-        //   = data@[j] as int == tree_reduce_state_generic(old_data, n, levels)[j]  (inline view, == eqv)
-        // bridge: tree_reduce_state_generic =~= tree_reduce_state(as_int_seq(...))
+        //  generic: data@[j].view().eqv(tree_reduce_state_generic(old_data, n, levels)[j])
+        //    = data@[j] as int == tree_reduce_state_generic(old_data, n, levels)[j]  (inline view, == eqv)
+        //  bridge: tree_reduce_state_generic =~= tree_reduce_state(as_int_seq(...))
     }
 }
 
-/// Blelloch in-place exclusive scan. O(n) work, O(2 log n) depth.
-/// Requires power-of-2 sized input.
+///  Blelloch in-place exclusive scan. O(n) work, O(2 log n) depth.
+///  Requires power-of-2 sized input.
 pub fn blelloch_exclusive_scan_exec(data: &mut Vec<i64>, n: u64)
     requires
         old(data)@.len() == n as nat,
@@ -2036,9 +2036,9 @@ pub fn blelloch_exclusive_scan_exec(data: &mut Vec<i64>, n: u64)
     proof { lemma_bounded_implies_representable(old_data); }
     blelloch_exclusive_scan_generic_exec::<i64, int>(data, n);
     proof {
-        // Generic ensures: data@[i].view().eqv(partial_sum_generic(old_data, 0, i))
-        //   = data@[i] as int == partial_sum_generic(old_data, 0, i) (inline view, == eqv)
-        // Bridge: partial_sum_generic == partial_sum == exclusive_scan_int
+        //  Generic ensures: data@[i].view().eqv(partial_sum_generic(old_data, 0, i))
+        //    = data@[i] as int == partial_sum_generic(old_data, 0, i) (inline view, == eqv)
+        //  Bridge: partial_sum_generic == partial_sum == exclusive_scan_int
         assert forall|i: int| 0 <= i < n as int implies
             data@[i] as int == exclusive_scan_int(old_data)[i]
         by {
@@ -2057,22 +2057,22 @@ pub fn blelloch_exclusive_scan_exec(data: &mut Vec<i64>, n: u64)
     }
 }
 
-// ============================================================
-// Brent-Kung inclusive scan
-// ============================================================
+//  ============================================================
+//  Brent-Kung inclusive scan
+//  ============================================================
 
-/// Whether position j is active at Brent-Kung down-sweep level with given stride.
-/// Active = (j+1) is an odd multiple of stride, and j >= stride.
+///  Whether position j is active at Brent-Kung down-sweep level with given stride.
+///  Active = (j+1) is an odd multiple of stride, and j >= stride.
 pub open spec fn bk_active(j: int, stride: int, step: int) -> bool {
     (j + 1) % step == stride && j >= stride
 }
 
-/// Whether position j has been processed in the Brent-Kung inner loop.
+///  Whether position j has been processed in the Brent-Kung inner loop.
 pub open spec fn bk_pair_processed(j: int, ri: int, stride: int, step: int) -> bool {
     bk_active(j, stride, step) && j < ri
 }
 
-/// Brent-Kung inner loop invariant: processed positions match next state, others match prev.
+///  Brent-Kung inner loop invariant: processed positions match next state, others match prev.
 pub open spec fn bk_inner_inv(
     data_view: Seq<i64>, j: int, ri: int, stride: int, step: int,
     prev: Seq<int>, next: Seq<int>,
@@ -2085,8 +2085,8 @@ pub open spec fn bk_inner_inv(
 }
 
 
-/// Brent-Kung inclusive scan. In-place, modifies data.
-/// O(n) work, O(2 log n) depth. Requires power-of-2 sized input.
+///  Brent-Kung inclusive scan. In-place, modifies data.
+///  O(n) work, O(2 log n) depth. Requires power-of-2 sized input.
 pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
     requires
         old(data)@.len() == n as nat,
@@ -2104,7 +2104,7 @@ pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
     let levels = log2_ceil_exec(n);
     let data_len = data.len();
 
-    // Handle n = 1: inclusive_scan[0] = data[0]
+    //  Handle n = 1: inclusive_scan[0] = data[0]
     if n == 1 {
         proof {
             lemma_sum_single::<int>(|j: int| as_int_seq(original_data)[j], 0);
@@ -2119,23 +2119,23 @@ pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
         return;
     }
 
-    // n >= 2, so levels >= 1
+    //  n >= 2, so levels >= 1
     proof {
         lemma_pow2_log2_ceil_exact(n as nat);
     }
 
     let ghost total_levels = levels as nat;
 
-    // ============================================================
-    // UP-SWEEP (shared tree reduce)
-    // ============================================================
+    //  ============================================================
+    //  UP-SWEEP (shared tree reduce)
+    //  ============================================================
     tree_reduce_in_place_exec(data, n, levels);
 
-    // ============================================================
-    // DOWN-SWEEP (Brent-Kung specific)
-    // ============================================================
-    // At this point, data matches tree_reduce_state(original_int, n, total_levels)
-    // which is bk_downsweep_state(original_int, n, total_levels, 0).
+    //  ============================================================
+    //  DOWN-SWEEP (Brent-Kung specific)
+    //  ============================================================
+    //  At this point, data matches tree_reduce_state(original_int, n, total_levels)
+    //  which is bk_downsweep_state(original_int, n, total_levels, 0).
 
     proof {
         use crate::proof::scan_brent_kung_lemmas::*;
@@ -2143,10 +2143,10 @@ pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
     }
 
     if levels <= 1 {
-        // n == 2, levels == 1, no down-sweep needed (0 iterations of k < levels - 1)
-        // bk_result = bk_downsweep_state at k = 0 = tree_reduce_state
-        // For n=2: tree_reduce_state[0] = data[0], tree_reduce_state[1] = data[0]+data[1]
-        // inclusive_scan[0] = data[0], inclusive_scan[1] = data[0]+data[1] ✓
+        //  n == 2, levels == 1, no down-sweep needed (0 iterations of k < levels - 1)
+        //  bk_result = bk_downsweep_state at k = 0 = tree_reduce_state
+        //  For n=2: tree_reduce_state[0] = data[0], tree_reduce_state[1] = data[0]+data[1]
+        //  inclusive_scan[0] = data[0], inclusive_scan[1] = data[0]+data[1] ✓
         proof {
             use crate::proof::scan_brent_kung_lemmas::*;
             lemma_bk_correct(original_int, n as nat, total_levels);
@@ -2167,9 +2167,9 @@ pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
         return;
     }
 
-    // levels >= 2, run down-sweep levels 0..levels-2
+    //  levels >= 2, run down-sweep levels 0..levels-2
     let mut dk: u64 = 0;
-    let mut ds_stride: u64 = n / 4;  // pow2(total_levels - 2)
+    let mut ds_stride: u64 = n / 4;  //  pow2(total_levels - 2)
     proof {
         crate::proof::swizzle_lemmas::lemma_pow2_positive((total_levels - 2) as nat);
         assert(pow2(total_levels) == 2 * pow2((total_levels - 1) as nat));
@@ -2259,30 +2259,30 @@ pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
                     original_int, n as nat, total_levels, (dk + 1) as nat),
                 crate::scan_brent_kung::bk_downsweep_invariant(
                     original_int, n as nat, total_levels, dk as nat),
-                // Processed positions match next state, others match prev
+                //  Processed positions match next state, others match prev
                 forall|j: int| #![trigger data@[j]] 0 <= j < n as int ==>
                     bk_inner_inv(data@, j, i as int, stride as int, step as int, prev_bk, next_bk),
             decreases n - i,
         {
             if (i + 1) % step == stride && i >= stride {
-                // Active position: data[i] += data[i - stride]
+                //  Active position: data[i] += data[i - stride]
                 let partner = (i - stride) as usize;
 
                 proof {
-                    // data[i] == prev_bk[i] (not yet processed)
+                    //  data[i] == prev_bk[i] (not yet processed)
                     assert(!bk_pair_processed(i as int, i as int, stride as int, step as int));
                     assert(data@[i as int] as int == prev_bk[i as int]);
-                    // data[partner] == ? We need prev_bk[partner]
-                    // partner < i, so it may have been processed.
-                    // If processed: data[partner] == next_bk[partner]
-                    // If not: data[partner] == prev_bk[partner]
-                    // But next_bk[partner] == prev_bk[partner] because partner is not active
-                    // at this level (only positions with (j+1)%step == stride are active).
-                    // Is partner active?
-                    // partner + 1 = i + 1 - stride. i+1 = step*q + stride (from activity condition).
-                    // partner + 1 = step*q. (partner+1) % step == 0 != stride. So partner is NOT active.
-                    // So next_bk[partner] == prev_bk[partner].
-                    // Therefore data[partner] == prev_bk[partner] regardless of processing status.
+                    //  data[partner] == ? We need prev_bk[partner]
+                    //  partner < i, so it may have been processed.
+                    //  If processed: data[partner] == next_bk[partner]
+                    //  If not: data[partner] == prev_bk[partner]
+                    //  But next_bk[partner] == prev_bk[partner] because partner is not active
+                    //  at this level (only positions with (j+1)%step == stride are active).
+                    //  Is partner active?
+                    //  partner + 1 = i + 1 - stride. i+1 = step*q + stride (from activity condition).
+                    //  partner + 1 = step*q. (partner+1) % step == 0 != stride. So partner is NOT active.
+                    //  So next_bk[partner] == prev_bk[partner].
+                    //  Therefore data[partner] == prev_bk[partner] regardless of processing status.
                     let pi = partner as int;
                     assert(pi + 1 == i as int + 1 - stride as int);
                     vstd::arithmetic::div_mod::lemma_fundamental_div_mod((i + 1) as int, step as int);
@@ -2302,17 +2302,17 @@ pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
                     assert(!bk_active(pi, stride as int, step as int));
                     assert(next_bk[pi] == prev_bk[pi]);
 
-                    // If partner was processed: data == next_bk == prev_bk ✓
-                    // If not: data == prev_bk ✓
+                    //  If partner was processed: data == next_bk == prev_bk ✓
+                    //  If not: data == prev_bk ✓
 
-                    // Overflow: next_bk[i] is a prefix sum of original data (bounded)
-                    // next_bk[i] = prev_bk[i] + prev_bk[partner] by BK definition
-                    // By BK invariant at dk+1: next_bk[i] = bk_expected(data, n, total_levels, dk+1, i)
-                    // bk_expected = sum(original_int, 0, i+1) = partial_sum(original_data, 0, i+1)
+                    //  Overflow: next_bk[i] is a prefix sum of original data (bounded)
+                    //  next_bk[i] = prev_bk[i] + prev_bk[partner] by BK definition
+                    //  By BK invariant at dk+1: next_bk[i] = bk_expected(data, n, total_levels, dk+1, i)
+                    //  bk_expected = sum(original_int, 0, i+1) = partial_sum(original_data, 0, i+1)
                     crate::proof::scan_brent_kung_lemmas::lemma_bk_downsweep_step(
                         original_int, n as nat, total_levels, dk as nat);
                     let next_val = next_bk[i as int];
-                    // next_bk[i] = sum(original_int, 0, i+1) since (i+1)%stride==0
+                    //  next_bk[i] = sum(original_int, 0, i+1) since (i+1)%stride==0
                     assert((i as int + 1) % (stride as int) == 0) by {
                         assert(i as int + 1 == step as int * q + stride as int);
                         assert(i as int + 1 == stride as int * (2 * q + 1)) by (nonlinear_arith)
@@ -2321,7 +2321,7 @@ pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
                             i as int + 1, stride as int, 2 * q + 1, 0
                         );
                     };
-                    // Bridge to partial_sum for overflow
+                    //  Bridge to partial_sum for overflow
                     let hi = i as int + 1;
                     assert forall|k: int| 0 <= k < hi implies
                         original_int[k] == original_data[k] as int by {}
@@ -2338,28 +2338,28 @@ pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
             }
 
             proof {
-                // Re-establish invariant for all j
+                //  Re-establish invariant for all j
                 assert forall|j: int| #![trigger data@[j]] 0 <= j < n as int
                 implies bk_inner_inv(data@, j, (i + 1) as int, stride as int, step as int, prev_bk, next_bk)
                 by {
                     if j == i as int {
                         if bk_active(j, stride as int, step as int) {
-                            // Just processed: data == next_bk
+                            //  Just processed: data == next_bk
                             assert(bk_pair_processed(j, (i + 1) as int, stride as int, step as int));
                         } else {
-                            // Not active, unchanged
+                            //  Not active, unchanged
                             assert(!bk_pair_processed(j, (i + 1) as int, stride as int, step as int));
                         }
                     } else {
-                        // j < i: bk_pair_processed(j, i+1) == bk_pair_processed(j, i)
-                        // since only j == i could become newly processed
+                        //  j < i: bk_pair_processed(j, i+1) == bk_pair_processed(j, i)
+                        //  since only j == i could become newly processed
                         if bk_active(i as int, stride as int, step as int) && j < i as int {
-                            // j was either already processed or not
-                            // bk_pair_processed(j, i+1) iff bk_active(j) && j < i+1
-                            // bk_pair_processed(j, i)   iff bk_active(j) && j < i
-                            // j < i < i+1, so both are the same for j < i
+                            //  j was either already processed or not
+                            //  bk_pair_processed(j, i+1) iff bk_active(j) && j < i+1
+                            //  bk_pair_processed(j, i)   iff bk_active(j) && j < i
+                            //  j < i < i+1, so both are the same for j < i
                         }
-                        // j > i: unchanged, not processed at either i or i+1
+                        //  j > i: unchanged, not processed at either i or i+1
                     }
                 }
             }
@@ -2367,7 +2367,7 @@ pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
             i = i + 1;
         }
 
-        // After inner loop: all active positions processed, data matches next_bk
+        //  After inner loop: all active positions processed, data matches next_bk
         proof {
             assert forall|j: int| 0 <= j < n as int
             implies data@[j] as int == next_bk[j]
@@ -2398,9 +2398,9 @@ pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
         }
     }
 
-    // ============================================================
-    // FINAL: bk_result == inclusive_scan_int
-    // ============================================================
+    //  ============================================================
+    //  FINAL: bk_result == inclusive_scan_int
+    //  ============================================================
     proof {
         use crate::proof::scan_brent_kung_lemmas::lemma_bk_correct;
         lemma_bk_correct(original_int, n as nat, total_levels);
@@ -2412,7 +2412,7 @@ pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
             assert(data@[j] as int == crate::scan_brent_kung::bk_downsweep_state(
                 original_int, n as nat, total_levels, (total_levels - 1) as nat)[j]);
             assert(result[j] == inclusive_scan::<int>(original_int)[j]);
-            // Bridge inclusive_scan(original_int) to inclusive_scan_int(original_data)
+            //  Bridge inclusive_scan(original_int) to inclusive_scan_int(original_data)
             assert forall|k: int| 0 <= k < n as int implies
                 as_int_seq(original_data)[k] == original_data[k] as int by {}
             lemma_sum_congruence::<int>(
@@ -2424,4 +2424,4 @@ pub fn brent_kung_inclusive_scan_exec(data: &mut Vec<i64>, n: u64)
     }
 }
 
-} // verus!
+} //  verus!

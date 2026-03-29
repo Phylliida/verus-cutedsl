@@ -1,15 +1,15 @@
-/// Stage-based GPU kernel composition with explicit barriers.
+///  Stage-based GPU kernel composition with explicit barriers.
 ///
-/// Models a GPU kernel as a tree of barrier-separated parallel operations.
-/// This is **phase-based verification** — each barrier interval is verified
-/// independently for race-freedom, and Hoare-style invariants at barrier
-/// points provide compositional functional correctness.
+///  Models a GPU kernel as a tree of barrier-separated parallel operations.
+///  This is **phase-based verification** — each barrier interval is verified
+///  independently for race-freedom, and Hoare-style invariants at barrier
+///  points provide compositional functional correctness.
 ///
-/// Literature basis:
-/// - GPUVerify (Betts et al., OOPSLA 2012) — barrier-interval analysis
-/// - Barrier Invariants (Chong et al., OOPSLA 2013) — Hoare-style predicates at barriers
-/// - Kojima & Igarashi (ACM TOCL 2017) — full Hoare logic for SIMT programs
-/// - Faial (Cogumbreiro et al., CAV 2021) — compositional per-phase analysis
+///  Literature basis:
+///  - GPUVerify (Betts et al., OOPSLA 2012) — barrier-interval analysis
+///  - Barrier Invariants (Chong et al., OOPSLA 2013) — Hoare-style predicates at barriers
+///  - Kojima & Igarashi (ACM TOCL 2017) — full Hoare logic for SIMT programs
+///  - Faial (Cogumbreiro et al., CAV 2021) — compositional per-phase analysis
 
 use vstd::prelude::*;
 use crate::arith_expr::*;
@@ -18,12 +18,12 @@ use crate::scan::{inclusive_scan, exclusive_scan, reduce};
 
 verus! {
 
-// ══════════════════════════════════════════════════════════════
-// Shared state model
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Shared state model
+//  ══════════════════════════════════════════════════════════════
 
-/// Shared state: a collection of named integer buffers.
-/// Models both shared memory and global memory visible to a workgroup.
+///  Shared state: a collection of named integer buffers.
+///  Models both shared memory and global memory visible to a workgroup.
 pub struct SharedState {
     pub buffers: Seq<Seq<int>>,
     pub workgroup_size: nat,
@@ -66,53 +66,53 @@ impl SharedState {
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Barrier scope
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Barrier scope
+//  ══════════════════════════════════════════════════════════════
 
 pub enum BarrierScope {
-    /// Workgroup-level: __syncthreads / workgroupBarrier. Cheap (~20 cycles).
+    ///  Workgroup-level: __syncthreads / workgroupBarrier. Cheap (~20 cycles).
     Workgroup,
-    /// Grid-level: cooperative groups grid_group::sync. Expensive, rare.
+    ///  Grid-level: cooperative groups grid_group::sync. Expensive, rare.
     Grid,
 }
 
-// ══════════════════════════════════════════════════════════════
-// Stage: composable kernel building block
+//  ══════════════════════════════════════════════════════════════
+//  Stage: composable kernel building block
 //
-// Uses binary Seq (first + then) instead of Seq<Stage> so that
-// structural recursion works cleanly in Verus — both children
-// are sub-terms of the Seq variant.
-// ══════════════════════════════════════════════════════════════
+//  Uses binary Seq (first + then) instead of Seq<Stage> so that
+//  structural recursion works cleanly in Verus — both children
+//  are sub-terms of the Seq variant.
+//  ══════════════════════════════════════════════════════════════
 
-/// Scan operation type.
+///  Scan operation type.
 pub enum ScanOp {
-    /// Inclusive prefix sum: result[i] = data[0] + ... + data[i].
+    ///  Inclusive prefix sum: result[i] = data[0] + ... + data[i].
     InclusiveSum,
-    /// Exclusive prefix sum: result[i] = data[0] + ... + data[i-1], result[0] = 0.
+    ///  Exclusive prefix sum: result[i] = data[0] + ... + data[i-1], result[0] = 0.
     ExclusiveSum,
-    /// Reduction: replaces buffer[0] with sum of all elements.
-    /// Other positions are unspecified (implementation-defined).
+    ///  Reduction: replaces buffer[0] with sum of all elements.
+    ///  Other positions are unspecified (implementation-defined).
     ReduceSum,
 }
 
-/// Thread dispatch dimensionality.
+///  Thread dispatch dimensionality.
 pub enum ThreadDim {
-    /// 1D dispatch: workgroup_size threads, env = [tid].
+    ///  1D dispatch: workgroup_size threads, env = [tid].
     Dim1D,
-    /// 2D dispatch: width * height threads, env = [gid_x, gid_y].
-    /// workgroup_size = width * height.
+    ///  2D dispatch: width * height threads, env = [gid_x, gid_y].
+    ///  workgroup_size = width * height.
     Dim2D { width: nat, height: nat },
 }
 
 pub enum Stage {
-    /// No-op: identity on shared state.
+    ///  No-op: identity on shared state.
     Noop,
 
-    /// Parallel map using a verified KernelSpec.
-    /// `input_bufs[i]` = SharedState buffer index for KernelSpec input array i.
-    /// `output_bufs[i]` = SharedState buffer index for KernelSpec output i.
-    /// `thread_dim` controls the dispatch shape (1D or 2D).
+    ///  Parallel map using a verified KernelSpec.
+    ///  `input_bufs[i]` = SharedState buffer index for KernelSpec input array i.
+    ///  `output_bufs[i]` = SharedState buffer index for KernelSpec output i.
+    ///  `thread_dim` controls the dispatch shape (1D or 2D).
     Map {
         spec: KernelSpec,
         input_bufs: Seq<nat>,
@@ -120,29 +120,29 @@ pub enum Stage {
         thread_dim: ThreadDim,
     },
 
-    /// Parallel scan/reduce on a buffer.
+    ///  Parallel scan/reduce on a buffer.
     Scan {
         buffer: nat,
         op: ScanOp,
     },
 
-    /// Explicit barrier with postcondition.
-    /// The ONLY synchronization point. All prior writes become visible.
+    ///  Explicit barrier with postcondition.
+    ///  The ONLY synchronization point. All prior writes become visible.
     Barrier {
         scope: BarrierScope,
         post: spec_fn(SharedState) -> bool,
     },
 
-    /// Binary sequential composition: execute `first`, then `then`.
-    /// NO implicit barrier between them — they fuse unless separated by a Barrier.
-    /// Build longer sequences with the `stages!` helper or nested Seq.
+    ///  Binary sequential composition: execute `first`, then `then`.
+    ///  NO implicit barrier between them — they fuse unless separated by a Barrier.
+    ///  Build longer sequences with the `stages!` helper or nested Seq.
     Seq {
         first: Box<Stage>,
         then: Box<Stage>,
     },
 
-    /// Bounded loop: execute `body` exactly `bound` times.
-    /// `invariant(state, iteration)` is the inductive loop invariant.
+    ///  Bounded loop: execute `body` exactly `bound` times.
+    ///  `invariant(state, iteration)` is the inductive loop invariant.
     Loop {
         bound: nat,
         body: Box<Stage>,
@@ -150,12 +150,12 @@ pub enum Stage {
     },
 }
 
-// ══════════════════════════════════════════════════════════════
-// Sequence builder — flat list → nested binary Seq
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Sequence builder — flat list → nested binary Seq
+//  ══════════════════════════════════════════════════════════════
 
-/// Build a Stage from a flat list of stages.
-/// `seq_stages([a, b, c])` = `Seq(a, Seq(b, c))`.
+///  Build a Stage from a flat list of stages.
+///  `seq_stages([a, b, c])` = `Seq(a, Seq(b, c))`.
 pub open spec fn seq_stages(stages: Seq<Stage>) -> Stage
     decreases stages.len(),
 {
@@ -171,21 +171,21 @@ pub open spec fn seq_stages(stages: Seq<Stage>) -> Stage
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Map evaluation — declarative (order-independent)
+//  ══════════════════════════════════════════════════════════════
+//  Map evaluation — declarative (order-independent)
 //
-// The primary spec for Map stages. Each output position gets the
-// compute value of its unique writer thread (by scatter injectivity),
-// or is unchanged if no thread writes there.
+//  The primary spec for Map stages. Each output position gets the
+//  compute value of its unique writer thread (by scatter injectivity),
+//  or is unchanged if no thread writes there.
 //
-// This is the "right" definition — no thread ordering baked in.
-// eval_map_threads (below) is the operational version used by the
-// exec interpreter; map_determinism proves they agree.
-// ══════════════════════════════════════════════════════════════
+//  This is the "right" definition — no thread ordering baked in.
+//  eval_map_threads (below) is the operational version used by the
+//  exec interpreter; map_determinism proves they agree.
+//  ══════════════════════════════════════════════════════════════
 
-/// Declarative (order-independent) spec for a single Map output's effect.
-/// Position j gets compute(writer) if some thread writes to j, else old value.
-/// Well-defined because scatter injectivity guarantees at most one writer.
+///  Declarative (order-independent) spec for a single Map output's effect.
+///  Position j gets compute(writer) if some thread writes to j, else old value.
+///  Well-defined because scatter injectivity guarantees at most one writer.
 pub open spec fn map_output_declarative(
     spec: &KernelSpec,
     out_idx: nat,
@@ -212,7 +212,7 @@ pub open spec fn map_output_declarative(
     )
 }
 
-/// Total thread count for a given dispatch dimension.
+///  Total thread count for a given dispatch dimension.
 pub open spec fn thread_count(dim: &ThreadDim, workgroup_size: nat) -> nat {
     match dim {
         ThreadDim::Dim1D => workgroup_size,
@@ -220,7 +220,7 @@ pub open spec fn thread_count(dim: &ThreadDim, workgroup_size: nat) -> nat {
     }
 }
 
-/// Build the thread environment for a given linear thread ID and dimension.
+///  Build the thread environment for a given linear thread ID and dimension.
 pub open spec fn thread_env_for_dim(dim: &ThreadDim, tid: nat) -> Seq<int> {
     match dim {
         ThreadDim::Dim1D => thread_env_1d(tid),
@@ -234,8 +234,8 @@ pub open spec fn thread_env_for_dim(dim: &ThreadDim, tid: nat) -> Seq<int> {
     }
 }
 
-/// Apply a Map: declarative evaluation. Inputs captured from initial state,
-/// outputs applied sequentially (each output uses the declarative spec).
+///  Apply a Map: declarative evaluation. Inputs captured from initial state,
+///  outputs applied sequentially (each output uses the declarative spec).
 pub open spec fn eval_map(
     spec: &KernelSpec,
     input_bufs: Seq<nat>,
@@ -248,8 +248,8 @@ pub open spec fn eval_map(
     eval_map_outputs(spec, inputs, output_bufs, state, 0, ws, thread_dim)
 }
 
-/// Chain output applications. Each output replaces its target buffer
-/// with the declarative result.
+///  Chain output applications. Each output replaces its target buffer
+///  with the declarative result.
 pub open spec fn eval_map_outputs(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -275,16 +275,16 @@ pub open spec fn eval_map_outputs(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Map evaluation — operational (sequential threads, for exec)
+//  ══════════════════════════════════════════════════════════════
+//  Map evaluation — operational (sequential threads, for exec)
 //
-// eval_map_threads processes threads 0, 1, 2, ... writing to state.
-// map_determinism (in stage_lemmas.rs) proves this equals the
-// declarative version above.
-// ══════════════════════════════════════════════════════════════
+//  eval_map_threads processes threads 0, 1, 2, ... writing to state.
+//  map_determinism (in stage_lemmas.rs) proves this equals the
+//  declarative version above.
+//  ══════════════════════════════════════════════════════════════
 
-/// Operational (sequential) Map evaluation for a single output.
-/// Used by the exec interpreter. Proved equivalent to map_output_declarative.
+///  Operational (sequential) Map evaluation for a single output.
+///  Used by the exec interpreter. Proved equivalent to map_output_declarative.
 pub open spec fn eval_map_threads(
     spec: &KernelSpec,
     inputs: Seq<Seq<int>>,
@@ -312,12 +312,12 @@ pub open spec fn eval_map_threads(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Scan evaluation — uses existing verified inclusive_scan
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Scan evaluation — uses existing verified inclusive_scan
+//  ══════════════════════════════════════════════════════════════
 
-/// Apply a scan/reduce operation to a buffer.
-/// Uses the verified scan infrastructure from scan.rs.
+///  Apply a scan/reduce operation to a buffer.
+///  Uses the verified scan infrastructure from scan.rs.
 pub open spec fn eval_scan(buffer: nat, op: ScanOp, state: SharedState) -> SharedState
     recommends buffer < state.num_buffers(),
 {
@@ -326,7 +326,7 @@ pub open spec fn eval_scan(buffer: nat, op: ScanOp, state: SharedState) -> Share
         ScanOp::InclusiveSum => state.set_buffer(buffer, inclusive_scan::<int>(data)),
         ScanOp::ExclusiveSum => state.set_buffer(buffer, exclusive_scan::<int>(data)),
         ScanOp::ReduceSum => {
-            // Reduce: buffer[0] = sum of all elements. Rest unchanged.
+            //  Reduce: buffer[0] = sum of all elements. Rest unchanged.
             if data.len() > 0 {
                 let total = reduce::<int>(data, 0, data.len() as int);
                 state.set_buffer(buffer, data.update(0, total))
@@ -337,15 +337,15 @@ pub open spec fn eval_scan(buffer: nat, op: ScanOp, state: SharedState) -> Share
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Stage evaluation — mutual recursion group
+//  ══════════════════════════════════════════════════════════════
+//  Stage evaluation — mutual recursion group
 //
-// staged_eval + eval_loop are mutually recursive.
-// Decreases: (Stage, nat). Follows arith_eval/reduce_sum pattern.
-// Binary Seq means both children are structural sub-terms.
-// ══════════════════════════════════════════════════════════════
+//  staged_eval + eval_loop are mutually recursive.
+//  Decreases: (Stage, nat). Follows arith_eval/reduce_sum pattern.
+//  Binary Seq means both children are structural sub-terms.
+//  ══════════════════════════════════════════════════════════════
 
-/// Evaluate a Stage tree, producing the final SharedState.
+///  Evaluate a Stage tree, producing the final SharedState.
 pub open spec fn staged_eval(stage: &Stage, state: SharedState) -> SharedState
     decreases stage, 0nat,
 {
@@ -358,12 +358,12 @@ pub open spec fn staged_eval(stage: &Stage, state: SharedState) -> SharedState
             eval_scan(*buffer, *op, state)
         },
         Stage::Barrier { scope, post } => {
-            // Barrier is a no-op on state at the spec level.
-            // Sequential evaluation already ensures write ordering.
+            //  Barrier is a no-op on state at the spec level.
+            //  Sequential evaluation already ensures write ordering.
             state
         },
         Stage::Seq { first, then } => {
-            // Both *first and *then are structural sub-terms of Seq.
+            //  Both *first and *then are structural sub-terms of Seq.
             let mid = staged_eval(&**first, state);
             staged_eval(&**then, mid)
         },
@@ -373,8 +373,8 @@ pub open spec fn staged_eval(stage: &Stage, state: SharedState) -> SharedState
     }
 }
 
-/// Evaluate a loop body `bound - iter` more times.
-/// `body` is the sub-term from Stage::Loop — structurally smaller than the Loop.
+///  Evaluate a loop body `bound - iter` more times.
+///  `body` is the sub-term from Stage::Loop — structurally smaller than the Loop.
 pub open spec fn eval_loop(
     body: &Stage, state: SharedState, bound: nat, iter: nat,
 ) -> SharedState
@@ -388,11 +388,11 @@ pub open spec fn eval_loop(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Race-freedom predicates
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Race-freedom predicates
+//  ══════════════════════════════════════════════════════════════
 
-/// A Map is race-free if scatter is injective under guard for all outputs.
+///  A Map is race-free if scatter is injective under guard for all outputs.
 pub open spec fn map_race_free(
     spec: &KernelSpec,
     input_bufs: Seq<nat>,
@@ -413,34 +413,34 @@ pub open spec fn map_race_free(
         )
 }
 
-/// Two Maps are cross-race-free if they write to disjoint output buffers.
+///  Two Maps are cross-race-free if they write to disjoint output buffers.
 pub open spec fn maps_write_disjoint(bufs_a: Seq<nat>, bufs_b: Seq<nat>) -> bool {
     forall|i: int, j: int|
         0 <= i < bufs_a.len() && 0 <= j < bufs_b.len()
         ==> bufs_a[i] != bufs_b[j]
 }
 
-// ══════════════════════════════════════════════════════════════
-// Stage well-formedness
+//  ══════════════════════════════════════════════════════════════
+//  Stage well-formedness
 //
-// Checks that all buffer indices are valid, output counts match,
-// etc. When stage_wf holds, staged_eval won't access out-of-bounds
-// buffers.
-// ══════════════════════════════════════════════════════════════
+//  Checks that all buffer indices are valid, output counts match,
+//  etc. When stage_wf holds, staged_eval won't access out-of-bounds
+//  buffers.
+//  ══════════════════════════════════════════════════════════════
 
-/// Well-formedness of a Stage tree with respect to a given number of buffers.
+///  Well-formedness of a Stage tree with respect to a given number of buffers.
 pub open spec fn stage_wf(stage: &Stage, num_buffers: nat) -> bool
     decreases stage,
 {
     match stage {
         Stage::Noop => true,
         Stage::Map { spec, input_bufs, output_bufs, thread_dim } => {
-            // Output count matches KernelSpec
+            //  Output count matches KernelSpec
             &&& output_bufs.len() == spec.outputs.len()
-            // All input buffer indices valid
+            //  All input buffer indices valid
             &&& forall|i: int| 0 <= i < input_bufs.len() ==>
                 (input_bufs[i] as int) < num_buffers as int
-            // All output buffer indices valid
+            //  All output buffer indices valid
             &&& forall|i: int| 0 <= i < output_bufs.len() ==>
                 (output_bufs[i] as int) < num_buffers as int
         },
@@ -457,7 +457,7 @@ pub open spec fn stage_wf(stage: &Stage, num_buffers: nat) -> bool
     }
 }
 
-/// staged_eval preserves num_buffers when the stage is well-formed.
+///  staged_eval preserves num_buffers when the stage is well-formed.
 pub proof fn lemma_staged_eval_preserves_num_buffers(
     stage: &Stage, state: SharedState,
 )
@@ -468,18 +468,18 @@ pub proof fn lemma_staged_eval_preserves_num_buffers(
     match stage {
         Stage::Noop => {},
         Stage::Map { spec, input_bufs, output_bufs, thread_dim } => {
-            // eval_map chains set_buffer calls which preserve num_buffers
+            //  eval_map chains set_buffer calls which preserve num_buffers
             lemma_eval_map_preserves_num_buffers(
                 spec, *input_bufs, *output_bufs, state, thread_dim);
         },
         Stage::Scan { buffer, op } => {
-            // eval_scan uses set_buffer which preserves num_buffers
+            //  eval_scan uses set_buffer which preserves num_buffers
         },
         Stage::Barrier { .. } => {},
         Stage::Seq { first, then } => {
             lemma_staged_eval_preserves_num_buffers(&**first, state);
             let mid = staged_eval(&**first, state);
-            // mid has same num_buffers, and then is wf for that
+            //  mid has same num_buffers, and then is wf for that
             lemma_staged_eval_preserves_num_buffers(&**then, mid);
         },
         Stage::Loop { bound, body, invariant } => {
@@ -488,7 +488,7 @@ pub proof fn lemma_staged_eval_preserves_num_buffers(
     }
 }
 
-/// eval_loop preserves num_buffers.
+///  eval_loop preserves num_buffers.
 proof fn lemma_eval_loop_preserves_num_buffers(
     body: &Stage, state: SharedState, bound: nat, iter: nat,
 )
@@ -504,7 +504,7 @@ proof fn lemma_eval_loop_preserves_num_buffers(
     }
 }
 
-/// eval_map preserves num_buffers (set_buffer preserves num_buffers).
+///  eval_map preserves num_buffers (set_buffer preserves num_buffers).
 proof fn lemma_eval_map_preserves_num_buffers(
     spec: &KernelSpec,
     input_bufs: Seq<nat>,
@@ -558,7 +558,7 @@ proof fn lemma_eval_map_outputs_preserves_num_buffers(
     }
 }
 
-/// staged_eval preserves workgroup_size when well-formed.
+///  staged_eval preserves workgroup_size when well-formed.
 pub proof fn lemma_staged_eval_preserves_wg_size(
     stage: &Stage, state: SharedState,
 )
@@ -654,7 +654,7 @@ proof fn lemma_eval_map_outputs_preserves_wg_size(
     }
 }
 
-/// map_output_declarative preserves buffer length (result.len() == old_buf.len()).
+///  map_output_declarative preserves buffer length (result.len() == old_buf.len()).
 pub proof fn lemma_map_output_declarative_preserves_len(
     spec: &KernelSpec, out_idx: nat, inputs: Seq<Seq<int>>,
     old_buf: Seq<int>, ws: nat, thread_dim: &ThreadDim,
@@ -662,11 +662,11 @@ pub proof fn lemma_map_output_declarative_preserves_len(
     ensures map_output_declarative(spec, out_idx, inputs, old_buf, ws, thread_dim).len()
         == old_buf.len(),
 {
-    // map_output_declarative uses Seq::new(old_buf.len(), ...) — length preserved by construction
+    //  map_output_declarative uses Seq::new(old_buf.len(), ...) — length preserved by construction
 }
 
-/// staged_eval preserves ALL buffer lengths when the stage is well-formed
-/// and only writes via Map (which preserves lengths via map_output_declarative).
+///  staged_eval preserves ALL buffer lengths when the stage is well-formed
+///  and only writes via Map (which preserves lengths via map_output_declarative).
 pub proof fn lemma_staged_eval_preserves_all_buf_lens(
     stage: &Stage, state: SharedState,
 )
@@ -683,7 +683,7 @@ pub proof fn lemma_staged_eval_preserves_all_buf_lens(
                 spec, *input_bufs, *output_bufs, state, thread_dim);
         },
         Stage::Scan { buffer, op } => {
-            // eval_scan uses set_buffer with inclusive/exclusive_scan which preserves length
+            //  eval_scan uses set_buffer with inclusive/exclusive_scan which preserves length
         },
         Stage::Barrier { .. } => {},
         Stage::Seq { first, then } => {
@@ -762,7 +762,7 @@ proof fn lemma_eval_map_outputs_preserves_all_buf_lens(
         let ob = output_bufs[out_idx as int];
         let new_state = state.set_buffer(ob, new_buf);
         assert(new_state.buffers.len() == state.buffers.len());
-        // Buffer lengths preserved: target buf has same len, others unchanged
+        //  Buffer lengths preserved: target buf has same len, others unchanged
         assert forall|b: nat| b < state.num_buffers() implies
             new_state.buffer_len(b) == state.buffer_len(b)
         by {
@@ -773,39 +773,39 @@ proof fn lemma_eval_map_outputs_preserves_all_buf_lens(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Basic properties
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Basic properties
+//  ══════════════════════════════════════════════════════════════
 
-/// Noop is identity.
+///  Noop is identity.
 pub proof fn lemma_noop(state: SharedState)
     ensures staged_eval(&Stage::Noop, state) == state,
 {}
 
-/// Barrier is identity on state.
+///  Barrier is identity on state.
 pub proof fn lemma_barrier_noop(
     scope: BarrierScope, post: spec_fn(SharedState) -> bool, state: SharedState,
 )
     ensures staged_eval(&Stage::Barrier { scope, post }, state) == state,
 {}
 
-/// Zero-iteration loop is identity.
+///  Zero-iteration loop is identity.
 pub proof fn lemma_loop_zero(body: Stage, inv: spec_fn(SharedState, nat) -> bool, state: SharedState)
     ensures staged_eval(&Stage::Loop { bound: 0, body: Box::new(body), invariant: inv }, state) == state,
 {
     let stage = Stage::Loop { bound: 0, body: Box::new(body), invariant: inv };
-    // Help Z3 see through the match + Box
+    //  Help Z3 see through the match + Box
     assert(staged_eval(&stage, state) == eval_loop(&body, state, 0, 0));
 }
 
-/// Seq is composition: eval(Seq(a, b), s) == eval(b, eval(a, s)).
+///  Seq is composition: eval(Seq(a, b), s) == eval(b, eval(a, s)).
 pub proof fn lemma_seq_compose(a: Stage, b: Stage, state: SharedState)
     ensures
         staged_eval(&Stage::Seq { first: Box::new(a), then: Box::new(b) }, state)
             == staged_eval(&b, staged_eval(&a, state)),
 {}
 
-/// Loop step: one iteration peels off.
+///  Loop step: one iteration peels off.
 pub proof fn lemma_loop_step(body: &Stage, state: SharedState, bound: nat, iter: nat)
     requires iter < bound,
     ensures
@@ -813,12 +813,12 @@ pub proof fn lemma_loop_step(body: &Stage, state: SharedState, bound: nat, iter:
             == eval_loop(body, staged_eval(body, state), bound, iter + 1),
 {}
 
-/// eval_loop at bound == iter is identity.
+///  eval_loop at bound == iter is identity.
 pub proof fn lemma_loop_done(body: &Stage, state: SharedState, n: nat)
     ensures eval_loop(body, state, n, n) == state,
 {}
 
-/// Single-iteration loop equals one body evaluation.
+///  Single-iteration loop equals one body evaluation.
 pub proof fn lemma_loop_one(body: Stage, inv: spec_fn(SharedState, nat) -> bool, state: SharedState)
     ensures
         staged_eval(&Stage::Loop { bound: 1, body: Box::new(body), invariant: inv }, state)
@@ -830,4 +830,4 @@ pub proof fn lemma_loop_one(body: Stage, inv: spec_fn(SharedState, nat) -> bool,
         == eval_loop(&body, staged_eval(&body, state), 1, 1));
 }
 
-} // verus!
+} //  verus!

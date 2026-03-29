@@ -5,12 +5,12 @@ use crate::coalesce::*;
 
 verus! {
 
-// ══════════════════════════════════════════════════════════════
-// Helper functions
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Helper functions
+//  ══════════════════════════════════════════════════════════════
 
-/// Prefix products of a shape: [1, M_0, M_0*M_1, ..., M_0*...*M_{k-1}].
-/// Length is shape.len() + 1.
+///  Prefix products of a shape: [1, M_0, M_0*M_1, ..., M_0*...*M_{k-1}].
+///  Length is shape.len() + 1.
 pub open spec fn shape_prefix_products(shape: Seq<nat>) -> Seq<nat>
     decreases shape.len(),
 {
@@ -18,15 +18,15 @@ pub open spec fn shape_prefix_products(shape: Seq<nat>) -> Seq<nat>
         seq![1nat]
     } else {
         let rest_pp = shape_prefix_products(shape.skip(1));
-        // rest_pp = [1, M_1, M_1*M_2, ...]
-        // We want [1, M_0, M_0*M_1, M_0*M_1*M_2, ...]
-        // = [1] ++ [M_0 * x for x in rest_pp]
+        //  rest_pp = [1, M_1, M_1*M_2, ...]
+        //  We want [1, M_0, M_0*M_1, M_0*M_1*M_2, ...]
+        //  = [1] ++ [M_0 * x for x in rest_pp]
         let scaled = Seq::new(rest_pp.len(), |i: int| shape.first() * rest_pp[i]);
         seq![1nat].add(scaled)
     }
 }
 
-/// Find the index of the first element equal to target, or None if not found.
+///  Find the index of the first element equal to target, or None if not found.
 pub open spec fn find_value(s: Seq<int>, target: int) -> Option<nat>
     decreases s.len(),
 {
@@ -42,21 +42,21 @@ pub open spec fn find_value(s: Seq<int>, target: int) -> Option<nat>
     }
 }
 
-/// Remove element at position i from a nat sequence.
+///  Remove element at position i from a nat sequence.
 pub open spec fn remove_at_nat(s: Seq<nat>, i: int) -> Seq<nat> {
     s.take(i).add(s.skip(i + 1))
 }
 
-/// Remove element at position i from an int sequence.
+///  Remove element at position i from an int sequence.
 pub open spec fn remove_at_int(s: Seq<int>, i: int) -> Seq<int> {
     s.take(i).add(s.skip(i + 1))
 }
 
-/// Build coordinates that "undo" right_inverse_build's offset.
+///  Build coordinates that "undo" right_inverse_build's offset.
 ///
-/// For each step of the build (finding stride == cursor), the coordinate at that
-/// position is j % shape[idx], and the remaining coordinates come from the recursive
-/// call with j / shape[idx].
+///  For each step of the build (finding stride == cursor), the coordinate at that
+///  position is j % shape[idx], and the remaining coordinates come from the recursive
+///  call with j / shape[idx].
 pub open spec fn right_inverse_coords(
     shape: Seq<nat>, stride: Seq<int>, cursor: nat, j: nat,
 ) -> Seq<nat>
@@ -94,7 +94,7 @@ pub open spec fn right_inverse_coords(
     }
 }
 
-/// Find the index of the element with smallest positive value, or None if none.
+///  Find the index of the element with smallest positive value, or None if none.
 pub open spec fn find_min_positive(s: Seq<int>) -> Option<nat>
     decreases s.len(),
 {
@@ -122,18 +122,18 @@ pub open spec fn find_min_positive(s: Seq<int>) -> Option<nat>
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// Right inverse
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Right inverse
+//  ══════════════════════════════════════════════════════════════
 
-/// Core right_inverse builder.
+///  Core right_inverse builder.
 ///
-/// Processes modes by finding stride == cursor (contiguous chain from 1).
-/// Each matched mode gets:
-/// - shape: the mode's original shape
-/// - stride: the prefix product at the mode's original position
+///  Processes modes by finding stride == cursor (contiguous chain from 1).
+///  Each matched mode gets:
+///  - shape: the mode's original shape
+///  - stride: the prefix product at the mode's original position
 ///
-/// The result has column-major-like strides permuted by the stride sort.
+///  The result has column-major-like strides permuted by the stride sort.
 pub open spec fn right_inverse_build(
     shape: Seq<nat>,
     stride: Seq<int>,
@@ -150,7 +150,7 @@ pub open spec fn right_inverse_build(
     } else {
         match find_value(stride, cursor as int) {
             None => {
-                // No mode with matching stride; chain broken
+                //  No mode with matching stride; chain broken
                 LayoutSpec { shape: seq![], stride: seq![] }
             }
             Some(idx) => {
@@ -176,37 +176,37 @@ pub open spec fn right_inverse_build(
     }
 }
 
-/// Right inverse of a layout.
+///  Right inverse of a layout.
 ///
-/// Given layout L, right_inverse(L) = R such that L(R(j)) = j
-/// for j in [0, R.size()).
+///  Given layout L, right_inverse(L) = R such that L(R(j)) = j
+///  for j in [0, R.size()).
 ///
-/// Algorithm: coalesce L, compute prefix products of shape,
-/// then build the inverse by walking modes in stride order.
-/// Each mode with stride matching the expected cursor gets
-/// column-major strides at its original position.
+///  Algorithm: coalesce L, compute prefix products of shape,
+///  then build the inverse by walking modes in stride order.
+///  Each mode with stride matching the expected cursor gets
+///  column-major strides at its original position.
 pub open spec fn right_inverse(layout: &LayoutSpec) -> LayoutSpec {
     let c = coalesce(*layout);
     let pp = shape_prefix_products(c.shape);
-    // pp[i] = product(shape[0..i]), has length shape.len() + 1
-    // preprod for mode i = pp[i]
+    //  pp[i] = product(shape[0..i]), has length shape.len() + 1
+    //  preprod for mode i = pp[i]
     let preprod = pp.take(c.shape.len() as int);
     right_inverse_build(c.shape, c.stride, preprod, 1)
 }
 
-// ══════════════════════════════════════════════════════════════
-// Left inverse
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Left inverse
+//  ══════════════════════════════════════════════════════════════
 
-/// Core left_inverse builder.
+///  Core left_inverse builder.
 ///
-/// Processes modes by finding the smallest positive stride.
-/// Each mode produces:
-/// - A "gap" shape = stride / acc_size (fills codomain gaps)
-/// - A stride = prefix product at original position
-/// The last mode also appends its shape as the final mode.
+///  Processes modes by finding the smallest positive stride.
+///  Each mode produces:
+///  - A "gap" shape = stride / acc_size (fills codomain gaps)
+///  - A stride = prefix product at original position
+///  The last mode also appends its shape as the final mode.
 ///
-/// Result stride has an implicit leading 0 (added by left_inverse).
+///  Result stride has an implicit leading 0 (added by left_inverse).
 pub open spec fn left_inverse_build(
     shape: Seq<nat>,
     stride: Seq<int>,
@@ -223,7 +223,7 @@ pub open spec fn left_inverse_build(
     } else {
         match find_min_positive(stride) {
             None => {
-                // No positive-stride modes left
+                //  No positive-stride modes left
                 LayoutSpec { shape: seq![], stride: seq![] }
             }
             Some(idx) => {
@@ -240,7 +240,7 @@ pub open spec fn left_inverse_build(
                     let rest_preprod = remove_at_nat(preprod, idx as int);
 
                     if shape.len() == 1 {
-                        // Last mode: emit gap and final shape
+                        //  Last mode: emit gap and final shape
                         LayoutSpec {
                             shape: seq![gap, m],
                             stride: seq![pp as int],
@@ -261,19 +261,19 @@ pub open spec fn left_inverse_build(
     }
 }
 
-/// Left inverse of a layout.
+///  Left inverse of a layout.
 ///
-/// Given layout L, left_inverse(L) = LI such that LI(L(i)) = i
-/// for i in [0, L.size()).
+///  Given layout L, left_inverse(L) = LI such that LI(L(i)) = i
+///  for i in [0, L.size()).
 ///
-/// Algorithm: coalesce L, compute prefix products, then build
-/// the inverse with gap-filling modes (stride 0) and data modes.
+///  Algorithm: coalesce L, compute prefix products, then build
+///  the inverse with gap-filling modes (stride 0) and data modes.
 pub open spec fn left_inverse(layout: &LayoutSpec) -> LayoutSpec {
     let c = coalesce(*layout);
     let pp = shape_prefix_products(c.shape);
     let preprod = pp.take(c.shape.len() as int);
     let raw = left_inverse_build(c.shape, c.stride, preprod, 1);
-    // Prepend the initial stride-0 gap mode, then coalesce
+    //  Prepend the initial stride-0 gap mode, then coalesce
     let result = LayoutSpec {
         shape: raw.shape,
         stride: seq![0int].add(raw.stride),
@@ -281,21 +281,21 @@ pub open spec fn left_inverse(layout: &LayoutSpec) -> LayoutSpec {
     coalesce(result)
 }
 
-// ══════════════════════════════════════════════════════════════
-// Admissibility predicates
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Admissibility predicates
+//  ══════════════════════════════════════════════════════════════
 
-/// Admissibility for right_inverse: layout must be valid.
-/// The result is always well-defined; it just may be partial
-/// (only inverts the contiguous-stride portion).
+///  Admissibility for right_inverse: layout must be valid.
+///  The result is always well-defined; it just may be partial
+///  (only inverts the contiguous-stride portion).
 pub open spec fn right_inverse_admissible(layout: &LayoutSpec) -> bool {
     layout.valid()
 }
 
-/// Admissibility for left_inverse: layout must be valid and injective.
+///  Admissibility for left_inverse: layout must be valid and injective.
 pub open spec fn left_inverse_admissible(layout: &LayoutSpec) -> bool {
     &&& layout.valid()
     &&& layout.is_injective()
 }
 
-} // verus!
+} //  verus!

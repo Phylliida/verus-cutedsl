@@ -4,16 +4,16 @@ use crate::layout::*;
 
 verus! {
 
-/// Two adjacent modes (i, i+1) are coalesceable if stride[i+1] == shape[i] * stride[i].
-/// This means they tile contiguously: the "next row" starts exactly where the "current row" ends.
+///  Two adjacent modes (i, i+1) are coalesceable if stride[i+1] == shape[i] * stride[i].
+///  This means they tile contiguously: the "next row" starts exactly where the "current row" ends.
 pub open spec fn modes_coalesceable(layout: &LayoutSpec, i: int) -> bool
     recommends layout.valid(), 0 <= i < layout.shape.len() as int - 1,
 {
     layout.stride[i + 1] == (layout.shape[i] as int) * layout.stride[i]
 }
 
-/// Coalesce a single pair of adjacent modes at position i.
-/// Merges modes i and i+1 into a single mode of size shape[i]*shape[i+1] with stride stride[i].
+///  Coalesce a single pair of adjacent modes at position i.
+///  Merges modes i and i+1 into a single mode of size shape[i]*shape[i+1] with stride stride[i].
 pub open spec fn coalesce_pair(layout: LayoutSpec, i: nat) -> LayoutSpec
     recommends
         layout.valid(),
@@ -30,9 +30,9 @@ pub open spec fn coalesce_pair(layout: LayoutSpec, i: nat) -> LayoutSpec
     LayoutSpec { shape: new_shape, stride: new_stride }
 }
 
-/// Coalesce all coalesceable adjacent pairs, scanning left to right.
-/// When a pair is coalesced, re-check the same position (the merged mode might
-/// coalesce with its new neighbor). When not coalesceable, advance to the next position.
+///  Coalesce all coalesceable adjacent pairs, scanning left to right.
+///  When a pair is coalesced, re-check the same position (the merged mode might
+///  coalesce with its new neighbor). When not coalesceable, advance to the next position.
 pub open spec fn coalesce_pass(layout: LayoutSpec, start: nat) -> LayoutSpec
     decreases layout.shape.len() as int - start as int,
 {
@@ -45,12 +45,12 @@ pub open spec fn coalesce_pass(layout: LayoutSpec, start: nat) -> LayoutSpec
     }
 }
 
-/// Full coalesce: scan from position 0 and merge all adjacent coalesceable pairs.
+///  Full coalesce: scan from position 0 and merge all adjacent coalesceable pairs.
 pub open spec fn coalesce(layout: LayoutSpec) -> LayoutSpec {
     coalesce_pass(layout, 0)
 }
 
-/// Remove all size-1 modes from a layout (they contribute nothing to the offset).
+///  Remove all size-1 modes from a layout (they contribute nothing to the offset).
 pub open spec fn remove_unit_modes(layout: LayoutSpec) -> LayoutSpec {
     let indices = filter_non_unit(layout.shape, 0);
     LayoutSpec {
@@ -59,8 +59,8 @@ pub open spec fn remove_unit_modes(layout: LayoutSpec) -> LayoutSpec {
     }
 }
 
-/// Remove all size-1 modes iteratively, scanning from position `pos`.
-/// Each removal drops one mode, preserving the layout's offset function.
+///  Remove all size-1 modes iteratively, scanning from position `pos`.
+///  Each removal drops one mode, preserving the layout's offset function.
 pub open spec fn remove_units_iter(layout: LayoutSpec, pos: nat) -> LayoutSpec
     decreases layout.shape.len() as int - pos as int,
 {
@@ -77,7 +77,7 @@ pub open spec fn remove_units_iter(layout: LayoutSpec, pos: nat) -> LayoutSpec
     }
 }
 
-/// Gather elements from a sequence at specified indices.
+///  Gather elements from a sequence at specified indices.
 pub open spec fn gather<A>(s: Seq<A>, indices: Seq<int>) -> Seq<A>
     decreases indices.len(),
 {
@@ -88,7 +88,7 @@ pub open spec fn gather<A>(s: Seq<A>, indices: Seq<int>) -> Seq<A>
     }
 }
 
-/// Filter out indices where shape[i] == 1.
+///  Filter out indices where shape[i] == 1.
 pub open spec fn filter_non_unit(shape: Seq<nat>, start: int) -> Seq<int>
     decreases (shape.len() - start) as nat,
 {
@@ -101,32 +101,32 @@ pub open spec fn filter_non_unit(shape: Seq<nat>, start: int) -> Seq<int>
     }
 }
 
-/// Partial flatten: coalesce then remove unit modes (ONE pass).
+///  Partial flatten: coalesce then remove unit modes (ONE pass).
 ///
-/// WARNING: NOT idempotent! Removing unit modes can expose new coalesceable pairs.
-/// Example: L = (3, 1, 2):(1, 7, 3) → flatten_partial = (3, 2):(1, 3) — now coalesceable!
+///  WARNING: NOT idempotent! Removing unit modes can expose new coalesceable pairs.
+///  Example: L = (3, 1, 2):(1, 7, 3) → flatten_partial = (3, 2):(1, 3) — now coalesceable!
 ///
-/// For a true canonical form, use `flatten` (which applies an extra coalesce pass).
+///  For a true canonical form, use `flatten` (which applies an extra coalesce pass).
 pub open spec fn flatten_partial(layout: LayoutSpec) -> LayoutSpec {
     remove_units_iter(coalesce(layout), 0)
 }
 
-/// Flatten a layout to canonical form: coalesce, remove unit modes, then coalesce again.
+///  Flatten a layout to canonical form: coalesce, remove unit modes, then coalesce again.
 ///
-/// This is the true canonical form of the layout's offset function:
-/// - Idempotent: `flatten(flatten(L)) == flatten(L)`
-/// - No unit modes: all shape entries > 1
-/// - Fully coalesced: no adjacent coalesceable pairs
+///  This is the true canonical form of the layout's offset function:
+///  - Idempotent: `flatten(flatten(L)) == flatten(L)`
+///  - No unit modes: all shape entries > 1
+///  - Fully coalesced: no adjacent coalesceable pairs
 ///
-/// The extra coalesce pass (vs `flatten_partial`) is needed because removing unit modes
-/// can expose new coalesceable pairs.
-// Proved: idempotence (lemma_flatten_idempotent), column-major canonicality,
-// rank-1 canonicality. Full canonicality for sorted+tractable layouts also proved.
+///  The extra coalesce pass (vs `flatten_partial`) is needed because removing unit modes
+///  can expose new coalesceable pairs.
+//  Proved: idempotence (lemma_flatten_idempotent), column-major canonicality,
+//  rank-1 canonicality. Full canonicality for sorted+tractable layouts also proved.
 pub open spec fn flatten(layout: LayoutSpec) -> LayoutSpec {
     coalesce(flatten_partial(layout))
 }
 
-/// Admissibility for group_modes: all adjacent pairs in [lo, hi) are coalesceable.
+///  Admissibility for group_modes: all adjacent pairs in [lo, hi) are coalesceable.
 pub open spec fn group_modes_admissible(layout: &LayoutSpec, lo: nat, hi: nat) -> bool {
     &&& layout.valid()
     &&& lo < hi
@@ -135,8 +135,8 @@ pub open spec fn group_modes_admissible(layout: &LayoutSpec, lo: nat, hi: nat) -
         #[trigger] modes_coalesceable(layout, i)
 }
 
-/// Group (merge) contiguous modes [lo, hi) into a single mode by repeated coalesce_pair at lo.
-/// Each step merges modes lo and lo+1, reducing rank by 1 and the range by 1.
+///  Group (merge) contiguous modes [lo, hi) into a single mode by repeated coalesce_pair at lo.
+///  Each step merges modes lo and lo+1, reducing rank by 1 and the range by 1.
 pub open spec fn group_modes(layout: LayoutSpec, lo: nat, hi: nat) -> LayoutSpec
     recommends group_modes_admissible(&layout, lo, hi),
     decreases hi - lo,
@@ -148,4 +148,4 @@ pub open spec fn group_modes(layout: LayoutSpec, lo: nat, hi: nat) -> LayoutSpec
     }
 }
 
-} // verus!
+} //  verus!

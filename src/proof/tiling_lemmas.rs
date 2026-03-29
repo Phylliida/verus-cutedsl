@@ -14,8 +14,8 @@ use crate::proof::product_lemmas::*;
 
 verus! {
 
-/// Helper: the zipped layout (B ++ complement) is valid.
-/// Helper: the zipped layout (B ++ complement) is valid.
+///  Helper: the zipped layout (B ++ complement) is valid.
+///  Helper: the zipped layout (B ++ complement) is valid.
 pub proof fn lemma_zipped_valid(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
@@ -32,12 +32,12 @@ pub proof fn lemma_zipped_valid(a: &LayoutSpec, b: &LayoutSpec)
     lemma_zipped_setup(a, b);
 }
 
-/// Comprehensive zipped layout setup: valid + non-negative strides + size == M.
+///  Comprehensive zipped layout setup: valid + non-negative strides + size == M.
 ///
-/// Combines `lemma_complement_valid`, `lemma_complement_shape_valid`,
-/// `lemma_complement_positive_strides`, `lemma_complement_rank`, and
-/// `lemma_complement_size` into one call. This eliminates the ~8-line
-/// inline validity proof that was repeated in every divide lemma.
+///  Combines `lemma_complement_valid`, `lemma_complement_shape_valid`,
+///  `lemma_complement_positive_strides`, `lemma_complement_rank`, and
+///  `lemma_complement_size` into one call. This eliminates the ~8-line
+///  inline validity proof that was repeated in every divide lemma.
 pub proof fn lemma_zipped_setup(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
@@ -65,7 +65,7 @@ pub proof fn lemma_zipped_setup(a: &LayoutSpec, b: &LayoutSpec)
     crate::proof::complement_lemmas::lemma_complement_positive_strides(b, m);
     crate::proof::complement_lemmas::lemma_complement_size(b, m);
 
-    // Valid: all shape entries > 0
+    //  Valid: all shape entries > 0
     assert(zipped.valid()) by {
         assert forall|i: int| 0 <= i < zipped.shape.len()
         implies #[trigger] zipped.shape[i] > 0 by {
@@ -75,7 +75,7 @@ pub proof fn lemma_zipped_setup(a: &LayoutSpec, b: &LayoutSpec)
         };
     };
 
-    // Non-negative strides: B strides from complement_admissible, complement strides positive
+    //  Non-negative strides: B strides from complement_admissible, complement strides positive
     assert(zipped.non_negative_strides()) by {
         assert forall|i: int| 0 <= i < zipped.stride.len()
         implies #[trigger] zipped.stride[i] >= 0 by {
@@ -87,14 +87,14 @@ pub proof fn lemma_zipped_setup(a: &LayoutSpec, b: &LayoutSpec)
         };
     };
 
-    // Size: shape_size(B.shape ++ C.shape) == shape_size(B.shape) * shape_size(C.shape) == M
+    //  Size: shape_size(B.shape ++ C.shape) == shape_size(B.shape) * shape_size(C.shape) == M
     crate::proof::product_lemmas::lemma_shape_size_append(b.shape, c.shape);
     vstd::arithmetic::mul::lemma_mul_is_commutative(
         shape_size(b.shape) as int, shape_size(c.shape) as int,
     );
 }
 
-/// logical_divide_linear produces a valid layout.
+///  logical_divide_linear produces a valid layout.
 pub proof fn lemma_divide_valid(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
@@ -109,18 +109,18 @@ pub proof fn lemma_divide_valid(a: &LayoutSpec, b: &LayoutSpec)
         stride: b.stride.add(c.stride),
     };
     lemma_zipped_valid(a, b);
-    // compose_linear(a_val, zipped).shape =~= zipped.shape (valid)
+    //  compose_linear(a_val, zipped).shape =~= zipped.shape (valid)
     crate::proof::composition_lemmas::lemma_compose_shape(a_val, zipped);
     lemma_compose_rank(a_val, zipped);
-    // compose_linear.shape =~= zipped.shape, which is valid
-    // compose_linear.shape.len() == compose_linear.stride.len()
+    //  compose_linear.shape =~= zipped.shape, which is valid
+    //  compose_linear.shape.len() == compose_linear.stride.len()
     assert forall|i: int| 0 <= i < logical_divide_linear(a, b).shape.len()
     implies #[trigger] logical_divide_linear(a, b).shape[i] > 0 by {
         assert(logical_divide_linear(a, b).shape[i] == zipped.shape[i]);
     };
 }
 
-/// The DividedLayout from zipped_divide has valid structure.
+///  The DividedLayout from zipped_divide has valid structure.
 pub proof fn lemma_zipped_divide_valid(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
@@ -131,7 +131,7 @@ pub proof fn lemma_zipped_divide_valid(a: &LayoutSpec, b: &LayoutSpec)
     lemma_divide_rank(a, b);
 }
 
-/// Helper: compose_linear.shape =~= zipped.shape for the divide case.
+///  Helper: compose_linear.shape =~= zipped.shape for the divide case.
 proof fn lemma_divide_shape_eq_zipped(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
@@ -152,7 +152,7 @@ proof fn lemma_divide_shape_eq_zipped(a: &LayoutSpec, b: &LayoutSpec)
     crate::proof::composition_lemmas::lemma_compose_shape(a_val, zipped);
 }
 
-/// tile_shape of zipped_divide equals B's shape.
+///  tile_shape of zipped_divide equals B's shape.
 pub proof fn lemma_zipped_divide_tile_shape(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
@@ -160,10 +160,10 @@ pub proof fn lemma_zipped_divide_tile_shape(a: &LayoutSpec, b: &LayoutSpec)
         tile_shape(&zipped_divide(a, b)) =~= b.shape,
 {
     lemma_divide_shape_eq_zipped(a, b);
-    // divide.shape =~= B.shape ++ C.shape, take(B.len()) = B.shape
+    //  divide.shape =~= B.shape ++ C.shape, take(B.len()) = B.shape
 }
 
-/// Total size of zipped_divide equals A's size.
+///  Total size of zipped_divide equals A's size.
 pub proof fn lemma_zipped_divide_size(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
@@ -173,7 +173,7 @@ pub proof fn lemma_zipped_divide_size(a: &LayoutSpec, b: &LayoutSpec)
     lemma_divide_size(a, b);
 }
 
-/// tile_size of zipped_divide equals B's size.
+///  tile_size of zipped_divide equals B's size.
 pub proof fn lemma_zipped_divide_tile_size(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
@@ -183,7 +183,7 @@ pub proof fn lemma_zipped_divide_tile_size(a: &LayoutSpec, b: &LayoutSpec)
     lemma_zipped_divide_tile_shape(a, b);
 }
 
-/// rest_shape of zipped_divide equals complement shape.
+///  rest_shape of zipped_divide equals complement shape.
 pub proof fn lemma_zipped_divide_rest_shape(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
@@ -191,10 +191,10 @@ pub proof fn lemma_zipped_divide_rest_shape(a: &LayoutSpec, b: &LayoutSpec)
         rest_shape(&zipped_divide(a, b)) =~= complement(b, shape_size(a.shape)).shape,
 {
     lemma_divide_shape_eq_zipped(a, b);
-    // divide.shape =~= B.shape ++ C.shape, skip(B.len()) = C.shape
+    //  divide.shape =~= B.shape ++ C.shape, skip(B.len()) = C.shape
 }
 
-/// num_tiles_divided equals num_tiles.
+///  num_tiles_divided equals num_tiles.
 pub proof fn lemma_zipped_divide_num_tiles(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
@@ -205,9 +205,9 @@ pub proof fn lemma_zipped_divide_num_tiles(a: &LayoutSpec, b: &LayoutSpec)
     let c = complement(b, m);
 
     lemma_zipped_divide_rest_shape(a, b);
-    // rest_shape =~= c.shape, so shape_size(rest_shape) == shape_size(c.shape)
+    //  rest_shape =~= c.shape, so shape_size(rest_shape) == shape_size(c.shape)
 
-    // shape_size(C.shape) * shape_size(B.shape) == m
+    //  shape_size(C.shape) * shape_size(B.shape) == m
     let n = shape_size(b.shape);
     crate::proof::complement_lemmas::lemma_complement_size(b, m);
     lemma_shape_size_positive(b.shape);
@@ -216,14 +216,14 @@ pub proof fn lemma_zipped_divide_num_tiles(a: &LayoutSpec, b: &LayoutSpec)
     vstd::arithmetic::mul::lemma_mul_is_commutative(shape_size(c.shape) as int, n as int);
     let sc = shape_size(c.shape);
     assert(n * sc == m);
-    // Exact division: (n * sc) / n == sc
+    //  Exact division: (n * sc) / n == sc
     vstd::arithmetic::div_mod::lemma_div_multiples_vanish(sc as int, n as int);
-    // gives: (n as int * sc as int) / n as int == sc as int
-    // Since n * sc == m as nats, m / n == sc
+    //  gives: (n as int * sc as int) / n as int == sc as int
+    //  Since n * sc == m as nats, m / n == sc
     assert(m / n == sc);
 }
 
-/// make_tiled_copy size = atom_size * thr_size * val_size.
+///  make_tiled_copy size = atom_size * thr_size * val_size.
 pub proof fn lemma_tiled_copy_size(
     atom: &LayoutSpec,
     thr_layout: &LayoutSpec,
@@ -247,7 +247,7 @@ pub proof fn lemma_tiled_copy_size(
     );
 }
 
-/// make_tiled_copy produces a valid layout.
+///  make_tiled_copy produces a valid layout.
 pub proof fn lemma_tiled_copy_valid(
     atom: &LayoutSpec,
     thr_layout: &LayoutSpec,
@@ -263,23 +263,23 @@ pub proof fn lemma_tiled_copy_valid(
     lemma_raked_product_valid(atom, &tv);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Predicated divide proofs
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Predicated divide proofs
+//  ══════════════════════════════════════════════════════════════
 
-/// shape_size of a single-element shape is the element itself.
+///  shape_size of a single-element shape is the element itself.
 proof fn lemma_shape_size_singleton(m: nat)
     ensures shape_size(seq![m]) == m,
 {
     let s = seq![m];
     assert(s.skip(1) =~= Seq::<nat>::empty());
-    // shape_size(s) = s.first() * shape_size(s.skip(1)) = m * shape_size(seq![]) = m * 1 = m
+    //  shape_size(s) = s.first() * shape_size(s.skip(1)) = m * shape_size(seq![]) = m * 1 = m
     assert(s.first() == m);
     assert(shape_size(s.skip(1)) == 1nat);
     vstd::arithmetic::mul::lemma_mul_basics(m as int);
 }
 
-/// make_identity(m) is valid when m > 0.
+///  make_identity(m) is valid when m > 0.
 proof fn lemma_identity_valid(m: nat)
     requires m > 0,
     ensures make_identity(m).valid(),
@@ -290,8 +290,8 @@ proof fn lemma_identity_valid(m: nat)
     assert(l.shape[0] == m);
 }
 
-/// Identity layout (m):(1) is complement-admissible with respect to any M
-/// where M > 0 and M % m == 0.
+///  Identity layout (m):(1) is complement-admissible with respect to any M
+///  where M > 0 and M % m == 0.
 proof fn lemma_identity_complement_admissible(m: nat, total: nat)
     requires
         m > 0,
@@ -305,14 +305,14 @@ proof fn lemma_identity_complement_admissible(m: nat, total: nat)
     assert(b.shape.len() == 1);
     assert(b.shape[0] == m);
     assert(b.stride[0] == 1int);
-    // last() for a single-element seq is the first element
+    //  last() for a single-element seq is the first element
     assert(b.shape.last() == m);
     assert(b.stride.last() == 1int);
-    // m * 1 == m
+    //  m * 1 == m
     vstd::arithmetic::mul::lemma_mul_basics(m as int);
 }
 
-/// Predicated divide admissibility: padded identity divided by tile identity.
+///  Predicated divide admissibility: padded identity divided by tile identity.
 pub proof fn lemma_predicated_divide_admissible(original_size: nat, tile_size: nat)
     requires
         padded_divide_admissible(original_size, tile_size),
@@ -335,12 +335,12 @@ pub proof fn lemma_predicated_divide_admissible(original_size: nat, tile_size: n
     lemma_identity_valid(tile_size);
     lemma_identity_complement_admissible(tile_size, padded);
 
-    // shape_size(a.shape) == padded
+    //  shape_size(a.shape) == padded
     lemma_shape_size_singleton(padded);
     assert(shape_size(a.shape) == padded);
 }
 
-/// Predicated divide produces a valid DividedLayout.
+///  Predicated divide produces a valid DividedLayout.
 pub proof fn lemma_predicated_divide_valid(original_size: nat, tile_size: nat)
     requires
         padded_divide_admissible(original_size, tile_size),
@@ -354,7 +354,7 @@ pub proof fn lemma_predicated_divide_valid(original_size: nat, tile_size: nat)
     );
 }
 
-/// Tile size of predicated_divide is ts.
+///  Tile size of predicated_divide is ts.
 pub proof fn lemma_predicated_divide_tile_size(original_size: nat, ts: nat)
     requires
         padded_divide_admissible(original_size, ts),
@@ -365,11 +365,11 @@ pub proof fn lemma_predicated_divide_tile_size(original_size: nat, ts: nat)
     let a = make_identity(padded_size(original_size, ts));
     let b = make_identity(ts);
     lemma_zipped_divide_tile_size(&a, &b);
-    // tile_size(zipped_divide(a, b)) == shape_size(b.shape) == shape_size(seq![ts]) == ts
+    //  tile_size(zipped_divide(a, b)) == shape_size(b.shape) == shape_size(seq![ts]) == ts
     lemma_shape_size_singleton(ts);
 }
 
-/// Number of tiles in predicated_divide is ceil_div(original_size, tile_size).
+///  Number of tiles in predicated_divide is ceil_div(original_size, tile_size).
 pub proof fn lemma_predicated_divide_num_tiles(original_size: nat, tile_size: nat)
     requires
         padded_divide_admissible(original_size, tile_size),
@@ -388,7 +388,7 @@ pub proof fn lemma_predicated_divide_num_tiles(original_size: nat, tile_size: na
     assert(shape_size(b.shape) == tile_size);
 
     lemma_zipped_divide_num_tiles(&a, &b);
-    // num_tiles_divided == num_tiles(a, b) == padded / tile_size
+    //  num_tiles_divided == num_tiles(a, b) == padded / tile_size
     assert(num_tiles_divided(&predicated_divide(original_size, tile_size))
         == num_tiles(&a, &b));
     assert(num_tiles(&a, &b) == padded / tile_size);
@@ -402,7 +402,7 @@ pub proof fn lemma_predicated_divide_num_tiles(original_size: nat, tile_size: na
     ;
 }
 
-/// Sum of valid element counts across all tiles equals original_size.
+///  Sum of valid element counts across all tiles equals original_size.
 pub proof fn lemma_predicated_covers_all(original_size: nat, tile_size: nat)
     requires
         padded_divide_admissible(original_size, tile_size),
@@ -416,7 +416,7 @@ pub proof fn lemma_predicated_covers_all(original_size: nat, tile_size: nat)
     crate::proof::predication_lemmas::lemma_total_valid_elements(original_size, tile_size);
 }
 
-/// Predicated divide has identity offset: offset(x) == x for x < padded_size.
+///  Predicated divide has identity offset: offset(x) == x for x < padded_size.
 pub proof fn lemma_predicated_divide_offset_identity(
     original_size: nat, tile_size: nat, x: nat,
 )
@@ -435,14 +435,14 @@ pub proof fn lemma_predicated_divide_offset_identity(
     assert(shape_size(a.shape) == padded);
     assert(x < shape_size(a.shape));
 
-    // logical_divide_linear(a, b).offset(x) == a.offset(x) for rank-1 A, col-major B
+    //  logical_divide_linear(a, b).offset(x) == a.offset(x) for rank-1 A, col-major B
     lemma_divide_offset_1d_a(&a, &b, x);
 
-    // a.offset(x) == x since a = (padded):(1) is column-major
-    // column_major_strides(seq![padded]):
-    //   = seq![1].add(scale_strides_spec(column_major_strides(seq![padded].skip(1)), padded))
-    //   = seq![1].add(scale_strides_spec(seq![], padded))
-    //   = seq![1].add(seq![]) = seq![1]
+    //  a.offset(x) == x since a = (padded):(1) is column-major
+    //  column_major_strides(seq![padded]):
+    //    = seq![1].add(scale_strides_spec(column_major_strides(seq![padded].skip(1)), padded))
+    //    = seq![1].add(scale_strides_spec(seq![], padded))
+    //    = seq![1].add(seq![]) = seq![1]
     assert(seq![padded].skip(1) =~= Seq::<nat>::empty());
     assert(column_major_strides(Seq::<nat>::empty()) =~= Seq::<int>::empty());
     assert(scale_strides_spec(Seq::<int>::empty(), padded as int) =~= Seq::<int>::empty());
@@ -454,18 +454,18 @@ pub proof fn lemma_predicated_divide_offset_identity(
     crate::proof::injectivity_lemmas::lemma_column_major_offset_is_identity(
         seq![padded], x,
     );
-    // make_column_major(seq![padded]).offset(x) == x
-    // a and make_column_major(seq![padded]) have same shape and stride
+    //  make_column_major(seq![padded]).offset(x) == x
+    //  a and make_column_major(seq![padded]) have same shape and stride
     assert(a.offset(x) == make_column_major(seq![padded]).offset(x));
 }
 
-// ══════════════════════════════════════════════════════════════
-// Slice partition lemmas (Phase 3b)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Slice partition lemmas (Phase 3b)
+//  ══════════════════════════════════════════════════════════════
 
-/// For mode-0 slice: L.offset(i * M_0 + c) == slice_offset(L, 0, c) + slice_layout(L, 0, c).offset(i).
+///  For mode-0 slice: L.offset(i * M_0 + c) == slice_offset(L, 0, c) + slice_layout(L, 0, c).offset(i).
 ///
-/// This reconstructs the full layout offset from a slice's residual offset plus the base.
+///  This reconstructs the full layout offset from a slice's residual offset plus the base.
 pub proof fn lemma_slice_offset_reconstruction(
     layout: &LayoutSpec, c: nat, i: nat,
 )
@@ -484,42 +484,42 @@ pub proof fn lemma_slice_offset_reconstruction(
     let rest_stride = layout.stride.skip(1);
     let x = i * m0 + c;
 
-    // x < shape_size(layout.shape)
+    //  x < shape_size(layout.shape)
     assert(shape_size(layout.shape) == m0 * shape_size(rest_shape));
     assert(x < shape_size(layout.shape)) by (nonlinear_arith)
         requires i < shape_size(rest_shape), c < m0, x == i * m0 + c,
             shape_size(layout.shape) == m0 * shape_size(rest_shape),
             m0 > 0;
 
-    // delinearize(x, shape) = seq![c] ++ delinearize(i, rest_shape)
-    // since x % m0 = c and x / m0 = i
+    //  delinearize(x, shape) = seq![c] ++ delinearize(i, rest_shape)
+    //  since x % m0 = c and x / m0 = i
     assert(x % m0 == c) by (nonlinear_arith)
         requires c < m0, x == i * m0 + c, m0 > 0;
     assert(x / m0 == i) by (nonlinear_arith)
         requires c < m0, x == i * m0 + c, m0 > 0;
 
-    // Unfold delinearize one step
+    //  Unfold delinearize one step
     assert(layout.shape.first() == m0);
     assert(delinearize(x, layout.shape) =~=
         seq![x % m0].add(delinearize(x / m0, rest_shape)));
     assert(delinearize(x, layout.shape) =~=
         seq![c].add(delinearize(i, rest_shape)));
 
-    // Unfold the offset: dot(delinearize(x, shape), stride)
-    // = dot(seq![c] ++ delinearize(i, rest_shape), seq![stride[0]] ++ rest_stride)
+    //  Unfold the offset: dot(delinearize(x, shape), stride)
+    //  = dot(seq![c] ++ delinearize(i, rest_shape), seq![stride[0]] ++ rest_stride)
     assert(layout.stride =~= seq![layout.stride[0]].add(rest_stride)) by {
         assert(layout.stride.first() == layout.stride[0]);
         assert(layout.stride =~= seq![layout.stride.first()].add(layout.stride.skip(1)));
     };
 
-    // Split the dot product
+    //  Split the dot product
     lemma_delinearize_len(i, rest_shape);
     crate::proof::shape_lemmas::lemma_dot_product_append(
         seq![c], delinearize(i, rest_shape),
         seq![layout.stride[0]], rest_stride,
     );
 
-    // dot(seq![c], seq![stride[0]]) = c * stride[0]
+    //  dot(seq![c], seq![stride[0]]) = c * stride[0]
     assert(seq![c].first() == c);
     assert(seq![layout.stride[0]].first() == layout.stride[0]);
     assert(seq![c].skip(1) =~= Seq::<nat>::empty());
@@ -527,26 +527,26 @@ pub proof fn lemma_slice_offset_reconstruction(
     assert(dot_product_nat_int(Seq::<nat>::empty(), Seq::<int>::empty()) == 0int);
     assert(dot_product_nat_int(seq![c], seq![layout.stride[0]]) == (c as int) * layout.stride[0]);
 
-    // The residual layout offset
+    //  The residual layout offset
     crate::proof::slice_lemmas::lemma_slice_mode0(layout, c);
     let sl = crate::slice::slice_layout(layout, 0, c);
     assert(sl.shape =~= rest_shape);
     assert(sl.stride =~= rest_stride);
 
-    // sl.offset(i) = dot(delinearize(i, rest_shape), rest_stride)
-    // slice_offset(layout, 0, c) = c * stride[0]
-    // So: layout.offset(x) = c * stride[0] + sl.offset(i) = slice_offset + sl.offset(i)
+    //  sl.offset(i) = dot(delinearize(i, rest_shape), rest_stride)
+    //  slice_offset(layout, 0, c) = c * stride[0]
+    //  So: layout.offset(x) = c * stride[0] + sl.offset(i) = slice_offset + sl.offset(i)
 }
 
-/// Distinct remainders imply distinct sums: i*m+c1 != j*m+c2 when c1 != c2 < m.
+///  Distinct remainders imply distinct sums: i*m+c1 != j*m+c2 when c1 != c2 < m.
 proof fn lemma_distinct_mod_implies_distinct(c1: nat, c2: nat, i: nat, j: nat, m0: nat)
     requires c1 < m0, c2 < m0, c1 != c2, m0 > 0,
     ensures i * m0 + c1 != j * m0 + c2,
 {
-    // If i == j, obvious since c1 != c2.
-    // If i != j, WLOG i > j: i*m + c1 >= (j+1)*m + 0 = j*m + m > j*m + c2.
+    //  If i == j, obvious since c1 != c2.
+    //  If i != j, WLOG i > j: i*m + c1 >= (j+1)*m + 0 = j*m + m > j*m + c2.
     if i == j {
-        // i * m0 + c1 != i * m0 + c2 because c1 != c2
+        //  i * m0 + c1 != i * m0 + c2 because c1 != c2
     } else if i > j {
         assert(i * m0 + c1 >= (j + 1) * m0) by (nonlinear_arith)
             requires i > j, m0 > 0nat;
@@ -560,7 +560,7 @@ proof fn lemma_distinct_mod_implies_distinct(c1: nat, c2: nat, i: nat, j: nat, m
     }
 }
 
-/// i * m + c < m * n when i < n and c < m.
+///  i * m + c < m * n when i < n and c < m.
 proof fn lemma_mixed_radix_bound(i: nat, c: nat, m: nat, n: nat)
     requires i < n, c < m, m > 0,
     ensures i * m + c < m * n,
@@ -569,9 +569,9 @@ proof fn lemma_mixed_radix_bound(i: nat, c: nat, m: nat, n: nat)
         requires i < n, c < m, m > 0nat;
 }
 
-/// Different mode-0 slices of an injective layout produce disjoint offset sets.
+///  Different mode-0 slices of an injective layout produce disjoint offset sets.
 ///
-/// For c1 != c2, no offset in slice c1 can equal any offset in slice c2.
+///  For c1 != c2, no offset in slice c1 can equal any offset in slice c2.
 pub proof fn lemma_slice_disjoint(
     layout: &LayoutSpec, c1: nat, c2: nat, i: nat, j: nat,
 )
@@ -593,32 +593,32 @@ pub proof fn lemma_slice_disjoint(
     let m0 = layout.shape[0];
     let rest_size = shape_size(layout.shape.skip(1));
 
-    // Reconstruct full layout offsets
+    //  Reconstruct full layout offsets
     lemma_slice_offset_reconstruction(layout, c1, i);
     lemma_slice_offset_reconstruction(layout, c2, j);
 
     let x1 = i * m0 + c1;
     let x2 = j * m0 + c2;
 
-    // x1 != x2 because c1 != c2 and both < m0
+    //  x1 != x2 because c1 != c2 and both < m0
     lemma_distinct_mod_implies_distinct(c1, c2, i, j, m0);
 
-    // Both x1, x2 < shape_size(layout.shape)
+    //  Both x1, x2 < shape_size(layout.shape)
     assert(shape_size(layout.shape) == m0 * rest_size);
     lemma_mixed_radix_bound(i, c1, m0, rest_size);
     lemma_mixed_radix_bound(j, c2, m0, rest_size);
 
-    // By injectivity: layout.offset(x1) != layout.offset(x2)
+    //  By injectivity: layout.offset(x1) != layout.offset(x2)
     assert(layout.offset(x1) != layout.offset(x2));
 
-    // By reconstruction: layout.offset(x1) == slice_offset(0,c1) + slice(0,c1).offset(i)
-    //                    layout.offset(x2) == slice_offset(0,c2) + slice(0,c2).offset(j)
+    //  By reconstruction: layout.offset(x1) == slice_offset(0,c1) + slice(0,c1).offset(i)
+    //                     layout.offset(x2) == slice_offset(0,c2) + slice(0,c2).offset(j)
 }
 
-/// Every element of the full layout is covered by some mode-0 slice.
+///  Every element of the full layout is covered by some mode-0 slice.
 ///
-/// For any x < size(layout), there exist c < shape[0] and i < rest_size such that
-/// layout.offset(x) == slice_offset(L, 0, c) + slice_layout(L, 0, c).offset(i).
+///  For any x < size(layout), there exist c < shape[0] and i < rest_size such that
+///  layout.offset(x) == slice_offset(L, 0, c) + slice_layout(L, 0, c).offset(i).
 pub proof fn lemma_partition_coverage(
     layout: &LayoutSpec, x: nat,
 )
@@ -644,24 +644,24 @@ pub proof fn lemma_partition_coverage(
 
     assert(shape_size(layout.shape) == m0 * rest_size);
 
-    // c < m0 and i < rest_size
+    //  c < m0 and i < rest_size
     assert(c < m0) by (nonlinear_arith)
         requires x < m0 * rest_size, m0 > 0, c == x % m0;
     assert(i < rest_size) by (nonlinear_arith)
         requires x < m0 * rest_size, m0 > 0, i == x / m0;
 
-    // x == i * m0 + c
+    //  x == i * m0 + c
     assert(x == i * m0 + c) by (nonlinear_arith)
         requires c == x % m0, i == x / m0, m0 > 0;
 
     lemma_slice_offset_reconstruction(layout, c, i);
 }
 
-// ══════════════════════════════════════════════════════════════
-// TiledCopy pipeline correctness (Phase 3c)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  TiledCopy pipeline correctness (Phase 3c)
+//  ══════════════════════════════════════════════════════════════
 
-/// Tiled copy produces an injective layout when all components are injective.
+///  Tiled copy produces an injective layout when all components are injective.
 pub proof fn lemma_tiled_copy_injective(
     atom: &LayoutSpec, thr_layout: &LayoutSpec, val_layout: &LayoutSpec,
 )
@@ -677,18 +677,18 @@ pub proof fn lemma_tiled_copy_injective(
 {
     let tv = logical_product(thr_layout, val_layout);
 
-    // TV is injective
+    //  TV is injective
     lemma_product_injective(thr_layout, val_layout);
 
-    // TV has non-negative strides (from tiled_copy_admissible)
+    //  TV has non-negative strides (from tiled_copy_admissible)
     assert(tv.non_negative_strides());
 
-    // raked_product(atom, tv) is injective
+    //  raked_product(atom, tv) is injective
     lemma_product_valid(thr_layout, val_layout);
     lemma_raked_product_injective(atom, &tv);
 }
 
-/// Tiled copy produces a bijective layout when all components are bijective.
+///  Tiled copy produces a bijective layout when all components are bijective.
 pub proof fn lemma_tiled_copy_bijective(
     atom: &LayoutSpec, thr_layout: &LayoutSpec, val_layout: &LayoutSpec,
     m_atom: nat, m_thr: nat, m_val: nat,
@@ -713,16 +713,16 @@ pub proof fn lemma_tiled_copy_bijective(
 {
     let tv = logical_product(thr_layout, val_layout);
 
-    // TV is valid with non-negative strides
+    //  TV is valid with non-negative strides
     lemma_product_valid(thr_layout, val_layout);
 
-    // TV cosize = m_thr * m_val
+    //  TV cosize = m_thr * m_val
     lemma_product_cosize(thr_layout, val_layout);
 
-    // TV is bijective onto m_thr * m_val
+    //  TV is bijective onto m_thr * m_val
     lemma_product_bijective(thr_layout, val_layout, m_thr, m_val);
 
-    // raked_product(atom, tv) is bijective onto m_atom * (m_thr * m_val)
+    //  raked_product(atom, tv) is bijective onto m_atom * (m_thr * m_val)
     let m_tv = m_thr * m_val;
     assert(m_thr as int * m_val as int > 0) by (nonlinear_arith)
         requires m_thr > 0nat, m_val > 0nat;
@@ -731,8 +731,8 @@ pub proof fn lemma_tiled_copy_bijective(
     lemma_raked_product_bijective(atom, &tv, m_atom, m_tv);
 }
 
-/// Tiled copy partitions correctly: different threads get disjoint offset sets
-/// from mode-0 slicing of an injective divided layout.
+///  Tiled copy partitions correctly: different threads get disjoint offset sets
+///  from mode-0 slicing of an injective divided layout.
 pub proof fn lemma_tiled_copy_partitions_correctly(
     layout: &LayoutSpec, t1: nat, t2: nat, i: nat, j: nat,
 )
@@ -752,8 +752,8 @@ pub proof fn lemma_tiled_copy_partitions_correctly(
     lemma_slice_disjoint(layout, t1, t2, i, j);
 }
 
-/// Tiled copy covers all elements: for any element x < size(layout), there exists
-/// a thread t and local index i that produces the same offset.
+///  Tiled copy covers all elements: for any element x < size(layout), there exists
+///  a thread t and local index i that produces the same offset.
 pub proof fn lemma_tiled_copy_covers_all(
     layout: &LayoutSpec, x: nat,
 )
@@ -775,11 +775,11 @@ pub proof fn lemma_tiled_copy_covers_all(
     lemma_partition_coverage(layout, x);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Copy atom proofs (Phase 4)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Copy atom proofs (Phase 4)
+//  ══════════════════════════════════════════════════════════════
 
-/// A copy atom has contiguous offsets: offset(idx) == idx.
+///  A copy atom has contiguous offsets: offset(idx) == idx.
 pub proof fn lemma_copy_atom_contiguous(
     atom: &LayoutSpec, access_width: nat, idx: nat,
 )
@@ -789,12 +789,12 @@ pub proof fn lemma_copy_atom_contiguous(
     ensures
         atom.offset(idx) == idx as int,
 {
-    // atom = (aw):(1), which is make_column_major(seq![aw])
+    //  atom = (aw):(1), which is make_column_major(seq![aw])
     assert(atom.shape =~= seq![access_width]);
     assert(atom.stride =~= seq![1int]);
 
-    // make_column_major(seq![aw]).shape =~= seq![aw]
-    // make_column_major(seq![aw]).stride =~= seq![1]
+    //  make_column_major(seq![aw]).shape =~= seq![aw]
+    //  make_column_major(seq![aw]).stride =~= seq![1]
     assert(seq![access_width].skip(1) =~= Seq::<nat>::empty());
     assert(column_major_strides(Seq::<nat>::empty()) =~= Seq::<int>::empty());
     assert(scale_strides_spec(Seq::<int>::empty(), access_width as int) =~= Seq::<int>::empty());
@@ -802,12 +802,12 @@ pub proof fn lemma_copy_atom_contiguous(
     assert(make_column_major(seq![access_width]).shape =~= seq![access_width]);
     assert(make_column_major(seq![access_width]).stride =~= seq![1int]);
 
-    // So atom matches make_column_major(seq![aw])
+    //  So atom matches make_column_major(seq![aw])
     assert(atom.shape =~= make_column_major(seq![access_width]).shape);
     assert(atom.stride =~= make_column_major(seq![access_width]).stride);
 
-    // offset is determined by shape and stride, extensionally equal layouts have equal offsets
-    // delinearize and dot_product depend only on shape/stride contents
+    //  offset is determined by shape and stride, extensionally equal layouts have equal offsets
+    //  delinearize and dot_product depend only on shape/stride contents
     lemma_shape_size_singleton(access_width);
     assert(shape_size(seq![access_width]) == access_width);
     assert(idx < shape_size(seq![access_width]));
@@ -815,13 +815,13 @@ pub proof fn lemma_copy_atom_contiguous(
     crate::proof::injectivity_lemmas::lemma_column_major_offset_is_identity(
         seq![access_width], idx,
     );
-    // make_column_major(seq![aw]).offset(idx) == idx
+    //  make_column_major(seq![aw]).offset(idx) == idx
 
-    // atom.offset(idx) == make_column_major(seq![aw]).offset(idx) since same shape/stride
+    //  atom.offset(idx) == make_column_major(seq![aw]).offset(idx) since same shape/stride
     assert(atom.offset(idx) == make_column_major(seq![access_width]).offset(idx));
 }
 
-/// A copy atom has cosize equal to access_width and non-negative strides.
+///  A copy atom has cosize equal to access_width and non-negative strides.
 pub proof fn lemma_copy_atom_cosize(
     atom: &LayoutSpec, access_width: nat,
 )
@@ -832,16 +832,16 @@ pub proof fn lemma_copy_atom_cosize(
         atom.cosize_nonneg() == access_width,
         atom.non_negative_strides(),
 {
-    // stride[0] = 1 >= 0
+    //  stride[0] = 1 >= 0
     assert(atom.non_negative_strides());
 
-    // cosize = dot(shape_minus_one, stride) + 1
-    // shape_minus_one(seq![aw]) = seq![aw - 1]
-    // dot(seq![aw-1], seq![1]) = (aw-1)*1 + dot(empty, empty) = (aw-1) + 0 = aw-1
-    // cosize = aw - 1 + 1 = aw
+    //  cosize = dot(shape_minus_one, stride) + 1
+    //  shape_minus_one(seq![aw]) = seq![aw - 1]
+    //  dot(seq![aw-1], seq![1]) = (aw-1)*1 + dot(empty, empty) = (aw-1) + 0 = aw-1
+    //  cosize = aw - 1 + 1 = aw
     crate::proof::offset_lemmas::lemma_cosize_equals_dot_plus_one(*atom);
 
-    // Explicitly compute shape_minus_one and dot product
+    //  Explicitly compute shape_minus_one and dot product
     assert(atom.shape =~= seq![access_width]);
     assert(atom.shape.first() == access_width);
     assert(atom.shape.skip(1) =~= Seq::<nat>::empty());
@@ -852,14 +852,14 @@ pub proof fn lemma_copy_atom_cosize(
     assert(smo =~= seq![(access_width - 1) as nat]);
     assert(atom.stride =~= seq![1int]);
 
-    // dot_product_nat_int(seq![aw-1], seq![1]) = (aw-1)*1 + dot(empty, empty)
+    //  dot_product_nat_int(seq![aw-1], seq![1]) = (aw-1)*1 + dot(empty, empty)
     assert(seq![(access_width - 1) as nat].skip(1) =~= Seq::<nat>::empty());
     assert(seq![1int].skip(1) =~= Seq::<int>::empty());
     assert(dot_product_nat_int(Seq::<nat>::empty(), Seq::<int>::empty()) == 0int);
     assert(dot_product_nat_int(smo, atom.stride) == ((access_width - 1) as int) * 1 + 0);
 }
 
-/// A copy atom has size equal to access_width.
+///  A copy atom has size equal to access_width.
 pub proof fn lemma_copy_atom_size(
     atom: &LayoutSpec, access_width: nat,
 )
@@ -868,13 +868,13 @@ pub proof fn lemma_copy_atom_size(
     ensures
         shape_size(atom.shape) == access_width,
 {
-    // shape_size(seq![aw]) = aw * shape_size(empty) = aw * 1 = aw
+    //  shape_size(seq![aw]) = aw * shape_size(empty) = aw * 1 = aw
     assert(atom.shape =~= seq![access_width]);
     lemma_shape_size_singleton(access_width);
 }
 
-/// In a tiled copy, the atom contribution to each element's offset
-/// is exactly (x % access_width), scaled by cosize_tv.
+///  In a tiled copy, the atom contribution to each element's offset
+///  is exactly (x % access_width), scaled by cosize_tv.
 pub proof fn lemma_tiled_copy_atom_aligned(
     atom: &LayoutSpec, thr: &LayoutSpec, val: &LayoutSpec,
     access_width: nat, x: nat,
@@ -897,7 +897,7 @@ pub proof fn lemma_tiled_copy_atom_aligned(
     let sa = shape_size(atom.shape);
     assert(sa == access_width);
 
-    // x % sa < sa = access_width
+    //  x % sa < sa = access_width
     crate::proof::shape_lemmas::lemma_shape_size_positive(atom.shape);
     assert(sa > 0);
     assert(x % sa < sa) by (nonlinear_arith)
@@ -906,11 +906,11 @@ pub proof fn lemma_tiled_copy_atom_aligned(
     lemma_copy_atom_contiguous(atom, access_width, x % sa);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Slice prerequisite proofs for nested tiling (Phase 4b)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Slice prerequisite proofs for nested tiling (Phase 4b)
+//  ══════════════════════════════════════════════════════════════
 
-/// Slicing an injective layout at mode 0 preserves injectivity.
+///  Slicing an injective layout at mode 0 preserves injectivity.
 pub proof fn lemma_slice_injective_residual(
     layout: &LayoutSpec, c: nat,
 )
@@ -929,21 +929,21 @@ pub proof fn lemma_slice_injective_residual(
     crate::proof::slice_lemmas::lemma_slice_mode0(layout, c);
     assert(sl.shape =~= layout.shape.skip(1));
 
-    // sl is injective: for i != j < rest_size, sl.offset(i) != sl.offset(j)
+    //  sl is injective: for i != j < rest_size, sl.offset(i) != sl.offset(j)
     assert forall|i: nat, j: nat|
         i < shape_size(sl.shape) && j < shape_size(sl.shape) && i != j
     implies
         sl.offset(i) != sl.offset(j)
     by {
-        // Reconstruct full layout indices
+        //  Reconstruct full layout indices
         let x1 = i * m0 + c;
         let x2 = j * m0 + c;
 
-        // x1 != x2 since i != j
+        //  x1 != x2 since i != j
         assert(x1 != x2) by (nonlinear_arith)
             requires i != j, x1 == i * m0 + c, x2 == j * m0 + c, m0 > 0;
 
-        // Both < shape_size(layout.shape)
+        //  Both < shape_size(layout.shape)
         assert(shape_size(layout.shape) == m0 * rest_size);
         assert(x1 < shape_size(layout.shape)) by (nonlinear_arith)
             requires i < rest_size, c < m0, x1 == i * m0 + c,
@@ -952,22 +952,22 @@ pub proof fn lemma_slice_injective_residual(
             requires j < rest_size, c < m0, x2 == j * m0 + c,
                 shape_size(layout.shape) == m0 * rest_size, m0 > 0;
 
-        // By injectivity: layout.offset(x1) != layout.offset(x2)
+        //  By injectivity: layout.offset(x1) != layout.offset(x2)
         assert(layout.offset(x1) != layout.offset(x2));
 
-        // By reconstruction lemma
+        //  By reconstruction lemma
         lemma_slice_offset_reconstruction(layout, c, i);
         lemma_slice_offset_reconstruction(layout, c, j);
 
-        // layout.offset(x1) = slice_offset(c) + sl.offset(i)
-        // layout.offset(x2) = slice_offset(c) + sl.offset(j)
-        // Since layout.offset(x1) != layout.offset(x2),
-        // slice_offset(c) + sl.offset(i) != slice_offset(c) + sl.offset(j)
-        // => sl.offset(i) != sl.offset(j)
+        //  layout.offset(x1) = slice_offset(c) + sl.offset(i)
+        //  layout.offset(x2) = slice_offset(c) + sl.offset(j)
+        //  Since layout.offset(x1) != layout.offset(x2),
+        //  slice_offset(c) + sl.offset(i) != slice_offset(c) + sl.offset(j)
+        //  => sl.offset(i) != sl.offset(j)
     };
 }
 
-/// Slicing a layout with non-negative strides preserves non-negative strides.
+///  Slicing a layout with non-negative strides preserves non-negative strides.
 pub proof fn lemma_slice_non_negative_strides(
     layout: &LayoutSpec, c: nat,
 )
@@ -990,7 +990,7 @@ pub proof fn lemma_slice_non_negative_strides(
     };
 }
 
-/// Slicing at mode 0 gives size = shape_size(shape.skip(1)).
+///  Slicing at mode 0 gives size = shape_size(shape.skip(1)).
 pub proof fn lemma_slice_mode0_size(
     layout: &LayoutSpec, c: nat,
 )
@@ -1004,11 +1004,11 @@ pub proof fn lemma_slice_mode0_size(
     crate::proof::slice_lemmas::lemma_slice_mode0(layout, c);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Nested partition proofs (Phase 4c)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Nested partition proofs (Phase 4c)
+//  ══════════════════════════════════════════════════════════════
 
-/// Different outer IDs → disjoint nested offsets.
+///  Different outer IDs → disjoint nested offsets.
 pub proof fn lemma_nested_partition_disjoint_outer(
     layout: &LayoutSpec,
     t1: nat, t2: nat,
@@ -1022,7 +1022,7 @@ pub proof fn lemma_nested_partition_disjoint_outer(
         t1 < layout.shape[0],
         t2 < layout.shape[0],
         t1 != t2,
-        // r1 = slice(layout, 0, t1) has rank >= 1 since layout.rank() >= 2
+        //  r1 = slice(layout, 0, t1) has rank >= 1 since layout.rank() >= 2
         w1 < slice_layout(layout, 0, t1).shape[0],
         w2 < slice_layout(layout, 0, t2).shape[0],
         i < shape_size(slice_layout(&slice_layout(layout, 0, t1), 0, w1).shape),
@@ -1045,49 +1045,49 @@ pub proof fn lemma_nested_partition_disjoint_outer(
     assert(r2.shape =~= layout.shape.skip(1));
     assert(r1.rank() >= 1);
 
-    // Get inner slice info
+    //  Get inner slice info
     let inner1 = slice_layout(&r1, 0, w1);
     let inner2 = slice_layout(&r2, 0, w2);
 
     crate::proof::slice_lemmas::lemma_slice_valid(&r1, 0, w1);
     crate::proof::slice_lemmas::lemma_slice_valid(&r2, 0, w2);
 
-    // Reconstruct: nested offset = slice_offset(layout, 0, t) + slice_offset(r, 0, w) + inner.offset(k)
-    // = slice_offset(layout, 0, t) + r.offset(w * M_1_rest + inner_idx_in_r)
-    // We need to show these are within the full layout reconstruction...
+    //  Reconstruct: nested offset = slice_offset(layout, 0, t) + slice_offset(r, 0, w) + inner.offset(k)
+    //  = slice_offset(layout, 0, t) + r.offset(w * M_1_rest + inner_idx_in_r)
+    //  We need to show these are within the full layout reconstruction...
 
-    // Strategy: find full layout indices inner_x1, inner_x2 within the respective slices
-    // and use lemma_slice_disjoint on the outer level.
+    //  Strategy: find full layout indices inner_x1, inner_x2 within the respective slices
+    //  and use lemma_slice_disjoint on the outer level.
 
-    // r1.offset is within rest_size
-    // We need an index q1 < rest_size such that r1.offset(q1) = inner offset in r1
-    // Use coverage: for any element in r1, there's a (w1, local_i) decomposition
-    // But actually we can reconstruct directly:
+    //  r1.offset is within rest_size
+    //  We need an index q1 < rest_size such that r1.offset(q1) = inner offset in r1
+    //  Use coverage: for any element in r1, there's a (w1, local_i) decomposition
+    //  But actually we can reconstruct directly:
 
-    // inner1.offset(i) is an offset within r1 after slicing at w1
-    // slice_offset(r1, 0, w1) + inner1.offset(i) = r1.offset(some_q1)
-    // by lemma_slice_offset_reconstruction on r1
+    //  inner1.offset(i) is an offset within r1 after slicing at w1
+    //  slice_offset(r1, 0, w1) + inner1.offset(i) = r1.offset(some_q1)
+    //  by lemma_slice_offset_reconstruction on r1
 
-    // r1 has rank >= 1 and shape = layout.shape.skip(1)
-    let m1 = r1.shape[0];  // = layout.shape[1]
+    //  r1 has rank >= 1 and shape = layout.shape.skip(1)
+    let m1 = r1.shape[0];  //  = layout.shape[1]
 
-    // Find q1 = i * m1 + w1, then r1.offset(q1) = slice_offset(r1, 0, w1) + inner1.offset(i)
+    //  Find q1 = i * m1 + w1, then r1.offset(q1) = slice_offset(r1, 0, w1) + inner1.offset(i)
     crate::proof::slice_lemmas::lemma_slice_mode0(&r1, w1);
     let inner1_size = shape_size(r1.shape.skip(1));
     assert(i < inner1_size);
     lemma_slice_offset_reconstruction(&r1, w1, i);
     let q1 = i * m1 + w1;
 
-    // Same for q2
+    //  Same for q2
     let m2 = r2.shape[0];
-    assert(m2 == m1);  // same skip(1) shape
+    assert(m2 == m1);  //  same skip(1) shape
     crate::proof::slice_lemmas::lemma_slice_mode0(&r2, w2);
     let inner2_size = shape_size(r2.shape.skip(1));
     assert(j < inner2_size);
     lemma_slice_offset_reconstruction(&r2, w2, j);
     let q2 = j * m1 + w2;
 
-    // q1 < rest_size and q2 < rest_size
+    //  q1 < rest_size and q2 < rest_size
     assert(q1 < rest_size) by (nonlinear_arith)
         requires i < inner1_size, w1 < m1, q1 == i * m1 + w1,
             shape_size(r1.shape) == m1 * inner1_size, m1 > 0,
@@ -1097,17 +1097,17 @@ pub proof fn lemma_nested_partition_disjoint_outer(
             shape_size(r2.shape) == m1 * inner2_size, m1 > 0,
             rest_size == shape_size(r2.shape);
 
-    // Now use lemma_slice_disjoint on the outer level
+    //  Now use lemma_slice_disjoint on the outer level
     lemma_slice_disjoint(layout, t1, t2, q1, q2);
 
-    // This gives us:
-    // slice_offset(layout, 0, t1) + r1.offset(q1) != slice_offset(layout, 0, t2) + r2.offset(q2)
-    // And r1.offset(q1) = slice_offset(r1, 0, w1) + inner1.offset(i)
-    //     r2.offset(q2) = slice_offset(r2, 0, w2) + inner2.offset(j)
-    // So: (off_t1 + off_w1 + inner1.offset(i)) != (off_t2 + off_w2 + inner2.offset(j))
+    //  This gives us:
+    //  slice_offset(layout, 0, t1) + r1.offset(q1) != slice_offset(layout, 0, t2) + r2.offset(q2)
+    //  And r1.offset(q1) = slice_offset(r1, 0, w1) + inner1.offset(i)
+    //      r2.offset(q2) = slice_offset(r2, 0, w2) + inner2.offset(j)
+    //  So: (off_t1 + off_w1 + inner1.offset(i)) != (off_t2 + off_w2 + inner2.offset(j))
 }
 
-/// Same outer ID, different inner IDs → disjoint nested offsets.
+///  Same outer ID, different inner IDs → disjoint nested offsets.
 pub proof fn lemma_nested_partition_disjoint_inner(
     layout: &LayoutSpec,
     t: nat,
@@ -1136,27 +1136,27 @@ pub proof fn lemma_nested_partition_disjoint_inner(
     assert(r.shape =~= layout.shape.skip(1));
     assert(r.rank() >= 1);
 
-    // r is injective (by slice preserving injectivity)
+    //  r is injective (by slice preserving injectivity)
     lemma_slice_injective_residual(layout, t);
     assert(r.is_injective());
 
-    // Use slice_disjoint on r with w1 != w2
+    //  Use slice_disjoint on r with w1 != w2
     lemma_slice_disjoint(&r, w1, w2, i, j);
 
-    // This gives:
-    // slice_offset(r, 0, w1) + inner1.offset(i) != slice_offset(r, 0, w2) + inner2.offset(j)
-    // Adding slice_offset(layout, 0, t) to both sides preserves inequality:
-    // (off_t + off_w1 + inner1.offset(i)) != (off_t + off_w2 + inner2.offset(j))
+    //  This gives:
+    //  slice_offset(r, 0, w1) + inner1.offset(i) != slice_offset(r, 0, w2) + inner2.offset(j)
+    //  Adding slice_offset(layout, 0, t) to both sides preserves inequality:
+    //  (off_t + off_w1 + inner1.offset(i)) != (off_t + off_w2 + inner2.offset(j))
     let off_t = slice_offset(layout, 0, t);
     let off_w1 = slice_offset(&r, 0, w1);
     let off_w2 = slice_offset(&r, 0, w2);
     let inner1 = slice_layout(&r, 0, w1);
     let inner2 = slice_layout(&r, 0, w2);
     assert(off_w1 + inner1.offset(i) != off_w2 + inner2.offset(j));
-    // off_t + (off_w1 + inner1.offset(i)) != off_t + (off_w2 + inner2.offset(j))
+    //  off_t + (off_w1 + inner1.offset(i)) != off_t + (off_w2 + inner2.offset(j))
 }
 
-/// Full nested partition coverage: every element has a (t, w, k) decomposition.
+///  Full nested partition coverage: every element has a (t, w, k) decomposition.
 pub proof fn lemma_nested_partition_coverage(
     layout: &LayoutSpec, x: nat,
 )
@@ -1181,34 +1181,34 @@ pub proof fn lemma_nested_partition_coverage(
                + nested_local_partition(layout, t, w).0.offset(k)
     }),
 {
-    // First level: decompose x into (t, q)
+    //  First level: decompose x into (t, q)
     lemma_partition_coverage(layout, x);
     let m0 = layout.shape[0];
     let t = x % m0;
     let q = x / m0;
     let r = slice_layout(layout, 0, t);
 
-    // r is valid with rank >= 1
+    //  r is valid with rank >= 1
     crate::proof::slice_lemmas::lemma_slice_valid(layout, 0, t);
     crate::proof::slice_lemmas::lemma_slice_mode0(layout, t);
     assert(r.shape =~= layout.shape.skip(1));
     assert(r.rank() >= 1);
 
-    // Second level: decompose q within r
+    //  Second level: decompose q within r
     let rest_size = shape_size(layout.shape.skip(1));
     assert(q < rest_size);
     assert(q < shape_size(r.shape));
     lemma_partition_coverage(&r, q);
 
-    // This gives (w, k) where w = q % r.shape[0], k = q / r.shape[0]
-    // and r.offset(q) = slice_offset(r, 0, w) + slice_layout(r, 0, w).offset(k)
+    //  This gives (w, k) where w = q % r.shape[0], k = q / r.shape[0]
+    //  and r.offset(q) = slice_offset(r, 0, w) + slice_layout(r, 0, w).offset(k)
 
-    // From first level: layout.offset(x) = slice_offset(layout, 0, t) + r.offset(q)
-    // From second level: r.offset(q) = slice_offset(r, 0, w) + inner.offset(k)
-    // Combined: layout.offset(x) = off_t + off_w + inner.offset(k) = nested_local_partition.1 + inner.offset(k)
+    //  From first level: layout.offset(x) = slice_offset(layout, 0, t) + r.offset(q)
+    //  From second level: r.offset(q) = slice_offset(r, 0, w) + inner.offset(k)
+    //  Combined: layout.offset(x) = off_t + off_w + inner.offset(k) = nested_local_partition.1 + inner.offset(k)
 }
 
-/// Full disjointness: if (t1, w1) != (t2, w2), nested offsets are distinct.
+///  Full disjointness: if (t1, w1) != (t2, w2), nested offsets are distinct.
 pub proof fn lemma_nested_partition_full_disjoint(
     layout: &LayoutSpec,
     t1: nat, w1: nat, i: nat,
@@ -1234,16 +1234,16 @@ pub proof fn lemma_nested_partition_full_disjoint(
     if t1 != t2 {
         lemma_nested_partition_disjoint_outer(layout, t1, t2, w1, w2, i, j);
     } else {
-        // t1 == t2 and w1 != w2
+        //  t1 == t2 and w1 != w2
         lemma_nested_partition_disjoint_inner(layout, t1, w1, w2, i, j);
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// MMA atom proofs
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  MMA atom proofs
+//  ══════════════════════════════════════════════════════════════
 
-/// MMA atom layout is valid.
+///  MMA atom layout is valid.
 pub proof fn lemma_mma_atom_valid(thr: &LayoutSpec, val: &LayoutSpec)
     requires
         mma_atom_admissible(thr, val),
@@ -1253,7 +1253,7 @@ pub proof fn lemma_mma_atom_valid(thr: &LayoutSpec, val: &LayoutSpec)
     lemma_product_valid(thr, val);
 }
 
-/// MMA atom layout is injective.
+///  MMA atom layout is injective.
 pub proof fn lemma_mma_atom_injective(thr: &LayoutSpec, val: &LayoutSpec)
     requires
         mma_atom_admissible(thr, val),
@@ -1263,7 +1263,7 @@ pub proof fn lemma_mma_atom_injective(thr: &LayoutSpec, val: &LayoutSpec)
     lemma_product_injective(thr, val);
 }
 
-/// MMA atom layout size = thr.size() * val.size().
+///  MMA atom layout size = thr.size() * val.size().
 pub proof fn lemma_mma_atom_size(thr: &LayoutSpec, val: &LayoutSpec)
     requires
         mma_atom_admissible(thr, val),
@@ -1274,7 +1274,7 @@ pub proof fn lemma_mma_atom_size(thr: &LayoutSpec, val: &LayoutSpec)
     lemma_product_size(thr, val);
 }
 
-/// MMA atom bijectivity: if both thr and val are surjective onto their cosizes.
+///  MMA atom bijectivity: if both thr and val are surjective onto their cosizes.
 pub proof fn lemma_mma_atom_bijective(
     thr: &LayoutSpec, val: &LayoutSpec,
     m_thr: nat, m_val: nat,
@@ -1293,7 +1293,7 @@ pub proof fn lemma_mma_atom_bijective(
     lemma_product_bijective(thr, val, m_thr, m_val);
 }
 
-/// MMA tiled copy size = atom.size() * thr.size() * val.size().
+///  MMA tiled copy size = atom.size() * thr.size() * val.size().
 pub proof fn lemma_mma_tiled_copy_size(
     atom: &LayoutSpec, thr: &LayoutSpec, val: &LayoutSpec,
 )
@@ -1306,13 +1306,13 @@ pub proof fn lemma_mma_tiled_copy_size(
     let tv = logical_product(thr, val);
     lemma_product_size(thr, val);
     lemma_raked_product_size(atom, &tv);
-    // raked_product size = atom.size() * tv.size() = atom.size() * (thr.size() * val.size())
+    //  raked_product size = atom.size() * tv.size() = atom.size() * (thr.size() * val.size())
     vstd::arithmetic::mul::lemma_mul_is_associative(
         atom.size() as int, thr.size() as int, val.size() as int,
     );
 }
 
-/// MMA tiled copy is injective.
+///  MMA tiled copy is injective.
 pub proof fn lemma_mma_tiled_copy_injective(
     atom: &LayoutSpec, thr: &LayoutSpec, val: &LayoutSpec,
 )
@@ -1327,17 +1327,17 @@ pub proof fn lemma_mma_tiled_copy_injective(
         mma_tiled_copy(atom, thr, val).is_injective(),
 {
     let tv = logical_product(thr, val);
-    // tv is injective (product_admissible needs thr.non_negative_strides + thr.shape.len > 0)
+    //  tv is injective (product_admissible needs thr.non_negative_strides + thr.shape.len > 0)
     lemma_product_injective(thr, val);
-    // raked_product(atom, tv) is injective
+    //  raked_product(atom, tv) is injective
     lemma_raked_product_injective(atom, &tv);
 }
 
-// ══════════════════════════════════════════════════════════════
-// GEMM tiling proofs
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  GEMM tiling proofs
+//  ══════════════════════════════════════════════════════════════
 
-/// All three GEMM partitions produce valid DividedLayouts.
+///  All three GEMM partitions produce valid DividedLayouts.
 pub proof fn lemma_gemm_partition_valid(
     m_size: nat, n_size: nat, k_size: nat,
     bm: nat, bn: nat, bk: nat,
@@ -1354,7 +1354,7 @@ pub proof fn lemma_gemm_partition_valid(
     lemma_predicated_divide_valid(k_size, bk);
 }
 
-/// Every M-coordinate is covered by some CTA tile.
+///  Every M-coordinate is covered by some CTA tile.
 pub proof fn lemma_gemm_m_coverage(m_size: nat, bm: nat, x: nat)
     requires
         padded_divide_admissible(m_size, bm),
@@ -1369,12 +1369,12 @@ pub proof fn lemma_gemm_m_coverage(m_size: nat, bm: nat, x: nat)
 {
     crate::proof::predication_lemmas::lemma_tile_for_index_bound(x, bm, m_size);
     crate::proof::predication_lemmas::lemma_elem_in_tile_bound(x, bm);
-    // cta_m * bm + elem_m == x by fundamental theorem of division
+    //  cta_m * bm + elem_m == x by fundamental theorem of division
     vstd::arithmetic::div_mod::lemma_fundamental_div_mod(x as int, bm as int);
     vstd::arithmetic::mul::lemma_mul_is_commutative(bm as int, (x / bm) as int);
 }
 
-/// Different M-tiles produce different M-indices (disjointness).
+///  Different M-tiles produce different M-indices (disjointness).
 pub proof fn lemma_gemm_cta_disjoint_m(
     bm: nat,
     cta1: nat, cta2: nat,
@@ -1393,7 +1393,7 @@ pub proof fn lemma_gemm_cta_disjoint_m(
     );
 }
 
-/// Different CTAs (in either M or N dimension) produce different output elements.
+///  Different CTAs (in either M or N dimension) produce different output elements.
 pub proof fn lemma_gemm_cta_disjoint_mn(
     bm: nat, bn: nat,
     cm1: nat, cn1: nat, em1: nat, en1: nat,
@@ -1413,14 +1413,14 @@ pub proof fn lemma_gemm_cta_disjoint_mn(
             bm, cm1, em1, cm2, em2,
         );
     } else {
-        // cm1 == cm2, so cn1 != cn2
+        //  cm1 == cm2, so cn1 != cn2
         crate::proof::predication_lemmas::lemma_predicated_no_double_count(
             bn, cn1, en1, cn2, en2,
         );
     }
 }
 
-/// All K elements are covered: sum of valid counts == k_size.
+///  All K elements are covered: sum of valid counts == k_size.
 pub proof fn lemma_gemm_k_reduction_coverage(k_size: nat, bk: nat)
     requires
         padded_divide_admissible(k_size, bk),
@@ -1430,7 +1430,7 @@ pub proof fn lemma_gemm_k_reduction_coverage(k_size: nat, bk: nat)
     crate::proof::predication_lemmas::lemma_total_valid_elements(k_size, bk);
 }
 
-/// K-tile offset is the identity: offset(x) == x.
+///  K-tile offset is the identity: offset(x) == x.
 pub proof fn lemma_gemm_k_tile_identity(k_size: nat, bk: nat, x: nat)
     requires
         padded_divide_admissible(k_size, bk),
@@ -1441,7 +1441,7 @@ pub proof fn lemma_gemm_k_tile_identity(k_size: nat, bk: nat, x: nat)
     lemma_predicated_divide_offset_identity(k_size, bk, x);
 }
 
-/// Total number of CTAs = num_tiles_ceil(m) * num_tiles_ceil(n).
+///  Total number of CTAs = num_tiles_ceil(m) * num_tiles_ceil(n).
 pub proof fn lemma_gemm_cta_count(m_size: nat, n_size: nat, bm: nat, bn: nat)
     requires
         padded_divide_admissible(m_size, bm),
@@ -1450,14 +1450,14 @@ pub proof fn lemma_gemm_cta_count(m_size: nat, n_size: nat, bm: nat, bn: nat)
         num_tiles_ceil(m_size, bm) * num_tiles_ceil(n_size, bn)
             == num_tiles_ceil(m_size, bm) * num_tiles_ceil(n_size, bn),
 {
-    // Definitional — this is a tautology proving the count formula is well-defined.
+    //  Definitional — this is a tautology proving the count formula is well-defined.
 }
 
-// ══════════════════════════════════════════════════════════════
-// SM80 MMA atom instance proofs (Feature 4)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  SM80 MMA atom instance proofs (Feature 4)
+//  ══════════════════════════════════════════════════════════════
 
-/// Helper: shape_size of a 2-element shape.
+///  Helper: shape_size of a 2-element shape.
 pub proof fn lemma_shape_size_2(a: nat, b: nat)
     requires a > 0, b > 0,
     ensures shape_size(seq![a, b]) == a * b,
@@ -1467,7 +1467,7 @@ pub proof fn lemma_shape_size_2(a: nat, b: nat)
     lemma_shape_size_singleton(b);
 }
 
-/// Helper: for a rank-2 layout, offset(x) = coords[0]*stride[0] + coords[1]*stride[1].
+///  Helper: for a rank-2 layout, offset(x) = coords[0]*stride[0] + coords[1]*stride[1].
 pub proof fn lemma_offset_rank2(layout: &LayoutSpec, x: nat)
     requires
         layout.valid(),
@@ -1481,13 +1481,13 @@ pub proof fn lemma_offset_rank2(layout: &LayoutSpec, x: nat)
     let coords = delinearize(x, layout.shape);
     lemma_delinearize_len(x, layout.shape);
 
-    // Unfold dot product: dot(coords, stride) = coords[0]*stride[0] + dot(coords.skip(1), stride.skip(1))
+    //  Unfold dot product: dot(coords, stride) = coords[0]*stride[0] + dot(coords.skip(1), stride.skip(1))
     assert(coords.len() == 2);
     let skip1_c = coords.skip(1);
     let skip1_s = layout.stride.skip(1);
     assert(skip1_c.len() == 1);
 
-    // dot(skip1_c, skip1_s) = skip1_c[0]*skip1_s[0] + dot(empty, empty) = coords[1]*stride[1]
+    //  dot(skip1_c, skip1_s) = skip1_c[0]*skip1_s[0] + dot(empty, empty) = coords[1]*stride[1]
     assert(skip1_c.first() == coords[1]);
     assert(skip1_s.first() == layout.stride[1]);
     assert(skip1_c.skip(1) =~= Seq::<nat>::empty());
@@ -1495,12 +1495,12 @@ pub proof fn lemma_offset_rank2(layout: &LayoutSpec, x: nat)
     assert(dot_product_nat_int(Seq::<nat>::empty(), Seq::<int>::empty()) == 0int);
     assert(dot_product_nat_int(skip1_c, skip1_s) == (coords[1] as int) * layout.stride[1]);
 
-    // Full dot product
+    //  Full dot product
     assert(dot_product_nat_int(coords, layout.stride) ==
         (coords[0] as int) * layout.stride[0] + dot_product_nat_int(skip1_c, skip1_s));
 }
 
-/// SM80 m16n8k16 A-fragment thread layout is valid and injective.
+///  SM80 m16n8k16 A-fragment thread layout is valid and injective.
 pub proof fn lemma_sm80_m16n8k16_a_valid()
     ensures
         mma_atom_admissible(&sm80_m16n8k16_thr_a(), &sm80_m16n8k16_val_a()),
@@ -1510,31 +1510,31 @@ pub proof fn lemma_sm80_m16n8k16_a_valid()
     let thr = sm80_m16n8k16_thr_a();
     let val = sm80_m16n8k16_val_a();
 
-    // Valid
+    //  Valid
     assert(thr.valid());
     assert(val.valid());
 
-    // Non-negative strides
+    //  Non-negative strides
     assert(thr.non_negative_strides());
     assert(val.non_negative_strides());
 
-    // Sizes
+    //  Sizes
     lemma_shape_size_2(4, 8);
     assert(thr.size() == 32);
     lemma_shape_size_2(2, 4);
     assert(val.size() == 8);
 
-    // shape.len() > 0
+    //  shape.len() > 0
     assert(thr.shape.len() > 0);
 
-    // Injectivity: thr has strides (2, 16) with shape (4, 8)
-    // offset(x) = (x%4)*2 + (x/4)%8*16 — distinct for distinct x < 32
-    // All offsets are in [0, 128), and cosize = 3*2 + 7*16 + 1 = 6 + 112 + 1 = 119...
-    // Actually: thr injectivity by column-major-like argument
-    // product(thr) maps to distinct offsets because strides satisfy stride[1] >= shape[0] * stride[0]
-    // stride[1] = 16 >= 4*2 = 8 — but 16 > 8, so it's not column-major, it's still injective
-    // The layout is injective iff for distinct (c0, c1) pairs, c0*2 + c1*16 are distinct
-    // With c0 in [0,4), max c0*2 = 6 < 16 = min nonzero c1*16, so they separate by digit
+    //  Injectivity: thr has strides (2, 16) with shape (4, 8)
+    //  offset(x) = (x%4)*2 + (x/4)%8*16 — distinct for distinct x < 32
+    //  All offsets are in [0, 128), and cosize = 3*2 + 7*16 + 1 = 6 + 112 + 1 = 119...
+    //  Actually: thr injectivity by column-major-like argument
+    //  product(thr) maps to distinct offsets because strides satisfy stride[1] >= shape[0] * stride[0]
+    //  stride[1] = 16 >= 4*2 = 8 — but 16 > 8, so it's not column-major, it's still injective
+    //  The layout is injective iff for distinct (c0, c1) pairs, c0*2 + c1*16 are distinct
+    //  With c0 in [0,4), max c0*2 = 6 < 16 = min nonzero c1*16, so they separate by digit
     assert forall|i: nat, j: nat|
         i < thr.size() && j < thr.size() && i != j
     implies
@@ -1547,30 +1547,30 @@ pub proof fn lemma_sm80_m16n8k16_a_valid()
         lemma_delinearize_len(i, thr.shape);
         lemma_delinearize_len(j, thr.shape);
 
-        // ci[0] in [0,4), ci[1] in [0,8)
-        // offset = ci[0]*2 + ci[1]*16
-        // If ci != cj (as sequences), then either ci[0] != cj[0] or ci[1] != cj[1]
-        // ci[0]*2 is in {0,2,4,6}, ci[1]*16 is in {0,16,32,...,112}
-        // The ranges don't overlap: max ci[0]*2 = 6 < 16 = min nonzero ci[1]*16
-        // So distinct (ci[0], ci[1]) → distinct offset (base-8 digit argument with gaps)
+        //  ci[0] in [0,4), ci[1] in [0,8)
+        //  offset = ci[0]*2 + ci[1]*16
+        //  If ci != cj (as sequences), then either ci[0] != cj[0] or ci[1] != cj[1]
+        //  ci[0]*2 is in {0,2,4,6}, ci[1]*16 is in {0,16,32,...,112}
+        //  The ranges don't overlap: max ci[0]*2 = 6 < 16 = min nonzero ci[1]*16
+        //  So distinct (ci[0], ci[1]) → distinct offset (base-8 digit argument with gaps)
 
-        // First show ci != cj
+        //  First show ci != cj
         if ci[0] == cj[0] && ci[1] == cj[1] {
-            // Then delinearize(i, shape) =~= delinearize(j, shape)
-            // Which means i == j by injectivity of delinearize
+            //  Then delinearize(i, shape) =~= delinearize(j, shape)
+            //  Which means i == j by injectivity of delinearize
             assert(ci =~= cj);
             lemma_delinearize_roundtrip(i, thr.shape);
             lemma_delinearize_roundtrip(j, thr.shape);
             assert(false);
         }
 
-        // Now show offsets differ
-        // offset_i = ci[0]*2 + ci[1]*16
-        // offset_j = cj[0]*2 + cj[1]*16
-        // diff = (ci[0]-cj[0])*2 + (ci[1]-cj[1])*16
-        // |ci[0]-cj[0]| <= 3, so |(ci[0]-cj[0])*2| <= 6 < 16
-        // If ci[1] != cj[1], |diff| >= 16 - 6 = 10 > 0
-        // If ci[1] == cj[1] but ci[0] != cj[0], diff = (ci[0]-cj[0])*2 != 0
+        //  Now show offsets differ
+        //  offset_i = ci[0]*2 + ci[1]*16
+        //  offset_j = cj[0]*2 + cj[1]*16
+        //  diff = (ci[0]-cj[0])*2 + (ci[1]-cj[1])*16
+        //  |ci[0]-cj[0]| <= 3, so |(ci[0]-cj[0])*2| <= 6 < 16
+        //  If ci[1] != cj[1], |diff| >= 16 - 6 = 10 > 0
+        //  If ci[1] == cj[1] but ci[0] != cj[0], diff = (ci[0]-cj[0])*2 != 0
         lemma_offset_rank2(&thr, i);
         lemma_offset_rank2(&thr, j);
         let oi = (ci[0] as int) * 2 + (ci[1] as int) * 16;
@@ -1586,7 +1586,7 @@ pub proof fn lemma_sm80_m16n8k16_a_valid()
                 oj == (cj[0] as int) * 2 + (cj[1] as int) * 16;
     };
 
-    // val injectivity: strides (1, 4) with shape (2, 4)
+    //  val injectivity: strides (1, 4) with shape (2, 4)
     assert forall|i: nat, j: nat|
         i < val.size() && j < val.size() && i != j
     implies
@@ -1622,7 +1622,7 @@ pub proof fn lemma_sm80_m16n8k16_a_valid()
     };
 }
 
-/// SM80 m16n8k16 B-fragment is admissible.
+///  SM80 m16n8k16 B-fragment is admissible.
 pub proof fn lemma_sm80_m16n8k16_b_valid()
     ensures
         mma_atom_admissible(&sm80_m16n8k16_thr_b(), &sm80_m16n8k16_val_b()),
@@ -1644,7 +1644,7 @@ pub proof fn lemma_sm80_m16n8k16_b_valid()
 
     assert(thr.shape.len() > 0);
 
-    // Injectivity for thr: same as A (identical layout)
+    //  Injectivity for thr: same as A (identical layout)
     assert forall|i: nat, j: nat|
         i < thr.size() && j < thr.size() && i != j
     implies
@@ -1679,7 +1679,7 @@ pub proof fn lemma_sm80_m16n8k16_b_valid()
                 oj == (cj[0] as int) * 2 + (cj[1] as int) * 16;
     };
 
-    // val injectivity: strides (1, 8) with shape (2, 2)
+    //  val injectivity: strides (1, 8) with shape (2, 2)
     assert forall|i: nat, j: nat|
         i < val.size() && j < val.size() && i != j
     implies
@@ -1715,18 +1715,18 @@ pub proof fn lemma_sm80_m16n8k16_b_valid()
     };
 }
 
-/// SM80 m16n8k16 D-fragment (accumulator) is admissible.
+///  SM80 m16n8k16 D-fragment (accumulator) is admissible.
 pub proof fn lemma_sm80_m16n8k16_d_valid()
     ensures
         mma_atom_admissible(&sm80_m16n8k16_thr_d(), &sm80_m16n8k16_val_d()),
         sm80_m16n8k16_thr_d().size() == 32,
         sm80_m16n8k16_val_d().size() == 4,
 {
-    // D layout is identical to B layout
+    //  D layout is identical to B layout
     lemma_sm80_m16n8k16_b_valid();
 }
 
-/// SM80 m16n8k16 A-fragment MMA atom layout has size 256.
+///  SM80 m16n8k16 A-fragment MMA atom layout has size 256.
 pub proof fn lemma_sm80_m16n8k16_a_size()
     ensures
         mma_atom_layout(
@@ -1736,10 +1736,10 @@ pub proof fn lemma_sm80_m16n8k16_a_size()
 {
     lemma_sm80_m16n8k16_a_valid();
     lemma_mma_atom_size(&sm80_m16n8k16_thr_a(), &sm80_m16n8k16_val_a());
-    // 32 * 8 == 256
+    //  32 * 8 == 256
 }
 
-/// SM80 m16n8k16 B-fragment MMA atom layout has size 128.
+///  SM80 m16n8k16 B-fragment MMA atom layout has size 128.
 pub proof fn lemma_sm80_m16n8k16_b_size()
     ensures
         mma_atom_layout(
@@ -1749,10 +1749,10 @@ pub proof fn lemma_sm80_m16n8k16_b_size()
 {
     lemma_sm80_m16n8k16_b_valid();
     lemma_mma_atom_size(&sm80_m16n8k16_thr_b(), &sm80_m16n8k16_val_b());
-    // 32 * 4 == 128
+    //  32 * 4 == 128
 }
 
-/// SM80 m16n8k16 D-fragment MMA atom layout has size 128.
+///  SM80 m16n8k16 D-fragment MMA atom layout has size 128.
 pub proof fn lemma_sm80_m16n8k16_d_size()
     ensures
         mma_atom_layout(
@@ -1764,11 +1764,11 @@ pub proof fn lemma_sm80_m16n8k16_d_size()
     lemma_mma_atom_size(&sm80_m16n8k16_thr_d(), &sm80_m16n8k16_val_d());
 }
 
-// ══════════════════════════════════════════════════════════════
-// Deeper GEMM pipeline proofs (Feature 2)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Deeper GEMM pipeline proofs (Feature 2)
+//  ══════════════════════════════════════════════════════════════
 
-/// Warp partition produces a valid DividedLayout.
+///  Warp partition produces a valid DividedLayout.
 pub proof fn lemma_warp_partition_valid(
     cta_tile: &DividedLayout,
     warp_layout: &LayoutSpec,
@@ -1783,7 +1783,7 @@ pub proof fn lemma_warp_partition_valid(
     lemma_divide_rank(&cta_tile.layout, warp_layout);
 }
 
-/// Warp partition preserves total size: wp.layout.size() == cta_tile.layout.size().
+///  Warp partition preserves total size: wp.layout.size() == cta_tile.layout.size().
 pub proof fn lemma_warp_partition_size(
     cta_tile: &DividedLayout,
     warp_layout: &LayoutSpec,
@@ -1797,8 +1797,8 @@ pub proof fn lemma_warp_partition_size(
     crate::proof::divide_lemmas::lemma_divide_size(&cta_tile.layout, warp_layout);
 }
 
-/// Elements per warp * num warps == CTA tile total size.
-/// tile_size(wp) * num_tiles_divided(wp) == wp.layout.size() == cta.layout.size().
+///  Elements per warp * num warps == CTA tile total size.
+///  tile_size(wp) * num_tiles_divided(wp) == wp.layout.size() == cta.layout.size().
 pub proof fn lemma_warp_elements_times_warps(
     cta_tile: &DividedLayout,
     warp_layout: &LayoutSpec,
@@ -1814,18 +1814,18 @@ pub proof fn lemma_warp_elements_times_warps(
     let wp = warp_partition(cta_tile, warp_layout);
     lemma_warp_partition_valid(cta_tile, warp_layout);
     lemma_warp_partition_size(cta_tile, warp_layout);
-    // wp.layout.size() == size(tile_shape ++ rest_shape) == size(tile_shape) * size(rest_shape)
-    // = tile_size(wp) * num_tiles_divided(wp)
+    //  wp.layout.size() == size(tile_shape ++ rest_shape) == size(tile_shape) * size(rest_shape)
+    //  = tile_size(wp) * num_tiles_divided(wp)
     let s = wp.layout.shape;
     let k = wp.tile_rank;
     assert(tile_shape(&wp) =~= s.take(k as int));
     assert(rest_shape(&wp) =~= s.skip(k as int));
-    // Need shape_valid for shape_size_split
+    //  Need shape_valid for shape_size_split
     assert(wp.layout.valid());
     crate::runtime::shape_helpers::lemma_shape_size_split(s, k);
 }
 
-/// Nested partition produces a valid residual layout.
+///  Nested partition produces a valid residual layout.
 pub proof fn lemma_nested_partition_valid(
     tensor: &LayoutSpec,
     id1: nat, id2: nat,
@@ -1846,7 +1846,7 @@ pub proof fn lemma_nested_partition_valid(
     crate::proof::slice_lemmas::lemma_slice_valid(&r, 0, id2);
 }
 
-/// Nested partition offset is non-negative (when strides are non-negative).
+///  Nested partition offset is non-negative (when strides are non-negative).
 pub proof fn lemma_nested_partition_offset_nonneg(
     tensor: &LayoutSpec,
     id1: nat, id2: nat,
@@ -1860,7 +1860,7 @@ pub proof fn lemma_nested_partition_offset_nonneg(
     ensures
         nested_local_partition(tensor, id1, id2).1 >= 0,
 {
-    // off1 = slice_offset(tensor, 0, id1) = id1 * stride[0] >= 0
+    //  off1 = slice_offset(tensor, 0, id1) = id1 * stride[0] >= 0
     crate::proof::slice_lemmas::lemma_slice_mode0(tensor, id1);
     let off1 = slice_offset(tensor, 0, id1);
     assert(off1 == (id1 as int) * tensor.stride[0]);
@@ -1868,7 +1868,7 @@ pub proof fn lemma_nested_partition_offset_nonneg(
     assert(off1 >= 0) by (nonlinear_arith)
         requires id1 >= 0nat, tensor.stride[0] >= 0int, off1 == (id1 as int) * tensor.stride[0];
 
-    // off2 = slice_offset(r, 0, id2) = id2 * r.stride[0] >= 0
+    //  off2 = slice_offset(r, 0, id2) = id2 * r.stride[0] >= 0
     let r = slice_layout(tensor, 0, id1);
     crate::proof::slice_lemmas::lemma_slice_mode0(&r, id2);
     lemma_slice_non_negative_strides(tensor, id1);
@@ -1879,7 +1879,7 @@ pub proof fn lemma_nested_partition_offset_nonneg(
         requires id2 >= 0nat, r.stride[0] >= 0int, off2 == (id2 as int) * r.stride[0];
 }
 
-/// Register partition produces a valid DividedLayout.
+///  Register partition produces a valid DividedLayout.
 pub proof fn lemma_register_partition_valid(
     warp_tile: &DividedLayout,
     mma_atom: &LayoutSpec,
@@ -1894,7 +1894,7 @@ pub proof fn lemma_register_partition_valid(
     lemma_divide_rank(&warp_tile.layout, mma_atom);
 }
 
-/// Double buffer slot is bounded by num_buffers.
+///  Double buffer slot is bounded by num_buffers.
 pub proof fn lemma_double_buffer_bounded(k_iter: nat, num_buffers: nat)
     requires num_buffers > 0,
     ensures double_buffer_slot(k_iter, num_buffers) < num_buffers,
@@ -1903,27 +1903,27 @@ pub proof fn lemma_double_buffer_bounded(k_iter: nat, num_buffers: nat)
         requires num_buffers > 0nat;
 }
 
-/// Consecutive K-iterations use different buffer slots when num_buffers >= 2.
+///  Consecutive K-iterations use different buffer slots when num_buffers >= 2.
 pub proof fn lemma_double_buffer_alternates(k_iter: nat, num_buffers: nat)
     requires num_buffers >= 2,
     ensures double_buffer_slot(k_iter, num_buffers) != double_buffer_slot(k_iter + 1, num_buffers),
 {
-    // k % n != (k+1) % n when n >= 2
-    // Proof: if k % n == (k+1) % n, then ((k+1) - k) % n == 0, i.e., 1 % n == 0.
-    // But 1 % n == 1 for n >= 2. Contradiction.
+    //  k % n != (k+1) % n when n >= 2
+    //  Proof: if k % n == (k+1) % n, then ((k+1) - k) % n == 0, i.e., 1 % n == 0.
+    //  But 1 % n == 1 for n >= 2. Contradiction.
     let a = k_iter % num_buffers;
     let b = (k_iter + 1) % num_buffers;
 
     if a == b {
-        // (k+1) % n - k % n ≡ 1 (mod n)
-        // But if a == b, then the difference is 0 (mod n)
-        // 1 % n == 1 for n >= 2
+        //  (k+1) % n - k % n ≡ 1 (mod n)
+        //  But if a == b, then the difference is 0 (mod n)
+        //  1 % n == 1 for n >= 2
         assert(1nat % num_buffers == 1nat) by (nonlinear_arith)
             requires num_buffers >= 2nat;
 
-        // (k+1) = k + 1, so (k+1) % n = (k % n + 1) % n
-        // If k % n + 1 < n: (k+1) % n = k % n + 1 ≠ k % n
-        // If k % n + 1 == n: (k+1) % n = 0 ≠ k % n (since k % n = n-1 ≥ 1)
+        //  (k+1) = k + 1, so (k+1) % n = (k % n + 1) % n
+        //  If k % n + 1 < n: (k+1) % n = k % n + 1 ≠ k % n
+        //  If k % n + 1 == n: (k+1) % n = 0 ≠ k % n (since k % n = n-1 ≥ 1)
         if a + 1 < num_buffers {
             assert((k_iter + 1) % num_buffers == a + 1) by (nonlinear_arith)
                 requires
@@ -1945,9 +1945,9 @@ pub proof fn lemma_double_buffer_alternates(k_iter: nat, num_buffers: nat)
     }
 }
 
-/// Three-level disjointness: elements assigned to distinct (warp, register) pairs are disjoint.
+///  Three-level disjointness: elements assigned to distinct (warp, register) pairs are disjoint.
 ///
-/// If w1 != w2, uses warp-level disjointness. If w1 == w2 but r1 != r2, uses register disjointness.
+///  If w1 != w2, uses warp-level disjointness. If w1 == w2 but r1 != r2, uses register disjointness.
 pub proof fn lemma_three_level_disjoint(
     layout: &LayoutSpec,
     w1: nat, r1: nat, i: nat,
@@ -1973,11 +1973,11 @@ pub proof fn lemma_three_level_disjoint(
     lemma_nested_partition_full_disjoint(layout, w1, r1, i, w2, r2, j);
 }
 
-// ══════════════════════════════════════════════════════════════
-// SM80 MMA Atom Cosize Proofs (Feature 1 Round 2)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  SM80 MMA Atom Cosize Proofs (Feature 1 Round 2)
+//  ══════════════════════════════════════════════════════════════
 
-/// Helper: cosize of a rank-2 layout with non-negative strides.
+///  Helper: cosize of a rank-2 layout with non-negative strides.
 proof fn lemma_cosize_rank2(layout: LayoutSpec)
     requires
         layout.valid(),
@@ -1989,10 +1989,10 @@ proof fn lemma_cosize_rank2(layout: LayoutSpec)
              + (layout.shape[1] - 1) * (layout.stride[1] as nat)
              + 1) as nat,
 {
-    // Unfold cosize_nonneg for rank-2:
-    // cosize = (shape[0]-1)*stride[0] + rest.cosize_nonneg
-    // rest = {shape: [shape[1]], stride: [stride[1]]}
-    // rest.cosize_nonneg = (shape[1]-1)*stride[1] + 1
+    //  Unfold cosize_nonneg for rank-2:
+    //  cosize = (shape[0]-1)*stride[0] + rest.cosize_nonneg
+    //  rest = {shape: [shape[1]], stride: [stride[1]]}
+    //  rest.cosize_nonneg = (shape[1]-1)*stride[1] + 1
     let rest = LayoutSpec {
         shape: layout.shape.skip(1),
         stride: layout.stride.skip(1),
@@ -2001,7 +2001,7 @@ proof fn lemma_cosize_rank2(layout: LayoutSpec)
     assert(rest.stride =~= seq![layout.stride[1]]);
     assert(rest.shape.len() == 1);
 
-    // rest inner = {shape: [], stride: []}
+    //  rest inner = {shape: [], stride: []}
     let inner = LayoutSpec {
         shape: rest.shape.skip(1),
         stride: rest.stride.skip(1),
@@ -2010,12 +2010,12 @@ proof fn lemma_cosize_rank2(layout: LayoutSpec)
     assert(inner.shape.len() == 0);
     assert(inner.cosize_nonneg() == 1nat);
 
-    // rest.cosize = (shape[1]-1)*stride[1] + 1
+    //  rest.cosize = (shape[1]-1)*stride[1] + 1
     assert(rest.cosize_nonneg() ==
         ((rest.shape.first() - 1) * (rest.stride.first() as nat) + inner.cosize_nonneg()) as nat);
 }
 
-/// SM80 thr cosize = 119. (4-1)*2 + (8-1)*16 + 1 = 6+112+1.
+///  SM80 thr cosize = 119. (4-1)*2 + (8-1)*16 + 1 = 6+112+1.
 pub proof fn lemma_sm80_thr_cosize()
     ensures sm80_m16n8k16_thr_a().cosize_nonneg() == 119,
 {
@@ -2027,11 +2027,11 @@ pub proof fn lemma_sm80_thr_cosize()
     assert(thr.stride[1] == 16int);
     assert(thr.stride[0] as nat == 2nat);
     assert(thr.stride[1] as nat == 16nat);
-    // (4-1)*2 + (8-1)*16 + 1 = 6 + 112 + 1 = 119
+    //  (4-1)*2 + (8-1)*16 + 1 = 6 + 112 + 1 = 119
     assert(((4nat - 1) * 2nat + (8nat - 1) * 16nat + 1) as nat == 119nat);
 }
 
-/// SM80 val_a cosize = 14. (2-1)*1 + (4-1)*4 + 1 = 1+12+1.
+///  SM80 val_a cosize = 14. (2-1)*1 + (4-1)*4 + 1 = 1+12+1.
 pub proof fn lemma_sm80_val_a_cosize()
     ensures sm80_m16n8k16_val_a().cosize_nonneg() == 14,
 {
@@ -2045,7 +2045,7 @@ pub proof fn lemma_sm80_val_a_cosize()
     assert(val.stride[1] as nat == 4nat);
 }
 
-/// SM80 val_b cosize = 10. (2-1)*1 + (2-1)*8 + 1 = 1+8+1.
+///  SM80 val_b cosize = 10. (2-1)*1 + (2-1)*8 + 1 = 1+8+1.
 pub proof fn lemma_sm80_val_b_cosize()
     ensures sm80_m16n8k16_val_b().cosize_nonneg() == 10,
 {
@@ -2059,15 +2059,15 @@ pub proof fn lemma_sm80_val_b_cosize()
     assert(val.stride[1] as nat == 8nat);
 }
 
-/// SM80 val_d cosize = 10. Same layout as B.
+///  SM80 val_d cosize = 10. Same layout as B.
 pub proof fn lemma_sm80_val_d_cosize()
     ensures sm80_m16n8k16_val_d().cosize_nonneg() == 10,
 {
-    // D layout is identical to B layout
+    //  D layout is identical to B layout
     lemma_sm80_val_b_cosize();
 }
 
-/// MMA atom A cosize = thr_cosize * val_cosize = 119 * 14 = 1666.
+///  MMA atom A cosize = thr_cosize * val_cosize = 119 * 14 = 1666.
 pub proof fn lemma_sm80_a_atom_cosize()
     ensures
         mma_atom_layout(
@@ -2081,10 +2081,10 @@ pub proof fn lemma_sm80_a_atom_cosize()
     lemma_sm80_thr_cosize();
     lemma_sm80_val_a_cosize();
     crate::proof::product_lemmas::lemma_product_cosize(&thr, &val);
-    // cosize(product(thr, val)) == cosize(thr) * cosize(val) == 119 * 14 == 1666
+    //  cosize(product(thr, val)) == cosize(thr) * cosize(val) == 119 * 14 == 1666
 }
 
-/// MMA atom B cosize = 119 * 10 = 1190.
+///  MMA atom B cosize = 119 * 10 = 1190.
 pub proof fn lemma_sm80_b_atom_cosize()
     ensures
         mma_atom_layout(
@@ -2095,10 +2095,10 @@ pub proof fn lemma_sm80_b_atom_cosize()
     let thr = sm80_m16n8k16_thr_b();
     let val = sm80_m16n8k16_val_b();
     lemma_sm80_m16n8k16_b_valid();
-    // thr_b has same layout as thr_a
+    //  thr_b has same layout as thr_a
     lemma_sm80_thr_cosize();
     lemma_sm80_val_b_cosize();
-    // Need thr_b cosize == thr_a cosize since they have identical layouts
+    //  Need thr_b cosize == thr_a cosize since they have identical layouts
     assert(thr.cosize_nonneg() == sm80_m16n8k16_thr_a().cosize_nonneg()) by {
         assert(thr.shape =~= sm80_m16n8k16_thr_a().shape);
         assert(thr.stride =~= sm80_m16n8k16_thr_a().stride);
@@ -2106,7 +2106,7 @@ pub proof fn lemma_sm80_b_atom_cosize()
     crate::proof::product_lemmas::lemma_product_cosize(&thr, &val);
 }
 
-/// MMA atom D cosize = 119 * 10 = 1190.
+///  MMA atom D cosize = 119 * 10 = 1190.
 pub proof fn lemma_sm80_d_atom_cosize()
     ensures
         mma_atom_layout(
@@ -2114,7 +2114,7 @@ pub proof fn lemma_sm80_d_atom_cosize()
             sm80_m16n8k16_val_d().shape, sm80_m16n8k16_val_d().stride,
         ).cosize_nonneg() == 1190,
 {
-    // D layout is identical to B layout
+    //  D layout is identical to B layout
     lemma_sm80_b_atom_cosize();
     assert(sm80_m16n8k16_thr_d().shape =~= sm80_m16n8k16_thr_b().shape);
     assert(sm80_m16n8k16_thr_d().stride =~= sm80_m16n8k16_thr_b().stride);
@@ -2122,7 +2122,7 @@ pub proof fn lemma_sm80_d_atom_cosize()
     assert(sm80_m16n8k16_val_d().stride =~= sm80_m16n8k16_val_b().stride);
 }
 
-/// All SM80 A-fragment offsets are in [0, 1666).
+///  All SM80 A-fragment offsets are in [0, 1666).
 pub proof fn lemma_sm80_a_offset_bounded()
     ensures mma_offset_bounded(&sm80_m16n8k16_thr_a(), &sm80_m16n8k16_val_a(), 1666),
 {
@@ -2131,7 +2131,7 @@ pub proof fn lemma_sm80_a_offset_bounded()
     let layout = mma_atom_layout(thr.shape, thr.stride, val.shape, val.stride);
     lemma_sm80_m16n8k16_a_valid();
     lemma_sm80_a_atom_cosize();
-    // layout is product(thr, val), which has non-neg strides
+    //  layout is product(thr, val), which has non-neg strides
     crate::proof::product_lemmas::lemma_product_valid(&thr, &val);
     crate::proof::product_lemmas::lemma_product_cosize(&thr, &val);
 
@@ -2147,7 +2147,7 @@ pub proof fn lemma_sm80_a_offset_bounded()
     };
 }
 
-/// All SM80 B-fragment offsets are in [0, 1190).
+///  All SM80 B-fragment offsets are in [0, 1190).
 pub proof fn lemma_sm80_b_offset_bounded()
     ensures mma_offset_bounded(&sm80_m16n8k16_thr_b(), &sm80_m16n8k16_val_b(), 1190),
 {
@@ -2176,12 +2176,12 @@ pub proof fn lemma_sm80_b_offset_bounded()
     };
 }
 
-/// All SM80 D-fragment offsets are in [0, 1190).
+///  All SM80 D-fragment offsets are in [0, 1190).
 pub proof fn lemma_sm80_d_offset_bounded()
     ensures mma_offset_bounded(&sm80_m16n8k16_thr_d(), &sm80_m16n8k16_val_d(), 1190),
 {
     lemma_sm80_b_offset_bounded();
-    // D and B have identical layouts
+    //  D and B have identical layouts
     let thr_d = sm80_m16n8k16_thr_d();
     let val_d = sm80_m16n8k16_val_d();
     let thr_b = sm80_m16n8k16_thr_b();
@@ -2194,11 +2194,11 @@ pub proof fn lemma_sm80_d_offset_bounded()
     assert(val_d.size() == val_b.size());
 }
 
-// ══════════════════════════════════════════════════════════════
-// Software Pipelining Hazard Freedom (Feature 4 Round 2)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Software Pipelining Hazard Freedom (Feature 4 Round 2)
+//  ══════════════════════════════════════════════════════════════
 
-/// Consecutive iterations are WAR-hazard-free with >= 2 buffers.
+///  Consecutive iterations are WAR-hazard-free with >= 2 buffers.
 pub proof fn lemma_war_hazard_free_consecutive(k: nat, num_buffers: nat)
     requires num_buffers >= 2,
     ensures war_hazard_free(k, k + 1, num_buffers),
@@ -2206,7 +2206,7 @@ pub proof fn lemma_war_hazard_free_consecutive(k: nat, num_buffers: nat)
     lemma_double_buffer_alternates(k, num_buffers);
 }
 
-/// Close but distinct values have distinct remainders.
+///  Close but distinct values have distinct remainders.
 proof fn lemma_close_values_distinct_mod(a: nat, b: nat, n: nat)
     requires a > b, a - b < n, n >= 2,
     ensures a % n != b % n,
@@ -2215,7 +2215,7 @@ proof fn lemma_close_values_distinct_mod(a: nat, b: nat, n: nat)
         requires a == b + (a - b), 0 < a - b, a - b < n, n >= 2nat;
 }
 
-/// Pipeline no-collision for n-deep pipeline.
+///  Pipeline no-collision for n-deep pipeline.
 pub proof fn lemma_pipeline_no_collision(num_k_tiles: nat, num_buffers: nat)
     requires num_buffers >= 2,
     ensures pipeline_no_collision(num_k_tiles, num_buffers),
@@ -2239,23 +2239,23 @@ pub proof fn lemma_pipeline_no_collision(num_k_tiles: nat, num_buffers: nat)
     };
 }
 
-/// RAW-correct: producer at k, consumer at k use same slot.
+///  RAW-correct: producer at k, consumer at k use same slot.
 pub proof fn lemma_raw_same_iteration(k: nat, num_buffers: nat)
     requires num_buffers > 0,
     ensures raw_hazard_free(k, k, num_buffers),
 {
-    // Trivial — k_produce == k_consume
+    //  Trivial — k_produce == k_consume
 }
 
-/// SMEM storage bound: double buffering with given tile sizes.
+///  SMEM storage bound: double buffering with given tile sizes.
 pub proof fn lemma_double_buffer_smem_bound(bm: nat, bk: nat, bn: nat, num_buffers: nat)
     requires bm > 0, bk > 0, bn > 0, num_buffers > 0,
     ensures double_buffer_smem_size(bm, bk, bn, num_buffers) == num_buffers * (bm * bk + bk * bn),
 {
-    // Unfold definition — trivially true
+    //  Unfold definition — trivially true
 }
 
-/// Pipeline stage is bounded.
+///  Pipeline stage is bounded.
 pub proof fn lemma_pipeline_stage_bounded(k_iter: nat, num_stages: nat)
     requires num_stages > 0,
     ensures pipeline_stage(k_iter, num_stages) < num_stages,
@@ -2264,18 +2264,18 @@ pub proof fn lemma_pipeline_stage_bounded(k_iter: nat, num_stages: nat)
         requires num_stages > 0nat;
 }
 
-// ══════════════════════════════════════════════════════════════
-// Combined double-buffer hazard freedom (Feature 1 Round 7)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Combined double-buffer hazard freedom (Feature 1 Round 7)
+//  ══════════════════════════════════════════════════════════════
 
-/// Combined WAR+RAW hazard freedom for double-buffered pipeline.
-/// For 2 buffers: G2S writes to buf[t%2], S2R reads from buf[(t+1)%2] — no conflict.
+///  Combined WAR+RAW hazard freedom for double-buffered pipeline.
+///  For 2 buffers: G2S writes to buf[t%2], S2R reads from buf[(t+1)%2] — no conflict.
 pub proof fn lemma_double_buffer_hazard_free(num_stages: nat, buf_idx: spec_fn(nat) -> nat)
     requires
         num_stages >= 2,
         forall|s: nat| s < num_stages ==> #[trigger] buf_idx(s) == s % 2,
     ensures
-        // WAR: consecutive stages use different buffers
+        //  WAR: consecutive stages use different buffers
         forall|s: nat| #![trigger buf_idx(s), buf_idx(s + 1)]
             s + 1 < num_stages ==> buf_idx(s) != buf_idx(s + 1),
 {
@@ -2289,22 +2289,22 @@ pub proof fn lemma_double_buffer_hazard_free(num_stages: nat, buf_idx: spec_fn(n
     };
 }
 
-/// Pipelined RAW: buffer used at (iteration, stage) equals buffer used at
-/// (iteration-1, stage) when stages are 2 apart (same parity).
+///  Pipelined RAW: buffer used at (iteration, stage) equals buffer used at
+///  (iteration-1, stage) when stages are 2 apart (same parity).
 pub proof fn lemma_pipelined_raw_correct(stage: nat, iteration: nat)
     requires stage >= 2, iteration >= 1,
     ensures
-        // Buffer index (iteration * num_stages + stage) has same parity as
-        // ((iteration-1) * num_stages + (stage-2)) when num_stages is even,
-        // but more generally: stage and stage-2 have the same parity.
+        //  Buffer index (iteration * num_stages + stage) has same parity as
+        //  ((iteration-1) * num_stages + (stage-2)) when num_stages is even,
+        //  but more generally: stage and stage-2 have the same parity.
         (stage % 2) == ((stage - 2) % 2),
 {
     assert((stage % 2) == ((stage - 2) % 2)) by (nonlinear_arith)
         requires stage >= 2nat;
 }
 
-/// K-loop double-buffer: alternating buffer indices ensure no G2S/S2R conflicts.
-/// G2S writes to buf[t%2], S2R reads from buf[(t+1)%2].
+///  K-loop double-buffer: alternating buffer indices ensure no G2S/S2R conflicts.
+///  G2S writes to buf[t%2], S2R reads from buf[(t+1)%2].
 pub proof fn lemma_gemm_double_buffer_safe(k_tiles: nat, bk: nat)
     requires k_tiles >= 2, bk > 0,
     ensures
@@ -2318,11 +2318,11 @@ pub proof fn lemma_gemm_double_buffer_safe(k_tiles: nat, bk: nat)
     };
 }
 
-// ══════════════════════════════════════════════════════════════
-// Register partition properties (Feature 3 Round 4)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Register partition properties (Feature 3 Round 4)
+//  ══════════════════════════════════════════════════════════════
 
-/// Register partition preserves total size.
+///  Register partition preserves total size.
 pub proof fn lemma_register_partition_size(
     warp_tile: &DividedLayout, mma_atom: &LayoutSpec,
 )
@@ -2336,7 +2336,7 @@ pub proof fn lemma_register_partition_size(
     lemma_zipped_divide_size(&warp_tile.layout, mma_atom);
 }
 
-/// Register tile shape = mma_atom shape.
+///  Register tile shape = mma_atom shape.
 pub proof fn lemma_register_partition_tile_shape(
     warp_tile: &DividedLayout, mma_atom: &LayoutSpec,
 )
@@ -2346,23 +2346,23 @@ pub proof fn lemma_register_partition_tile_shape(
     ensures
         tile_shape(&register_partition(warp_tile, mma_atom)) =~= mma_atom.shape,
 {
-    // register_partition.tile_rank = mma_atom.shape.len()
-    // register_partition.layout = zipped_divide.layout
-    // tile_shape = layout.shape.take(tile_rank)
-    // = zipped_divide.layout.shape.take(mma_atom.shape.len())
-    // By lemma_zipped_divide_tile_shape, this =~= mma_atom.shape
+    //  register_partition.tile_rank = mma_atom.shape.len()
+    //  register_partition.layout = zipped_divide.layout
+    //  tile_shape = layout.shape.take(tile_rank)
+    //  = zipped_divide.layout.shape.take(mma_atom.shape.len())
+    //  By lemma_zipped_divide_tile_shape, this =~= mma_atom.shape
     lemma_zipped_divide_tile_shape(&warp_tile.layout, mma_atom);
     let zd = zipped_divide(&warp_tile.layout, mma_atom);
     let rp = register_partition(warp_tile, mma_atom);
     assert(rp.layout.shape =~= zd.layout.shape);
     assert(rp.tile_rank == mma_atom.shape.len());
-    // tile_shape(rp) = rp.layout.shape.take(rp.tile_rank)
-    // tile_shape(zd) = zd.layout.shape.take(zd.tile_rank)
-    // zd.tile_rank = mma_atom.shape.len() = rp.tile_rank
+    //  tile_shape(rp) = rp.layout.shape.take(rp.tile_rank)
+    //  tile_shape(zd) = zd.layout.shape.take(zd.tile_rank)
+    //  zd.tile_rank = mma_atom.shape.len() = rp.tile_rank
     assert(tile_shape(&rp) =~= tile_shape(&zd));
 }
 
-/// Register tile size = mma_atom size.
+///  Register tile size = mma_atom size.
 pub proof fn lemma_register_partition_tile_size(
     warp_tile: &DividedLayout, mma_atom: &LayoutSpec,
 )
@@ -2376,7 +2376,7 @@ pub proof fn lemma_register_partition_tile_size(
     lemma_register_partition_tile_shape(warp_tile, mma_atom);
 }
 
-/// Register partition rest shape = complement shape (same as zipped_divide).
+///  Register partition rest shape = complement shape (same as zipped_divide).
 pub proof fn lemma_register_partition_rest_shape(
     warp_tile: &DividedLayout, mma_atom: &LayoutSpec,
 )
@@ -2391,11 +2391,11 @@ pub proof fn lemma_register_partition_rest_shape(
     let rp = register_partition(warp_tile, mma_atom);
     assert(rp.layout.shape =~= zd.layout.shape);
     assert(rp.tile_rank == mma_atom.shape.len());
-    // zd.tile_rank = mma_atom.shape.len() = rp.tile_rank
-    // rest_shape = layout.shape.skip(tile_rank) — same for both
+    //  zd.tile_rank = mma_atom.shape.len() = rp.tile_rank
+    //  rest_shape = layout.shape.skip(tile_rank) — same for both
 }
 
-/// Number of register tiles equals zipped_divide's num_tiles.
+///  Number of register tiles equals zipped_divide's num_tiles.
 pub proof fn lemma_register_partition_num_tiles(
     warp_tile: &DividedLayout, mma_atom: &LayoutSpec,
 )
@@ -2409,7 +2409,7 @@ pub proof fn lemma_register_partition_num_tiles(
     lemma_register_partition_rest_shape(warp_tile, mma_atom);
 }
 
-/// Element count identity: tile_size * num_tiles == total size.
+///  Element count identity: tile_size * num_tiles == total size.
 pub proof fn lemma_register_partition_element_count(
     warp_tile: &DividedLayout, mma_atom: &LayoutSpec,
 )
@@ -2426,36 +2426,36 @@ pub proof fn lemma_register_partition_element_count(
     let bs = shape_size(mma_atom.shape);
     let total = shape_size(warp_tile.layout.shape);
 
-    // tile_size(rp) == bs
+    //  tile_size(rp) == bs
     lemma_register_partition_tile_size(warp_tile, mma_atom);
     assert(tile_size(&rp) == bs);
 
-    // num_tiles_divided(rp) == num_tiles_divided(zd) == num_tiles(A, B) == total / bs
+    //  num_tiles_divided(rp) == num_tiles_divided(zd) == num_tiles(A, B) == total / bs
     lemma_register_partition_num_tiles(warp_tile, mma_atom);
     lemma_zipped_divide_num_tiles(&warp_tile.layout, mma_atom);
     assert(num_tiles_divided(&rp) == num_tiles(&warp_tile.layout, mma_atom));
 
-    // complement_size * bs == total
+    //  complement_size * bs == total
     let comp_size = shape_size(complement(mma_atom, total).shape);
     crate::proof::complement_lemmas::lemma_complement_size(mma_atom, total);
     assert(comp_size * bs == total);
 
-    // num_tiles(A, B) == total / bs == comp_size
+    //  num_tiles(A, B) == total / bs == comp_size
     lemma_shape_size_positive(mma_atom.shape);
     crate::proof::complement_lemmas::lemma_complement_shape_valid(mma_atom, total);
     lemma_shape_size_positive(complement(mma_atom, total).shape);
     vstd::arithmetic::mul::lemma_mul_is_commutative(comp_size as int, bs as int);
-    // bs * comp_size == total
+    //  bs * comp_size == total
     vstd::arithmetic::div_mod::lemma_div_multiples_vanish(comp_size as int, bs as int);
-    // (bs * comp_size) / bs == comp_size, i.e., total / bs == comp_size
+    //  (bs * comp_size) / bs == comp_size, i.e., total / bs == comp_size
     assert(total / bs == comp_size);
     assert(num_tiles_divided(&rp) == comp_size);
 
-    // bs * comp_size == total
+    //  bs * comp_size == total
     assert(tile_size(&rp) * num_tiles_divided(&rp) == bs * comp_size);
 }
 
-/// Warp→register two-level size identity.
+///  Warp→register two-level size identity.
 pub proof fn lemma_warp_register_size_identity(
     cta_tile: &DividedLayout,
     warp_layout: &LayoutSpec,
@@ -2477,11 +2477,11 @@ pub proof fn lemma_warp_register_size_identity(
     lemma_register_partition_size(&wp, mma_atom);
 }
 
-// ══════════════════════════════════════════════════════════════
-// SM80 m16n8k8 MMA Atom Proofs (Feature 4 Round 5)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  SM80 m16n8k8 MMA Atom Proofs (Feature 4 Round 5)
+//  ══════════════════════════════════════════════════════════════
 
-/// Helper: cosize of a rank-1 layout with non-negative strides.
+///  Helper: cosize of a rank-1 layout with non-negative strides.
 proof fn lemma_cosize_rank1(layout: LayoutSpec)
     requires
         layout.valid(),
@@ -2500,7 +2500,7 @@ proof fn lemma_cosize_rank1(layout: LayoutSpec)
     assert(rest.cosize_nonneg() == 1nat);
 }
 
-/// Helper: for a rank-1 layout, offset(x) = x * stride[0].
+///  Helper: for a rank-1 layout, offset(x) = x * stride[0].
 proof fn lemma_offset_rank1(layout: &LayoutSpec, x: nat)
     requires
         layout.valid(),
@@ -2513,19 +2513,19 @@ proof fn lemma_offset_rank1(layout: &LayoutSpec, x: nat)
     lemma_delinearize_len(x, layout.shape);
     assert(coords.len() == 1);
 
-    // shape_size([n]) == n for rank-1
+    //  shape_size([n]) == n for rank-1
     assert(layout.shape.skip(1) =~= Seq::<nat>::empty());
     assert(shape_size(layout.shape.skip(1)) == 1nat);
     assert(shape_size(layout.shape) == layout.shape[0] * 1);
     vstd::arithmetic::mul::lemma_mul_basics(layout.shape[0] as int);
     assert(x < layout.shape[0]);
 
-    // delinearize: coords[0] = x % shape[0] = x (since x < shape[0])
+    //  delinearize: coords[0] = x % shape[0] = x (since x < shape[0])
     assert(coords[0] == x % layout.shape[0]);
     vstd::arithmetic::div_mod::lemma_small_mod(x as nat, layout.shape[0] as nat);
     assert(coords[0] == x);
 
-    // dot_product([x], [stride[0]]) = x * stride[0]
+    //  dot_product([x], [stride[0]]) = x * stride[0]
     let skip1_c = coords.skip(1);
     let skip1_s = layout.stride.skip(1);
     assert(skip1_c =~= Seq::<nat>::empty());
@@ -2535,7 +2535,7 @@ proof fn lemma_offset_rank1(layout: &LayoutSpec, x: nat)
         (coords[0] as int) * layout.stride[0] + dot_product_nat_int(skip1_c, skip1_s));
 }
 
-/// SM80 m16n8k8 A-fragment is valid MMA atom.
+///  SM80 m16n8k8 A-fragment is valid MMA atom.
 pub proof fn lemma_sm80_m16n8k8_a_valid()
     ensures
         mma_atom_admissible(&sm80_m16n8k8_thr_a(), &sm80_m16n8k8_val_a()),
@@ -2557,7 +2557,7 @@ pub proof fn lemma_sm80_m16n8k8_a_valid()
 
     assert(thr.shape.len() > 0);
 
-    // thr injectivity: same as m16n8k16 (identical layout)
+    //  thr injectivity: same as m16n8k16 (identical layout)
     assert forall|i: nat, j: nat|
         i < thr.size() && j < thr.size() && i != j
     implies
@@ -2592,7 +2592,7 @@ pub proof fn lemma_sm80_m16n8k8_a_valid()
                 oj == (cj[0] as int) * 2 + (cj[1] as int) * 16;
     };
 
-    // val injectivity: strides (1, 4) with shape (2, 2)
+    //  val injectivity: strides (1, 4) with shape (2, 2)
     assert forall|i: nat, j: nat|
         i < val.size() && j < val.size() && i != j
     implies
@@ -2628,7 +2628,7 @@ pub proof fn lemma_sm80_m16n8k8_a_valid()
     };
 }
 
-/// SM80 m16n8k8 B-fragment is valid MMA atom.
+///  SM80 m16n8k8 B-fragment is valid MMA atom.
 pub proof fn lemma_sm80_m16n8k8_b_valid()
     ensures
         mma_atom_admissible(&sm80_m16n8k8_thr_b(), &sm80_m16n8k8_val_b()),
@@ -2650,7 +2650,7 @@ pub proof fn lemma_sm80_m16n8k8_b_valid()
 
     assert(thr.shape.len() > 0);
 
-    // thr injectivity (identical to m16n8k16)
+    //  thr injectivity (identical to m16n8k16)
     assert forall|i: nat, j: nat|
         i < thr.size() && j < thr.size() && i != j
     implies
@@ -2685,7 +2685,7 @@ pub proof fn lemma_sm80_m16n8k8_b_valid()
                 oj == (cj[0] as int) * 2 + (cj[1] as int) * 16;
     };
 
-    // val injectivity: rank-1, stride 1 — offset(x) = x
+    //  val injectivity: rank-1, stride 1 — offset(x) = x
     assert forall|i: nat, j: nat|
         i < val.size() && j < val.size() && i != j
     implies
@@ -2694,7 +2694,7 @@ pub proof fn lemma_sm80_m16n8k8_b_valid()
         lemma_shape_size_singleton(2);
         lemma_offset_rank1(&val, i);
         lemma_offset_rank1(&val, j);
-        // offset(i) = i * 1 = i, offset(j) = j * 1 = j
+        //  offset(i) = i * 1 = i, offset(j) = j * 1 = j
         vstd::arithmetic::mul::lemma_mul_basics(i as int);
         vstd::arithmetic::mul::lemma_mul_basics(j as int);
         assert(val.offset(i) == i as int);
@@ -2702,18 +2702,18 @@ pub proof fn lemma_sm80_m16n8k8_b_valid()
     };
 }
 
-/// SM80 m16n8k8 D-fragment is valid MMA atom.
+///  SM80 m16n8k8 D-fragment is valid MMA atom.
 pub proof fn lemma_sm80_m16n8k8_d_valid()
     ensures
         mma_atom_admissible(&sm80_m16n8k8_thr_d(), &sm80_m16n8k8_val_d()),
         sm80_m16n8k8_thr_d().size() == 32,
         sm80_m16n8k8_val_d().size() == 4,
 {
-    // D layout is identical to m16n8k16 D
+    //  D layout is identical to m16n8k16 D
     lemma_sm80_m16n8k16_d_valid();
 }
 
-/// MMA atom sizes: 128, 64, 128.
+///  MMA atom sizes: 128, 64, 128.
 pub proof fn lemma_sm80_m16n8k8_sizes()
     ensures
         sm80_m16n8k8_thr_a().size() * sm80_m16n8k8_val_a().size() == 128,
@@ -2725,12 +2725,12 @@ pub proof fn lemma_sm80_m16n8k8_sizes()
     lemma_sm80_m16n8k8_d_valid();
 }
 
-/// SM80 m16n8k8 val_a cosize = 6. (2-1)*1 + (2-1)*4 + 1 = 1+4+1 = 6.
+///  SM80 m16n8k8 val_a cosize = 6. (2-1)*1 + (2-1)*4 + 1 = 1+4+1 = 6.
 pub proof fn lemma_sm80_m16n8k8_val_a_cosize()
     ensures sm80_m16n8k8_val_a().cosize_nonneg() == 6,
 {
     let val = sm80_m16n8k8_val_a();
-    // val = [2,2]:[1,4], cosize = (2-1)*1 + (2-1)*4 + 1 = 6
+    //  val = [2,2]:[1,4], cosize = (2-1)*1 + (2-1)*4 + 1 = 6
     lemma_cosize_rank2(val);
     assert(val.shape[0] == 2nat);
     assert(val.shape[1] == 2nat);
@@ -2738,14 +2738,14 @@ pub proof fn lemma_sm80_m16n8k8_val_a_cosize()
     assert(val.stride[1] == 4int);
 }
 
-/// SM80 m16n8k8 val_b cosize = 2. (2-1)*1 + 1 = 2.
+///  SM80 m16n8k8 val_b cosize = 2. (2-1)*1 + 1 = 2.
 pub proof fn lemma_sm80_m16n8k8_val_b_cosize()
     ensures sm80_m16n8k8_val_b().cosize_nonneg() == 2,
 {
     let val = sm80_m16n8k8_val_b();
-    // val = [2]:[1], cosize = (2-1)*1 + 1 = 2
+    //  val = [2]:[1], cosize = (2-1)*1 + 1 = 2
     lemma_cosize_rank1(val);
-    // lemma_cosize_rank1 ensures cosize == ((shape[0]-1) * (stride[0] as nat) + 1) as nat
+    //  lemma_cosize_rank1 ensures cosize == ((shape[0]-1) * (stride[0] as nat) + 1) as nat
     assert(val.shape[0] == 2nat);
     assert(val.stride[0] == 1int);
     assert((val.stride[0] as nat) == 1nat);
@@ -2755,7 +2755,7 @@ pub proof fn lemma_sm80_m16n8k8_val_b_cosize()
     assert((val.shape[0] - 1) * (val.stride[0] as nat) + 1 == 2nat);
 }
 
-/// SM80 m16n8k8 A-atom cosize = 119 * 6 = 714.
+///  SM80 m16n8k8 A-atom cosize = 119 * 6 = 714.
 pub proof fn lemma_sm80_m16n8k8_a_atom_cosize()
     ensures
         mma_atom_layout(
@@ -2775,7 +2775,7 @@ pub proof fn lemma_sm80_m16n8k8_a_atom_cosize()
     crate::proof::product_lemmas::lemma_product_cosize(&thr, &val);
 }
 
-/// SM80 m16n8k8 B-atom cosize = 119 * 2 = 238.
+///  SM80 m16n8k8 B-atom cosize = 119 * 2 = 238.
 pub proof fn lemma_sm80_m16n8k8_b_atom_cosize()
     ensures
         mma_atom_layout(
@@ -2795,7 +2795,7 @@ pub proof fn lemma_sm80_m16n8k8_b_atom_cosize()
     crate::proof::product_lemmas::lemma_product_cosize(&thr, &val);
 }
 
-/// All SM80 m16n8k8 A-fragment offsets are in [0, 714).
+///  All SM80 m16n8k8 A-fragment offsets are in [0, 714).
 pub proof fn lemma_sm80_m16n8k8_a_offset_bounded()
     ensures mma_offset_bounded(&sm80_m16n8k8_thr_a(), &sm80_m16n8k8_val_a(), 714),
 {
@@ -2822,7 +2822,7 @@ pub proof fn lemma_sm80_m16n8k8_a_offset_bounded()
     };
 }
 
-/// All SM80 m16n8k8 B-fragment offsets are in [0, 238).
+///  All SM80 m16n8k8 B-fragment offsets are in [0, 238).
 pub proof fn lemma_sm80_m16n8k8_b_offset_bounded()
     ensures mma_offset_bounded(&sm80_m16n8k8_thr_b(), &sm80_m16n8k8_val_b(), 238),
 {
@@ -2849,11 +2849,11 @@ pub proof fn lemma_sm80_m16n8k8_b_offset_bounded()
     };
 }
 
-// ══════════════════════════════════════════════════════════════
-// Partition Pipeline End-to-End (Feature 2 Round 5)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Partition Pipeline End-to-End (Feature 2 Round 5)
+//  ══════════════════════════════════════════════════════════════
 
-/// Warp partition tile shape equals warp_layout shape.
+///  Warp partition tile shape equals warp_layout shape.
 pub proof fn lemma_warp_partition_tile_shape(
     cta_tile: &DividedLayout, warp_layout: &LayoutSpec,
 )
@@ -2870,7 +2870,7 @@ pub proof fn lemma_warp_partition_tile_shape(
     assert(wp.tile_rank == warp_layout.shape.len());
 }
 
-/// Warp partition tile size = warp_layout size.
+///  Warp partition tile size = warp_layout size.
 pub proof fn lemma_warp_partition_tile_size(
     cta_tile: &DividedLayout, warp_layout: &LayoutSpec,
 )
@@ -2883,7 +2883,7 @@ pub proof fn lemma_warp_partition_tile_size(
     lemma_warp_partition_tile_shape(cta_tile, warp_layout);
 }
 
-/// Number of warps = num_tiles of the warp partition.
+///  Number of warps = num_tiles of the warp partition.
 pub proof fn lemma_warp_partition_num_tiles(
     cta_tile: &DividedLayout, warp_layout: &LayoutSpec,
 )
@@ -2901,7 +2901,7 @@ pub proof fn lemma_warp_partition_num_tiles(
     assert(wp.tile_rank == warp_layout.shape.len());
 }
 
-/// Warp partition element count: tile_size × num_tiles == total.
+///  Warp partition element count: tile_size × num_tiles == total.
 pub proof fn lemma_warp_partition_element_count(
     cta_tile: &DividedLayout,
     warp_layout: &LayoutSpec,
@@ -2938,7 +2938,7 @@ pub proof fn lemma_warp_partition_element_count(
     assert(num_tiles_divided(&wp) == comp_size);
 }
 
-/// Three-level consistency: both partition element counts equal the total.
+///  Three-level consistency: both partition element counts equal the total.
 pub proof fn lemma_partition_chain_consistency(
     cta_tile: &DividedLayout,
     warp_layout: &LayoutSpec,
@@ -2966,11 +2966,11 @@ pub proof fn lemma_partition_chain_consistency(
     lemma_register_partition_tile_size(&wp, mma_atom);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Partition Injectivity (Feature 3 Round 5)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Partition Injectivity (Feature 3 Round 5)
+//  ══════════════════════════════════════════════════════════════
 
-/// zipped_divide preserves injectivity for rank-1 A + column-major B.
+///  zipped_divide preserves injectivity for rank-1 A + column-major B.
 pub proof fn lemma_zipped_divide_injective(a: &LayoutSpec, b: &LayoutSpec)
     requires
         divide_admissible(a, b),
@@ -2983,7 +2983,7 @@ pub proof fn lemma_zipped_divide_injective(a: &LayoutSpec, b: &LayoutSpec)
     crate::proof::divide_lemmas::lemma_divide_injective(a, b);
 }
 
-/// predicated_divide layout is injective.
+///  predicated_divide layout is injective.
 pub proof fn lemma_predicated_divide_layout_injective(original_size: nat, tile_size: nat)
     requires
         padded_divide_admissible(original_size, tile_size),
@@ -2994,16 +2994,16 @@ pub proof fn lemma_predicated_divide_layout_injective(original_size: nat, tile_s
     let a = make_identity(padded);
     let b = make_identity(tile_size);
 
-    // Prove divide_admissible(a, b) from padded_divide_admissible
+    //  Prove divide_admissible(a, b) from padded_divide_admissible
     lemma_predicated_divide_admissible(original_size, tile_size);
-    // divide_admissible implies a.valid() and b.valid()
+    //  divide_admissible implies a.valid() and b.valid()
     assert(a.valid());
     assert(a.shape =~= seq![padded]);
     assert(a.stride =~= seq![1int]);
     assert(a.shape.len() == 1);
     lemma_shape_size_singleton(padded);
 
-    // a is injective: offset(x) = x * 1 = x
+    //  a is injective: offset(x) = x * 1 = x
     assert forall|i: nat, j: nat|
         i < a.size() && j < a.size() && i != j
     implies
@@ -3014,10 +3014,10 @@ pub proof fn lemma_predicated_divide_layout_injective(original_size: nat, tile_s
         lemma_offset_rank1(&a, j);
     };
 
-    // b = (tile_size):(1), column-major
+    //  b = (tile_size):(1), column-major
     assert(b.shape =~= seq![tile_size]);
     assert(b.stride =~= seq![1int]);
-    // Prove column_major_strides(seq![tile_size]) =~= seq![1int]
+    //  Prove column_major_strides(seq![tile_size]) =~= seq![1int]
     assert(b.shape.skip(1) =~= Seq::<nat>::empty());
     assert(column_major_strides(Seq::<nat>::empty()) =~= Seq::<int>::empty());
     assert(scale_strides_spec(Seq::<int>::empty(), tile_size as int) =~= Seq::<int>::empty());
@@ -3028,11 +3028,11 @@ pub proof fn lemma_predicated_divide_layout_injective(original_size: nat, tile_s
     lemma_zipped_divide_injective(&a, &b);
 }
 
-/// Warp partition from predicated_divide is injective when warp_layout is column-major.
+///  Warp partition from predicated_divide is injective when warp_layout is column-major.
 ///
-/// Strategy: pd.layout has stride[0] == 1, so compose_linear(pd.layout, zipped2) has
-/// the same shape and stride as zipped2 (compose_linear scales by stride[0] = 1).
-/// Since zipped2 = (wl ++ complement) is bijective, wp.layout is injective.
+///  Strategy: pd.layout has stride[0] == 1, so compose_linear(pd.layout, zipped2) has
+///  the same shape and stride as zipped2 (compose_linear scales by stride[0] = 1).
+///  Since zipped2 = (wl ++ complement) is bijective, wp.layout is injective.
 pub proof fn lemma_warp_partition_injective_from_predicated(
     original_size: nat, tile_sz: nat, warp_layout: &LayoutSpec,
 )
@@ -3049,29 +3049,29 @@ pub proof fn lemma_warp_partition_injective_from_predicated(
     let wp = warp_partition(&pd, warp_layout);
     let m = shape_size(pd.layout.shape);
 
-    // Prove divide_admissible for the underlying identity layouts
+    //  Prove divide_admissible for the underlying identity layouts
     lemma_predicated_divide_admissible(original_size, tile_sz);
     let id_padded = make_identity(padded);
     let id_ts = make_identity(tile_sz);
 
-    // pd.layout is valid
+    //  pd.layout is valid
     lemma_zipped_divide_valid(&id_padded, &id_ts);
     assert(pd.layout.valid());
     assert(pd.layout.shape.len() > 0) by {
         crate::proof::divide_lemmas::lemma_divide_rank(&id_padded, &id_ts);
     };
 
-    // pd.layout has stride[0] == 1
+    //  pd.layout has stride[0] == 1
     let c1 = complement(&id_ts, padded);
     let z1 = LayoutSpec {
         shape: id_ts.shape.add(c1.shape),
         stride: id_ts.stride.add(c1.stride),
     };
 
-    // complement_admissible(id_ts, padded) follows from divide_admissible
+    //  complement_admissible(id_ts, padded) follows from divide_admissible
     lemma_shape_size_singleton(padded);
     assert(shape_size(id_padded.shape) == padded);
-    // z1 is valid + non-negative strides
+    //  z1 is valid + non-negative strides
     crate::proof::complement_lemmas::lemma_complement_valid(&id_ts, padded);
     crate::proof::complement_lemmas::lemma_complement_positive_strides(&id_ts, padded);
     crate::proof::complement_lemmas::lemma_complement_shape_valid(&id_ts, padded);
@@ -3094,13 +3094,13 @@ pub proof fn lemma_warp_partition_injective_from_predicated(
         };
     };
 
-    // compose_linear(identity(padded), z1).stride =~= scale(z1.stride, 1) =~= z1.stride
+    //  compose_linear(identity(padded), z1).stride =~= scale(z1.stride, 1) =~= z1.stride
     assert(id_padded.valid());
     assert(id_padded.shape.len() > 0);
     crate::proof::composition_lemmas::lemma_compose_stride_general(id_padded, z1);
     assert(pd.layout.stride =~= scale_strides_spec(z1.stride, id_padded.stride.first()));
     assert(id_padded.stride.first() == 1int);
-    // scale by 1 is identity
+    //  scale by 1 is identity
     assert(scale_strides_spec(z1.stride, 1int) =~= z1.stride) by {
         assert forall|i: int| 0 <= i < z1.stride.len()
         implies scale_strides_spec(z1.stride, 1int)[i] == z1.stride[i]
@@ -3114,7 +3114,7 @@ pub proof fn lemma_warp_partition_injective_from_predicated(
     assert(id_ts.stride.first() == 1int);
     assert(pd.layout.stride.first() == 1int);
 
-    // Build zipped2 = wl ++ complement(wl, m)
+    //  Build zipped2 = wl ++ complement(wl, m)
     crate::proof::divide_lemmas::lemma_divide_size(&id_padded, &id_ts);
     assert(m == padded);
     let c2 = complement(warp_layout, m);
@@ -3123,7 +3123,7 @@ pub proof fn lemma_warp_partition_injective_from_predicated(
         stride: warp_layout.stride.add(c2.stride),
     };
 
-    // z2 valid + non-negative strides
+    //  z2 valid + non-negative strides
     crate::proof::complement_lemmas::lemma_complement_valid(warp_layout, m);
     crate::proof::complement_lemmas::lemma_complement_positive_strides(warp_layout, m);
     crate::proof::complement_lemmas::lemma_complement_shape_valid(warp_layout, m);
@@ -3147,10 +3147,10 @@ pub proof fn lemma_warp_partition_injective_from_predicated(
         };
     };
 
-    // wp.layout = logical_divide_linear(pd.layout, wl) = compose_linear(pd.layout, z2)
-    // compose_linear(pd.layout, z2).shape =~= z2.shape
+    //  wp.layout = logical_divide_linear(pd.layout, wl) = compose_linear(pd.layout, z2)
+    //  compose_linear(pd.layout, z2).shape =~= z2.shape
     crate::proof::composition_lemmas::lemma_compose_shape(pd.layout, z2);
-    // compose_linear(pd.layout, z2).stride =~= scale(z2.stride, pd.layout.stride[0]) = scale(z2.stride, 1) =~= z2.stride
+    //  compose_linear(pd.layout, z2).stride =~= scale(z2.stride, pd.layout.stride[0]) = scale(z2.stride, 1) =~= z2.stride
     crate::proof::composition_lemmas::lemma_compose_stride_general(pd.layout, z2);
     assert(compose_linear(pd.layout, z2).stride =~= scale_strides_spec(z2.stride, 1int));
     assert(scale_strides_spec(z2.stride, 1int) =~= z2.stride) by {
@@ -3162,40 +3162,40 @@ pub proof fn lemma_warp_partition_injective_from_predicated(
         };
     };
 
-    // So wp.layout has same shape and stride as z2
+    //  So wp.layout has same shape and stride as z2
     let wp_layout = wp.layout;
     assert(wp_layout.shape =~= z2.shape);
     assert(wp_layout.stride =~= z2.stride);
 
-    // z2 is bijective onto [0, m) by lemma_zipped_bijective
+    //  z2 is bijective onto [0, m) by lemma_zipped_bijective
     crate::proof::complement_lemmas::lemma_zipped_bijective(warp_layout, m);
     assert(z2.is_bijective_upto(m));
 
-    // Bijective → injective
-    // z2.is_injective() follows from is_bijective_upto
-    // Since wp_layout has same shape/stride, it has same offsets, hence also injective
+    //  Bijective → injective
+    //  z2.is_injective() follows from is_bijective_upto
+    //  Since wp_layout has same shape/stride, it has same offsets, hence also injective
     assert forall|i: nat, j: nat|
         i < wp_layout.size() && j < wp_layout.size() && i != j
     implies
         wp_layout.offset(i) != wp_layout.offset(j)
     by {
-        // wp_layout and z2 have same shape/stride → same offsets
+        //  wp_layout and z2 have same shape/stride → same offsets
         crate::proof::composition_lemmas::lemma_offset_eq_layout(
             wp_layout.shape, wp_layout.stride, z2.shape, z2.stride, i);
         crate::proof::composition_lemmas::lemma_offset_eq_layout(
             wp_layout.shape, wp_layout.stride, z2.shape, z2.stride, j);
         assert(wp_layout.offset(i) == z2.offset(i));
         assert(wp_layout.offset(j) == z2.offset(j));
-        // z2 is bijective → injective: distinct inputs → distinct offsets
+        //  z2 is bijective → injective: distinct inputs → distinct offsets
         assert(z2.offset(i) != z2.offset(j));
     };
 }
 
-// ══════════════════════════════════════════════════════════════
-// SM90 WGMMA Atom Proofs (m64n16k16)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  SM90 WGMMA Atom Proofs (m64n16k16)
+//  ══════════════════════════════════════════════════════════════
 
-/// SM90 m64n16k16 A-fragment is valid MMA atom.
+///  SM90 m64n16k16 A-fragment is valid MMA atom.
 pub proof fn lemma_sm90_m64n16k16_a_valid()
     ensures
         mma_atom_admissible(&sm90_m64n16k16_thr_a(), &sm90_m64n16k16_val_a()),
@@ -3211,14 +3211,14 @@ pub proof fn lemma_sm90_m64n16k16_a_valid()
     assert(val.non_negative_strides());
     assert(thr.shape.len() > 0);
 
-    // Sizes
+    //  Sizes
     lemma_shape_size_2(4, 32);
     assert(thr.size() == 128);
     lemma_shape_size_2(2, 4);
     assert(val.size() == 8);
 
-    // thr injectivity: strides [1, 4] with shape [4, 32]
-    // This is column-major: stride = prefix_products(shape) = [1, 4]
+    //  thr injectivity: strides [1, 4] with shape [4, 32]
+    //  This is column-major: stride = prefix_products(shape) = [1, 4]
     assert(thr.is_injective()) by {
         assert forall|i: nat, j: nat|
             i < thr.size() && j < thr.size() && i != j
@@ -3253,8 +3253,8 @@ pub proof fn lemma_sm90_m64n16k16_a_valid()
         };
     };
 
-    // val injectivity: strides [1, 16] with shape [2, 4]
-    // max c0*1 = 1 < 16 = min nonzero c1*16
+    //  val injectivity: strides [1, 16] with shape [2, 4]
+    //  max c0*1 = 1 < 16 = min nonzero c1*16
     assert(val.is_injective()) by {
         assert forall|i: nat, j: nat|
             i < val.size() && j < val.size() && i != j
@@ -3290,28 +3290,28 @@ pub proof fn lemma_sm90_m64n16k16_a_valid()
     };
 }
 
-/// SM90 m64n16k16 D-fragment is valid MMA atom.
+///  SM90 m64n16k16 D-fragment is valid MMA atom.
 pub proof fn lemma_sm90_m64n16k16_d_valid()
     ensures
         mma_atom_admissible(&sm90_m64n16k16_thr_d(), &sm90_m64n16k16_val_d()),
         sm90_m64n16k16_thr_d().size() == 128,
         sm90_m64n16k16_val_d().size() == 8,
 {
-    // D layout is identical to A layout
+    //  D layout is identical to A layout
     lemma_sm90_m64n16k16_a_valid();
 }
 
-/// SM90 m64n16k16 sizes: A=1024, D=1024.
+///  SM90 m64n16k16 sizes: A=1024, D=1024.
 pub proof fn lemma_sm90_m64n16k16_sizes()
     ensures
         sm90_m64n16k16_thr_a().size() * sm90_m64n16k16_val_a().size() == 1024,
         sm90_m64n16k16_thr_d().size() * sm90_m64n16k16_val_d().size() == 1024,
 {
     lemma_sm90_m64n16k16_a_valid();
-    // 128 * 8 = 1024
+    //  128 * 8 = 1024
 }
 
-/// SM90 thread layout size = 128 (warpgroup).
+///  SM90 thread layout size = 128 (warpgroup).
 pub proof fn lemma_sm90_m64n16k16_thr_size()
     ensures
         sm90_m64n16k16_thr_a().size() == 128,
@@ -3320,7 +3320,7 @@ pub proof fn lemma_sm90_m64n16k16_thr_size()
     lemma_sm90_m64n16k16_a_valid();
 }
 
-/// SM90 val_a cosize = 50: (2-1)*1 + (4-1)*16 + 1 = 50.
+///  SM90 val_a cosize = 50: (2-1)*1 + (4-1)*16 + 1 = 50.
 pub proof fn lemma_sm90_m64n16k16_val_a_cosize()
     ensures sm90_m64n16k16_val_a().cosize_nonneg() == 50,
 {
@@ -3334,7 +3334,7 @@ pub proof fn lemma_sm90_m64n16k16_val_a_cosize()
     assert(val.stride[1] as nat == 16nat);
 }
 
-/// SM90 thr cosize = 128: (4-1)*1 + (32-1)*4 + 1 = 128.
+///  SM90 thr cosize = 128: (4-1)*1 + (32-1)*4 + 1 = 128.
 pub proof fn lemma_sm90_m64n16k16_thr_cosize()
     ensures sm90_m64n16k16_thr_a().cosize_nonneg() == 128,
 {
@@ -3348,11 +3348,11 @@ pub proof fn lemma_sm90_m64n16k16_thr_cosize()
     assert(thr.stride[1] as nat == 4nat);
 }
 
-// ══════════════════════════════════════════════════════════════
-// Pipeline invariant proofs (Phase F)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Pipeline invariant proofs (Phase F)
+//  ══════════════════════════════════════════════════════════════
 
-/// Pipeline_init satisfies the invariant.
+///  Pipeline_init satisfies the invariant.
 pub proof fn lemma_pipeline_init_invariant(num_buffers: nat)
     requires num_buffers > 0,
     ensures pipeline_invariant(&pipeline_init(num_buffers)),
@@ -3361,7 +3361,7 @@ pub proof fn lemma_pipeline_init_invariant(num_buffers: nat)
     assert(state.buffer_contents.len() == num_buffers);
 }
 
-/// Pipeline invariant is maintained through an issue/consume cycle.
+///  Pipeline invariant is maintained through an issue/consume cycle.
 pub proof fn lemma_pipeline_invariant_maintained(
     state: &PipelineState, k_tile: nat,
 )
@@ -3376,7 +3376,7 @@ pub proof fn lemma_pipeline_invariant_maintained(
     assert(consumed.buffer_contents.len() == state.num_buffers);
 }
 
-/// After issuing copy for k_tile, the buffer holds that tile's data.
+///  After issuing copy for k_tile, the buffer holds that tile's data.
 pub proof fn lemma_pipeline_issue_steady_state(
     state: &PipelineState, k_tile: nat,
 )
@@ -3388,15 +3388,15 @@ pub proof fn lemma_pipeline_issue_steady_state(
     assert(issued.buffer_contents[buf_idx as int] == Some(k_tile));
 }
 
-// ══════════════════════════════════════════════════════════════
-// Cross-warp reduction proofs (Phase G)
-// ══════════════════════════════════════════════════════════════
+//  ══════════════════════════════════════════════════════════════
+//  Cross-warp reduction proofs (Phase G)
+//  ══════════════════════════════════════════════════════════════
 
-/// Cross-warp reduction of a single warp returns that warp's value.
+///  Cross-warp reduction of a single warp returns that warp's value.
 pub proof fn lemma_cross_warp_reduce_single(val: int)
     ensures cross_warp_reduce(seq![val], 1) == val,
 {
     assert(cross_warp_reduce(seq![val].take(0), 0) == 0);
 }
 
-} // verus!
+} //  verus!

@@ -2,13 +2,13 @@ use vstd::prelude::*;
 
 verus! {
 
-/// A shape is valid if all extents are positive.
+///  A shape is valid if all extents are positive.
 pub open spec fn shape_valid(s: Seq<nat>) -> bool {
     forall|i: int| 0 <= i < s.len() ==> #[trigger] s[i] > 0
 }
 
-/// The size (total number of elements) of a shape is the product of extents.
-/// Empty shape has size 1 (scalar).
+///  The size (total number of elements) of a shape is the product of extents.
+///  Empty shape has size 1 (scalar).
 pub open spec fn shape_size(s: Seq<nat>) -> nat
     decreases s.len(),
 {
@@ -19,12 +19,12 @@ pub open spec fn shape_size(s: Seq<nat>) -> nat
     }
 }
 
-/// Decompose a linear index into per-dimension coordinates (mixed-radix decomposition).
-/// Returns a sequence of coordinates, one per dimension.
+///  Decompose a linear index into per-dimension coordinates (mixed-radix decomposition).
+///  Returns a sequence of coordinates, one per dimension.
 ///
-/// coords[0] = idx % s[0]
-/// coords[1] = (idx / s[0]) % s[1]
-/// coords[i] = (idx / (s[0]*...*s[i-1])) % s[i]
+///  coords[0] = idx % s[0]
+///  coords[1] = (idx / s[0]) % s[1]
+///  coords[i] = (idx / (s[0]*...*s[i-1])) % s[i]
 pub open spec fn delinearize(idx: nat, shape: Seq<nat>) -> Seq<nat>
     decreases shape.len(),
 {
@@ -37,9 +37,9 @@ pub open spec fn delinearize(idx: nat, shape: Seq<nat>) -> Seq<nat>
     }
 }
 
-/// Recompose per-dimension coordinates into a linear index.
+///  Recompose per-dimension coordinates into a linear index.
 ///
-/// idx = coords[0] + s[0] * (coords[1] + s[1] * (coords[2] + ...))
+///  idx = coords[0] + s[0] * (coords[1] + s[1] * (coords[2] + ...))
 pub open spec fn linearize(coords: Seq<nat>, shape: Seq<nat>) -> nat
     decreases shape.len(),
 {
@@ -50,8 +50,8 @@ pub open spec fn linearize(coords: Seq<nat>, shape: Seq<nat>) -> nat
     }
 }
 
-/// Dot product of a coordinate sequence (nat) with a stride sequence (int).
-/// Returns the memory offset.
+///  Dot product of a coordinate sequence (nat) with a stride sequence (int).
+///  Returns the memory offset.
 pub open spec fn dot_product_nat_int(coords: Seq<nat>, strides: Seq<int>) -> int
     decreases coords.len(),
 {
@@ -63,14 +63,14 @@ pub open spec fn dot_product_nat_int(coords: Seq<nat>, strides: Seq<int>) -> int
     }
 }
 
-/// Check that coordinates are in-bounds for a given shape.
+///  Check that coordinates are in-bounds for a given shape.
 pub open spec fn coords_in_bounds(coords: Seq<nat>, shape: Seq<nat>) -> bool {
     &&& coords.len() == shape.len()
     &&& forall|i: int| 0 <= i < coords.len() ==> #[trigger] coords[i] < shape[i]
 }
 
-/// Elementwise (shape[i] - 1) for each dimension.
-/// Used in cosize computation.
+///  Elementwise (shape[i] - 1) for each dimension.
+///  Used in cosize computation.
 pub open spec fn shape_minus_one(s: Seq<nat>) -> Seq<nat>
     decreases s.len(),
 {
@@ -81,7 +81,7 @@ pub open spec fn shape_minus_one(s: Seq<nat>) -> Seq<nat>
     }
 }
 
-/// A sequence of n zeros.
+///  A sequence of n zeros.
 pub open spec fn zeros(n: nat) -> Seq<nat>
     decreases n,
 {
@@ -92,4 +92,4 @@ pub open spec fn zeros(n: nat) -> Seq<nat>
     }
 }
 
-} // verus!
+} //  verus!

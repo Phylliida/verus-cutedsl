@@ -1,4 +1,4 @@
-/// Runtime implementations: three-phase block scan + compact.
+///  Runtime implementations: three-phase block scan + compact.
 use vstd::prelude::*;
 use verus_algebra::traits::*;
 use verus_algebra::summation::*;
@@ -11,11 +11,11 @@ use crate::runtime::scan::*;
 
 verus! {
 
-// ============================================================
-// Three-phase inclusive scan (delegates to generic)
-// ============================================================
+//  ============================================================
+//  Three-phase inclusive scan (delegates to generic)
+//  ============================================================
 
-/// Three-phase inclusive scan for arbitrary-length arrays.
+///  Three-phase inclusive scan for arbitrary-length arrays.
 pub fn three_phase_inclusive_scan_exec(
     data: &Vec<i64>, block_size: u64,
 ) -> (output: Vec<i64>)
@@ -37,17 +37,17 @@ pub fn three_phase_inclusive_scan_exec(
         assert forall|i: int| 0 <= i < data@.len() as int implies
             result@[i] as int == inclusive_scan_int(data@)[i]
         by {
-            // From generic second ensures: result@[i].view().eqv(partial_sum_generic(data@, 0, i+1))
-            // For i64/int: view() = `as int`, eqv = ==
-            // So: result@[i] as int == partial_sum_generic(data@, 0, i+1)
+            //  From generic second ensures: result@[i].view().eqv(partial_sum_generic(data@, 0, i+1))
+            //  For i64/int: view() = `as int`, eqv = ==
+            //  So: result@[i] as int == partial_sum_generic(data@, 0, i+1)
 
-            // Bridge partial_sum_generic → partial_sum via induction lemma
+            //  Bridge partial_sum_generic → partial_sum via induction lemma
             lemma_partial_sums_equal(data@, 0, i + 1);
-            // partial_sum(data@, 0, i+1) == partial_sum_generic(data@, 0, i+1)
+            //  partial_sum(data@, 0, i+1) == partial_sum_generic(data@, 0, i+1)
 
-            // Bridge partial_sum → inclusive_scan_int via closure congruence
-            // partial_sum(data@, 0, i+1) = sum(|j| data@[j] as int, 0, i+1)
-            // inclusive_scan_int(data@)[i] = sum(|j| as_int_seq(data@)[j], 0, i+1)
+            //  Bridge partial_sum → inclusive_scan_int via closure congruence
+            //  partial_sum(data@, 0, i+1) = sum(|j| data@[j] as int, 0, i+1)
+            //  inclusive_scan_int(data@)[i] = sum(|j| as_int_seq(data@)[j], 0, i+1)
             assert forall|j: int| 0 <= j < i + 1 implies
                 (data@[j] as int).eqv(as_int_seq(data@)[j])
             by {
@@ -63,12 +63,12 @@ pub fn three_phase_inclusive_scan_exec(
     result
 }
 
-// ============================================================
-// Generic three-phase inclusive scan
-// ============================================================
+//  ============================================================
+//  Generic three-phase inclusive scan
+//  ============================================================
 
-/// Collapse: sum of block sums over [lo, hi) equals sum of view_f
-/// over the contiguous range [block_start(lo), block_end(hi-1)].
+///  Collapse: sum of block sums over [lo, hi) equals sum of view_f
+///  over the contiguous range [block_start(lo), block_end(hi-1)].
 proof fn lemma_block_sums_collapse<R: Ring>(
     block_sums_views: spec_fn(int) -> R,
     view_f: spec_fn(int) -> R,
@@ -105,20 +105,20 @@ proof fn lemma_block_sums_collapse<R: Ring>(
     if lo == hi {
         lemma_sum_empty::<R>(block_sums_views, lo, hi);
     } else if hi == lo + 1 {
-        // Single block: sum(bsv, lo, lo+1) eqv bsv(lo) eqv sum(vf, bs*lo, be(lo))
+        //  Single block: sum(bsv, lo, lo+1) eqv bsv(lo) eqv sum(vf, bs*lo, be(lo))
         lemma_sum_peel_last::<R>(block_sums_views, lo, hi);
         lemma_sum_empty::<R>(block_sums_views, lo, lo);
-        // sum(bsv, lo, lo+1) eqv sum(bsv, lo, lo).add(bsv(lo))
-        // sum(bsv, lo, lo) eqv R::zero()
+        //  sum(bsv, lo, lo+1) eqv sum(bsv, lo, lo).add(bsv(lo))
+        //  sum(bsv, lo, lo) eqv R::zero()
         R::axiom_eqv_reflexive(block_sums_views(lo));
         use verus_algebra::lemmas::additive_group_lemmas::{lemma_add_congruence, lemma_add_zero_left};
         lemma_add_congruence::<R>(
             sum::<R>(block_sums_views, lo, lo), R::zero(),
             block_sums_views(lo), block_sums_views(lo),
         );
-        // sum(bsv, lo, lo).add(bsv(lo)) eqv R::zero().add(bsv(lo))
+        //  sum(bsv, lo, lo).add(bsv(lo)) eqv R::zero().add(bsv(lo))
         lemma_add_zero_left::<R>(block_sums_views(lo));
-        // R::zero().add(bsv(lo)) eqv bsv(lo)
+        //  R::zero().add(bsv(lo)) eqv bsv(lo)
         R::axiom_eqv_transitive(
             sum::<R>(block_sums_views, lo, hi),
             sum::<R>(block_sums_views, lo, lo).add(block_sums_views(lo)),
@@ -137,25 +137,25 @@ proof fn lemma_block_sums_collapse<R: Ring>(
                 block_end(n, block_size, lo as nat) as int),
         );
     } else {
-        // hi >= lo + 2: peel last, use IH, then sum_split
+        //  hi >= lo + 2: peel last, use IH, then sum_split
         let bs = block_size as int;
         let hi_m1 = hi - 1;
         let hi_m2 = hi - 2;
 
         lemma_sum_peel_last::<R>(block_sums_views, lo, hi);
 
-        // IH: sum(bsv, lo, hi-1) eqv sum(vf, bs*lo, be(hi-2))
+        //  IH: sum(bsv, lo, hi-1) eqv sum(vf, bs*lo, be(hi-2))
         lemma_block_sums_collapse::<R>(
             block_sums_views, view_f, block_size, n, nblocks, lo, hi - 1,
         );
 
-        // Unfold spec functions to int for nonlinear_arith
+        //  Unfold spec functions to int for nonlinear_arith
         let bs_lo = block_start(block_size, lo as nat) as int;
         let bs_hi_m1 = block_start(block_size, hi_m1 as nat) as int;
         let be_hi_m2 = block_end(n, block_size, hi_m2 as nat) as int;
         let be_hi_m1 = block_end(n, block_size, hi_m1 as nat) as int;
 
-        // block_start unfolds: lo_nat * bs and (hi-1)_nat * bs
+        //  block_start unfolds: lo_nat * bs and (hi-1)_nat * bs
         assert(bs_lo == lo * bs) by {
             assert(block_start(block_size, lo as nat) == lo as nat * block_size);
         };
@@ -163,16 +163,16 @@ proof fn lemma_block_sums_collapse<R: Ring>(
             assert(block_start(block_size, hi_m1 as nat) == hi_m1 as nat * block_size);
         };
 
-        // block_end(n, bs, hi-2): raw = ((hi-2)+1)*bs = (hi-1)*bs
-        // (hi-1)*bs <= (nblocks-1)*bs < n, so raw <= n, so block_end = raw = (hi-1)*bs
+        //  block_end(n, bs, hi-2): raw = ((hi-2)+1)*bs = (hi-1)*bs
+        //  (hi-1)*bs <= (nblocks-1)*bs < n, so raw <= n, so block_end = raw = (hi-1)*bs
         assert(hi_m1 * bs <= (nblocks as int - 1) * bs) by (nonlinear_arith)
             requires hi_m1 <= nblocks as int - 1, bs > 0;
         assert(hi_m1 * bs < n as int) by (nonlinear_arith)
             requires hi_m1 * bs <= (nblocks as int - 1) * bs,
                      ((nblocks as int - 1) * bs) < (n as int);
         assert(be_hi_m2 == bs_hi_m1) by {
-            // block_end(n, bs, hi-2) = let raw = ((hi-2)+1)*bs; if raw <= n { raw } else { n }
-            // ((hi-2)+1) = (hi-1), raw = (hi-1)*bs < n, so block_end = raw = (hi-1)*bs
+            //  block_end(n, bs, hi-2) = let raw = ((hi-2)+1)*bs; if raw <= n { raw } else { n }
+            //  ((hi-2)+1) = (hi-1), raw = (hi-1)*bs < n, so block_end = raw = (hi-1)*bs
             assert(((hi_m2 as nat) + 1) == hi_m1 as nat);
             assert((hi_m1 as nat) * block_size == block_start(block_size, hi_m1 as nat));
             let raw = ((hi_m2 as nat) + 1) * block_size;
@@ -180,14 +180,14 @@ proof fn lemma_block_sums_collapse<R: Ring>(
             assert((raw as int) < (n as int));
         };
 
-        // bs*lo <= bs*(hi-1) (for sum_split precondition)
+        //  bs*lo <= bs*(hi-1) (for sum_split precondition)
         assert(bs_lo <= bs_hi_m1) by (nonlinear_arith)
             requires bs_lo == lo * bs, bs_hi_m1 == hi_m1 * bs, lo <= hi_m1, bs > 0;
 
-        // bs*(hi-1) <= be(hi-1) (for sum_split precondition)
-        // block_end(n, bs, hi-1) = min(hi*bs, n). Both branches >= (hi-1)*bs.
+        //  bs*(hi-1) <= be(hi-1) (for sum_split precondition)
+        //  block_end(n, bs, hi-1) = min(hi*bs, n). Both branches >= (hi-1)*bs.
         assert(bs_hi_m1 < n as int);
-        // Explicit case-split on block_end
+        //  Explicit case-split on block_end
         let raw_hi = (hi_m1 as nat + 1) * block_size;
         assert((hi_m1 as nat + 1) == hi as nat);
         if raw_hi <= n {
@@ -197,11 +197,11 @@ proof fn lemma_block_sums_collapse<R: Ring>(
                          bs > 0;
         } else {
             assert(be_hi_m1 == n as int);
-            // bs_hi_m1 < n = be_hi_m1
+            //  bs_hi_m1 < n = be_hi_m1
         }
         assert(bs_hi_m1 <= be_hi_m1);
 
-        // Congruence on add
+        //  Congruence on add
         use verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence;
         lemma_add_congruence::<R>(
             sum::<R>(block_sums_views, lo, hi - 1),
@@ -210,15 +210,15 @@ proof fn lemma_block_sums_collapse<R: Ring>(
             sum::<R>(view_f, bs_hi_m1, be_hi_m1),
         );
 
-        // Since be(hi-2) == bs*(hi-1), the add_congruence result uses the same
-        // intermediate point as sum_split
+        //  Since be(hi-2) == bs*(hi-1), the add_congruence result uses the same
+        //  intermediate point as sum_split
         lemma_sum_split::<R>(view_f, bs_lo, bs_hi_m1, be_hi_m1);
         R::axiom_eqv_symmetric(
             sum::<R>(view_f, bs_lo, be_hi_m1),
             sum::<R>(view_f, bs_lo, bs_hi_m1).add(sum::<R>(view_f, bs_hi_m1, be_hi_m1)),
         );
 
-        // Chain: sum(bsv, lo, hi) eqv peel eqv add_congruence eqv sum_split
+        //  Chain: sum(bsv, lo, hi) eqv peel eqv add_congruence eqv sum_split
         R::axiom_eqv_transitive(
             sum::<R>(block_sums_views, lo, hi),
             sum::<R>(block_sums_views, lo, hi - 1).add(block_sums_views(hi - 1)),
@@ -232,11 +232,11 @@ proof fn lemma_block_sums_collapse<R: Ring>(
     }
 }
 
-/// Generic three-phase inclusive scan for arbitrary-length arrays.
-/// Uses ExecRing trait for type-generic operation.
-/// Phase 1: per-block Hillis-Steele inclusive scan.
-/// Phase 2: exclusive scan of block sums.
-/// Phase 3: add block prefix to each element.
+///  Generic three-phase inclusive scan for arbitrary-length arrays.
+///  Uses ExecRing trait for type-generic operation.
+///  Phase 1: per-block Hillis-Steele inclusive scan.
+///  Phase 2: exclusive scan of block sums.
+///  Phase 3: add block prefix to each element.
 pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
     data: &Vec<T>, block_size: u64,
 ) -> (output: Vec<T>)
@@ -252,18 +252,18 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             output@[i].view().eqv(
                 inclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i]
             ),
-        // Second ensures: direct partial_sum_generic form (for delegation wrappers)
+        //  Second ensures: direct partial_sum_generic form (for delegation wrappers)
         forall|i: int| 0 <= i < data@.len() as int ==>
             output@[i].view().eqv(
                 partial_sum_generic::<T, R>(data@, 0, i + 1)
             ),
 {
     let n: u64 = data.len() as u64;
-    let data_len = data.len(); // usize bridge
+    let data_len = data.len(); //  usize bridge
     let ghost view_f = |j: int| data@[j].view();
     let ghost view_seq: Seq<R> = Seq::new(data@.len(), view_f);
 
-    // Compute nblocks = ceil_div(n, block_size)
+    //  Compute nblocks = ceil_div(n, block_size)
     let nblocks: u64 = (n + block_size - 1) / block_size;
 
     proof {
@@ -297,9 +297,9 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                      block_size as int >= 2, nblocks as int >= 1, n as int >= 1;
     }
 
-    // ============================================================
-    // Phase 1: Per-block inclusive scan → build output + block_sums
-    // ============================================================
+    //  ============================================================
+    //  Phase 1: Per-block inclusive scan → build output + block_sums
+    //  ============================================================
     let mut output: Vec<T> = Vec::new();
     let mut block_sums: Vec<T> = Vec::new();
     let mut b: u64 = 0;
@@ -313,7 +313,7 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             ((nblocks as int - 1) * (block_size as int)) < (n as int),
             data@.len() == n as nat,
             n > 0,
-            n as int == data_len as int, // usize bridge
+            n as int == data_len as int, //  usize bridge
             n <= u64::MAX / 2,
             block_size > 1,
             block_size <= u64::MAX / 2,
@@ -321,19 +321,19 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             all_partial_sums_representable::<T, R>(data@),
             view_f == (|j: int| data@[j].view()),
             view_seq == Seq::new(data@.len(), view_f),
-            // b*bs overflow safety
+            //  b*bs overflow safety
             b < nblocks ==> (b as int) * (block_size as int) < (n as int),
-            // Output length = min(b * block_size, n)
+            //  Output length = min(b * block_size, n)
             output@.len() == (if (b as int * block_size as int) <= (n as int) {
                 (b as int * block_size as int) as nat } else { n as nat }),
-            // Output correctness: within-block inclusive scan
+            //  Output correctness: within-block inclusive scan
             forall|bi: int, j: int|
                 0 <= bi < b as int && 0 <= j < block_size as int
                 && (bi * block_size as int + j) < (n as int)
                 ==> output@[bi * block_size as int + j].view().eqv(
                     sum::<R>(view_f, bi * block_size as int, #[trigger](bi * block_size as int + j + 1))
                 ),
-            // Block sums: each is the reduce of its block
+            //  Block sums: each is the reduce of its block
             forall|bi: int| 0 <= bi < b as int ==>
                 #[trigger] block_sums@[bi].view().eqv(
                     sum::<R>(view_f,
@@ -342,11 +342,11 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 ),
         decreases nblocks - b,
     {
-        // Block start and end indices
+        //  Block start and end indices
         let bsi: u64 = b * block_size;
         let this_block_len: u64 = if bsi + block_size <= n { block_size } else { n - bsi };
 
-        // Extract block elements into sub-vector
+        //  Extract block elements into sub-vector
         let mut block_data: Vec<T> = Vec::new();
         let mut j: u64 = 0;
         while j < this_block_len
@@ -358,7 +358,7 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 bsi == b * block_size,
                 bsi + this_block_len <= n,
                 data@.len() == n as nat,
-                n as int == data_len as int, // usize bridge
+                n as int == data_len as int, //  usize bridge
                 all_partial_sums_representable::<T, R>(data@),
                 view_f == (|j: int| data@[j].view()),
                 forall|k: int| 0 <= k < j as int ==>
@@ -374,12 +374,12 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             j = j + 1;
         }
 
-        // all_partial_sums_representable for sub-block
+        //  all_partial_sums_representable for sub-block
         proof {
             assert forall|lo: int, hi: int| 0 <= lo <= hi <= block_data@.len() implies
                 T::is_representable(#[trigger] partial_sum_generic::<T, R>(block_data@, lo, hi))
             by {
-                // Use view_f-based congruence to match reindex closure
+                //  Use view_f-based congruence to match reindex closure
                 assert forall|k: int| lo <= k < hi implies
                     block_data@[k].view().eqv(view_f(k + bsi as int)) by {
                     R::axiom_eqv_reflexive(block_data@[k].view());
@@ -394,12 +394,12 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                     |k: int| view_f(k + bsi as int),
                     lo, hi,
                 );
-                // partial_sum_generic(block_data, lo, hi).eqv(sum(|k| view_f(k+bsi), lo, hi))
+                //  partial_sum_generic(block_data, lo, hi).eqv(sum(|k| view_f(k+bsi), lo, hi))
 
-                // reindex: partial_sum_generic(data, bsi+lo, bsi+hi).eqv(sum(|i| view_f(i+bsi), lo, hi))
+                //  reindex: partial_sum_generic(data, bsi+lo, bsi+hi).eqv(sum(|i| view_f(i+bsi), lo, hi))
                 lemma_sum_reindex::<R>(view_f, bsi as int + lo, bsi as int + hi, bsi as int);
 
-                // Chain: psg(data, bsi+lo, bsi+hi) eqv sum(|k| view_f(k+bsi), ...) eqv.sym psg(block_data, lo, hi)
+                //  Chain: psg(data, bsi+lo, bsi+hi) eqv sum(|k| view_f(k+bsi), ...) eqv.sym psg(block_data, lo, hi)
                 R::axiom_eqv_symmetric(
                     partial_sum_generic::<T, R>(block_data@, lo, hi),
                     sum::<R>(|k: int| view_f(k + bsi as int), lo, hi),
@@ -410,7 +410,7 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                     partial_sum_generic::<T, R>(block_data@, lo, hi),
                 );
 
-                // Trigger: psg(data, bsi+lo, bsi+hi) is representable
+                //  Trigger: psg(data, bsi+lo, bsi+hi) is representable
                 assert(0 <= bsi as int + lo);
                 assert(bsi as int + hi <= n as int);
                 T::lemma_representable_congruence(
@@ -420,13 +420,13 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             }
         }
 
-        // Inclusive scan of block
+        //  Inclusive scan of block
         let scan = hillis_steele_generic_exec::<T, R>(&block_data, this_block_len);
         let ghost incl_view = Seq::new(block_data@.len(), |k: int| block_data@[k].view());
 
-        // Append scan results to output
+        //  Append scan results to output
         let ghost output_before = output@;
-        let scan_len = scan.len(); // usize bridge for scan indexing
+        let scan_len = scan.len(); //  usize bridge for scan indexing
         let mut j2: u64 = 0;
         while j2 < this_block_len
             invariant
@@ -436,10 +436,10 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 bsi == b * block_size,
                 bsi + this_block_len <= n,
                 scan@.len() == this_block_len as nat,
-                scan_len as int == this_block_len as int, // usize bridge
+                scan_len as int == this_block_len as int, //  usize bridge
                 block_data@.len() == this_block_len as nat,
                 data@.len() == n as nat,
-                n as int == data_len as int, // usize bridge
+                n as int == data_len as int, //  usize bridge
                 view_f == (|j: int| data@[j].view()),
                 view_seq == Seq::new(data@.len(), view_f),
                 incl_view == Seq::new(block_data@.len(), |k: int| block_data@[k].view()),
@@ -448,14 +448,14 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                     block_data@[k].view().eqv(data@[(bsi as int + k) as int].view()),
                 forall|k: int| 0 <= k < scan@.len() as int ==>
                     scan@[k].view().eqv(inclusive_scan::<R>(incl_view)[k]),
-                // Existing output elements preserved
+                //  Existing output elements preserved
                 forall|bi: int, ji: int|
                     0 <= bi < b as int && 0 <= ji < block_size as int
                     && (bi * block_size as int + ji) < (n as int)
                     ==> output@[bi * block_size as int + ji].view().eqv(
                         sum::<R>(view_f, bi * block_size as int, #[trigger](bi * block_size as int + ji + 1))
                     ),
-                // New elements from current block
+                //  New elements from current block
                 forall|k: int| 0 <= k < j2 as int ==>
                     output@[(bsi as int + k) as int].view().eqv(
                         sum::<R>(view_f, bsi as int, #[trigger](bsi as int + k + 1))
@@ -468,17 +468,17 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             }
             let clone = scan[j2 as usize].exec_clone();
             proof {
-                // Step 1: clone.view().eqv(scan@[j2].view()) — from exec_clone + usize bridge
-                // Step 2: scan@[j2].view().eqv(inclusive_scan(incl_view)[j2]) — from invariant
-                // Step 3: Chain to get clone.view().eqv(inclusive_scan(incl_view)[j2])
+                //  Step 1: clone.view().eqv(scan@[j2].view()) — from exec_clone + usize bridge
+                //  Step 2: scan@[j2].view().eqv(inclusive_scan(incl_view)[j2]) — from invariant
+                //  Step 3: Chain to get clone.view().eqv(inclusive_scan(incl_view)[j2])
                 R::axiom_eqv_transitive(
                     clone.view(),
                     scan@[j2 as int].view(),
                     inclusive_scan::<R>(incl_view)[j2 as int],
                 );
 
-                // Step 4: Bridge inclusive_scan(incl_view)[j2] to sum(view_f, bsi, bsi+j2+1)
-                // incl_view[k] eqv view_f(k + bsi)
+                //  Step 4: Bridge inclusive_scan(incl_view)[j2] to sum(view_f, bsi, bsi+j2+1)
+                //  incl_view[k] eqv view_f(k + bsi)
                 assert forall|k: int| 0 <= k < j2 as int + 1 implies
                     incl_view[k].eqv(view_f(k + bsi as int)) by {
                     R::axiom_eqv_reflexive(block_data@[k].view());
@@ -487,32 +487,32 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                         block_data@[k].view(),
                         data@[(bsi as int + k) as int].view(),
                     );
-                    // data@[(bsi+k)] = view_f(k+bsi) since view_f = |j| data@[j].view()
-                    // and bsi+k = k+bsi for int arithmetic
+                    //  data@[(bsi+k)] = view_f(k+bsi) since view_f = |j| data@[j].view()
+                    //  and bsi+k = k+bsi for int arithmetic
                 }
                 lemma_sum_congruence::<R>(
                     |k: int| incl_view[k],
                     |k: int| view_f(k + bsi as int),
                     0, j2 as int + 1,
                 );
-                // sum(|k| incl_view[k], 0, j2+1).eqv(sum(|k| view_f(k+bsi), 0, j2+1))
+                //  sum(|k| incl_view[k], 0, j2+1).eqv(sum(|k| view_f(k+bsi), 0, j2+1))
 
-                // reindex: sum(view_f, bsi, bsi+j2+1).eqv(sum(|i| view_f(i+bsi), 0, j2+1))
+                //  reindex: sum(view_f, bsi, bsi+j2+1).eqv(sum(|i| view_f(i+bsi), 0, j2+1))
                 lemma_sum_reindex::<R>(view_f, bsi as int, bsi as int + j2 as int + 1, bsi as int);
                 R::axiom_eqv_symmetric(
                     sum::<R>(view_f, bsi as int, bsi as int + j2 as int + 1),
                     sum::<R>(|i: int| view_f(i + bsi as int), 0, j2 as int + 1),
                 );
-                // sum(|i| view_f(i+bsi), 0, j2+1).eqv(sum(view_f, bsi, bsi+j2+1))
+                //  sum(|i| view_f(i+bsi), 0, j2+1).eqv(sum(view_f, bsi, bsi+j2+1))
 
-                // Chain: incl_scan[j2] eqv sum(|k| view_f(k+bsi), 0, j2+1) eqv sum(view_f, bsi, bsi+j2+1)
+                //  Chain: incl_scan[j2] eqv sum(|k| view_f(k+bsi), 0, j2+1) eqv sum(view_f, bsi, bsi+j2+1)
                 R::axiom_eqv_transitive(
                     inclusive_scan::<R>(incl_view)[j2 as int],
                     sum::<R>(|k: int| view_f(k + bsi as int), 0, j2 as int + 1),
                     sum::<R>(view_f, bsi as int, bsi as int + j2 as int + 1),
                 );
 
-                // Step 5: clone.view().eqv(sum(view_f, bsi, bsi+j2+1))
+                //  Step 5: clone.view().eqv(sum(view_f, bsi, bsi+j2+1))
                 R::axiom_eqv_transitive(
                     clone.view(),
                     inclusive_scan::<R>(incl_view)[j2 as int],
@@ -521,7 +521,7 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             }
             output.push(clone);
             proof {
-                // Old elements preserved after push
+                //  Old elements preserved after push
                 assert forall|bi: int, ji: int|
                     0 <= bi < b as int && 0 <= ji < block_size as int
                     && (bi * block_size as int + ji) < (n as int)
@@ -537,7 +537,7 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             j2 = j2 + 1;
         }
 
-        // block_sums[b] = last element of scan (= reduce of block)
+        //  block_sums[b] = last element of scan (= reduce of block)
         proof {
             assert(((this_block_len - 1) as int) < (scan_len as int));
             assert(((this_block_len - 1) as usize) as int == (this_block_len - 1) as int);
@@ -545,14 +545,14 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
         let last_clone = scan[(this_block_len - 1) as usize].exec_clone();
         proof {
             let be = bsi as int + this_block_len as int;
-            // last_clone.view().eqv(scan@[tbl-1].view()) — exec_clone + bridge
-            // scan@[tbl-1].view().eqv(inclusive_scan(incl_view)[tbl-1]) — from HS ensures
+            //  last_clone.view().eqv(scan@[tbl-1].view()) — exec_clone + bridge
+            //  scan@[tbl-1].view().eqv(inclusive_scan(incl_view)[tbl-1]) — from HS ensures
             R::axiom_eqv_transitive(
                 last_clone.view(),
                 scan@[(this_block_len - 1) as int].view(),
                 inclusive_scan::<R>(incl_view)[(this_block_len - 1) as int],
             );
-            // Bridge inclusive_scan(incl_view)[tbl-1] to sum(view_f, bsi, be)
+            //  Bridge inclusive_scan(incl_view)[tbl-1] to sum(view_f, bsi, be)
             assert forall|k: int| 0 <= k < this_block_len as int implies
                 incl_view[k].eqv(view_f(k + bsi as int)) by {
                 R::axiom_eqv_reflexive(block_data@[k].view());
@@ -584,10 +584,10 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
         block_sums.push(last_clone);
 
         proof {
-            // === Block sum for block b ===
+            //  === Block sum for block b ===
             let be = bsi as int + this_block_len as int;
-            // last_clone.view() eqv sum(view_f, bsi, be) — already proved
-            // Show bsi == block_start and be == block_end
+            //  last_clone.view() eqv sum(view_f, bsi, be) — already proved
+            //  Show bsi == block_start and be == block_end
             assert(bsi as int == block_start(block_size as nat, b as nat) as int);
             assert(((b as nat + 1) * block_size as nat) as int
                 == b as int * block_size as int + block_size as int)
@@ -603,9 +603,9 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             }
             assert(be == block_end(n as nat, block_size as nat, b as nat) as int);
 
-            // === Output correctness for block b ===
-            // For ji < this_block_len: output@[bsi+ji] eqv sum(view_f, bsi, bsi+ji+1)
-            // covers all j < block_size where b*bs + j < n
+            //  === Output correctness for block b ===
+            //  For ji < this_block_len: output@[bsi+ji] eqv sum(view_f, bsi, bsi+ji+1)
+            //  covers all j < block_size where b*bs + j < n
             assert forall|ji: int| 0 <= ji && ji < block_size as int
                 && b as int * block_size as int + ji < n as int implies
                 output@[b as int * block_size as int + ji].view().eqv(
@@ -620,7 +620,7 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 assert(ji < this_block_len as int);
             }
 
-            // === Preserve old block outputs ===
+            //  === Preserve old block outputs ===
             assert forall|bi: int, ji: int|
                 0 <= bi < b as int && 0 <= ji && ji < block_size as int
                 && bi * block_size as int + ji < n as int
@@ -629,13 +629,13 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                     sum::<R>(view_f, bi * block_size as int,
                         #[trigger](bi * block_size as int + ji + 1)))
             by {
-                // bi < b → bi*bs + ji < b*bs = bsi → index in output_before range
+                //  bi < b → bi*bs + ji < b*bs = bsi → index in output_before range
                 assert(bi * block_size as int + ji < bsi as int) by (nonlinear_arith)
                     requires bi < b as int, 0 <= ji, ji < block_size as int,
                              bsi == b * block_size, block_size > 0;
             }
 
-            // === Output length for next iteration ===
+            //  === Output length for next iteration ===
             if bsi + block_size <= n {
                 assert(output@.len() == ((b as int + 1) * block_size as int) as nat) by (nonlinear_arith)
                     requires output@.len() as int == bsi as int + this_block_len as int,
@@ -648,7 +648,7 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 assert(output@.len() == n as nat);
             }
 
-            // === b+1 < nblocks ==> (b+1)*bs < n ===
+            //  === b+1 < nblocks ==> (b+1)*bs < n ===
             if b + 1 < nblocks {
                 assert(((b + 1) as int) * (block_size as int) < (n as int)) by (nonlinear_arith)
                     requires (b + 1) as int <= (nblocks as int - 1),
@@ -659,50 +659,50 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
         b = b + 1;
     }
 
-    // ============================================================
-    // Phase 2: Exclusive scan of block_sums
-    // ============================================================
-    // Prove preconditions for exclusive_scan_generic_exec
+    //  ============================================================
+    //  Phase 2: Exclusive scan of block_sums
+    //  ============================================================
+    //  Prove preconditions for exclusive_scan_generic_exec
     proof {
-        // nblocks <= u64::MAX / 2 (since nblocks <= n <= u64::MAX / 2)
+        //  nblocks <= u64::MAX / 2 (since nblocks <= n <= u64::MAX / 2)
         assert(nblocks as int <= n as int);
 
-        // all_partial_sums_representable for block_sums
+        //  all_partial_sums_representable for block_sums
         let ghost bsv = |i: int| block_sums@[i].view();
         assert forall|lo: int, hi: int| 0 <= lo <= hi <= block_sums@.len() implies
             T::is_representable(#[trigger] partial_sum_generic::<T, R>(block_sums@, lo, hi))
         by {
             if lo == hi {
-                // Empty sum = R::zero(), representable from data's all_partial_sums_representable
+                //  Empty sum = R::zero(), representable from data's all_partial_sums_representable
                 lemma_sum_empty::<R>(bsv, lo, hi);
-                // sum(bsv, lo, lo) eqv R::zero() = partial_sum_generic(data@, 0, 0)
+                //  sum(bsv, lo, lo) eqv R::zero() = partial_sum_generic(data@, 0, 0)
                 T::lemma_representable_congruence(
                     partial_sum_generic::<T, R>(data@, 0, 0),
                     partial_sum_generic::<T, R>(block_sums@, lo, hi),
                 );
             } else {
-                // Non-empty: collapse to contiguous data sum
+                //  Non-empty: collapse to contiguous data sum
                 lemma_block_sums_collapse::<R>(
                     bsv, view_f, block_size as nat, n as nat, nblocks as nat, lo, hi,
                 );
-                // sum(bsv, lo, hi) eqv sum(view_f, bs*lo, be(hi-1))
-                // = partial_sum_generic(data@, bs*lo, be(hi-1))
-                // which is representable (0 <= bs*lo <= be(hi-1) <= n)
+                //  sum(bsv, lo, hi) eqv sum(view_f, bs*lo, be(hi-1))
+                //  = partial_sum_generic(data@, bs*lo, be(hi-1))
+                //  which is representable (0 <= bs*lo <= be(hi-1) <= n)
                 let psg_lo = block_start(block_size as nat, lo as nat) as int;
                 let psg_hi = block_end(n as nat, block_size as nat, (hi - 1) as nat) as int;
-                // Unfold block_start: lo * bs
+                //  Unfold block_start: lo * bs
                 assert(psg_lo == lo as int * block_size as int);
                 assert(0 <= psg_lo) by (nonlinear_arith)
                     requires psg_lo == lo as int * block_size as int, lo >= 0, block_size > 0;
-                // psg_lo <= psg_hi: lo*bs <= block_end(n, bs, hi-1)
-                // Since lo <= hi-1, lo*bs <= (hi-1)*bs < n, and block_end >= min((hi)*bs, n) >= (hi-1)*bs
+                //  psg_lo <= psg_hi: lo*bs <= block_end(n, bs, hi-1)
+                //  Since lo <= hi-1, lo*bs <= (hi-1)*bs < n, and block_end >= min((hi)*bs, n) >= (hi-1)*bs
                 assert(((hi - 1) as int * block_size as int) < (n as int)) by (nonlinear_arith)
                     requires hi - 1 <= nblocks as int - 1,
                              ((nblocks as int - 1) * block_size as int) < (n as int),
                              block_size > 0;
                 assert(psg_lo <= (hi - 1) as int * block_size as int) by (nonlinear_arith)
                     requires psg_lo == lo as int * block_size as int, lo <= hi - 1, block_size > 0;
-                // Case-split on block_end to prove psg_lo <= psg_hi
+                //  Case-split on block_end to prove psg_lo <= psg_hi
                 let raw_psg = ((hi - 1) as nat + 1) * block_size as nat;
                 assert(((hi - 1) as nat + 1) == hi as nat);
                 if raw_psg <= n as nat {
@@ -716,7 +716,7 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 }
                 assert(psg_lo <= psg_hi);
                 assert(psg_hi <= n as int);
-                // Collapse gives block_sums eqv data, need symmetric for representable_congruence
+                //  Collapse gives block_sums eqv data, need symmetric for representable_congruence
                 R::axiom_eqv_symmetric(
                     partial_sum_generic::<T, R>(block_sums@, lo, hi),
                     partial_sum_generic::<T, R>(data@, psg_lo, psg_hi),
@@ -730,9 +730,9 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
     }
     let block_prefixes = exclusive_scan_generic_exec::<T, R>(&block_sums, nblocks);
 
-    // ============================================================
-    // Phase 3: Add block prefix to each element
-    // ============================================================
+    //  ============================================================
+    //  Phase 3: Add block prefix to each element
+    //  ============================================================
     let mut result: Vec<T> = Vec::new();
     let mut b3: u64 = 0;
 
@@ -745,7 +745,7 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             ((nblocks as int - 1) * (block_size as int)) < (n as int),
             data@.len() == n as nat,
             n > 0,
-            n as int == data_len as int, // usize bridge
+            n as int == data_len as int, //  usize bridge
             n <= u64::MAX / 2,
             block_size > 1,
             block_size <= u64::MAX / 2,
@@ -755,31 +755,31 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             output@.len() == n as nat,
             block_prefixes@.len() == nblocks as nat,
             block_sums@.len() == nblocks as nat,
-            // b3*bs overflow safety
+            //  b3*bs overflow safety
             b3 < nblocks ==> (b3 as int) * (block_size as int) < (n as int),
             result@.len() == (if (b3 as int * block_size as int) <= (n as int) {
                 (b3 as int * block_size as int) as nat } else { n as nat }),
-            // Output elements are within-block inclusive scans
+            //  Output elements are within-block inclusive scans
             forall|bi: int, j: int|
                 0 <= bi < nblocks as int && 0 <= j < block_size as int
                 && (bi * block_size as int + j) < (n as int)
                 ==> output@[bi * block_size as int + j].view().eqv(
                     sum::<R>(view_f, bi * block_size as int, #[trigger](bi * block_size as int + j + 1))
                 ),
-            // Block sums
+            //  Block sums
             forall|bi: int| 0 <= bi < nblocks as int ==>
                 #[trigger] block_sums@[bi].view().eqv(
                     sum::<R>(view_f,
                         block_start(block_size as nat, bi as nat) as int,
                         block_end(n as nat, block_size as nat, bi as nat) as int)
                 ),
-            // Block prefixes are exclusive scan of block sums
+            //  Block prefixes are exclusive scan of block sums
             forall|bi: int| 0 <= bi < nblocks as int ==>
                 block_prefixes@[bi].view().eqv(
                     exclusive_scan::<R>(Seq::new(block_sums@.len(),
                         |k: int| block_sums@[k].view()))[bi]
                 ),
-            // Completed result elements are global inclusive scan
+            //  Completed result elements are global inclusive scan
             forall|i: int| 0 <= i < result@.len() as int ==>
                 result@[i].view().eqv(
                     inclusive_scan::<R>(view_seq)[i]
@@ -789,24 +789,24 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
         let bsi3: u64 = b3 * block_size;
         let this_block_len3: u64 = if bsi3 + block_size <= n { block_size } else { n - bsi3 };
 
-        // Establish block_prefixes@[b3].view() eqv sum(view_f, 0, bsi3)
+        //  Establish block_prefixes@[b3].view() eqv sum(view_f, 0, bsi3)
         proof {
-            // Use the exact same closure expression as the invariant
+            //  Use the exact same closure expression as the invariant
             let ghost bsv_seq = Seq::new(block_sums@.len(),
                 |k: int| block_sums@[k].view());
             let ghost bsv = |j: int| block_sums@[j].view();
 
             if b3 == 0 {
-                // exclusive_scan(bsv_seq)[0] = sum(|j| bsv_seq[j], 0, 0)
-                // Both sum(view_f, 0, 0) and sum(|j| bsv_seq[j], 0, 0) eqv R::zero()
+                //  exclusive_scan(bsv_seq)[0] = sum(|j| bsv_seq[j], 0, 0)
+                //  Both sum(view_f, 0, 0) and sum(|j| bsv_seq[j], 0, 0) eqv R::zero()
                 lemma_sum_empty::<R>(view_f, 0int, 0int);
 
-                // block_prefixes[0] eqv exclusive_scan(bsv_seq)[0] from invariant
-                // exclusive_scan(bsv_seq)[0] = R::zero() by definition (sum over empty range)
-                // Bridge: block_prefixes[0].view() eqv exc_scan[0], exc_scan[0] eqv zero, zero eqv.sym sum(vf,0,0)
+                //  block_prefixes[0] eqv exclusive_scan(bsv_seq)[0] from invariant
+                //  exclusive_scan(bsv_seq)[0] = R::zero() by definition (sum over empty range)
+                //  Bridge: block_prefixes[0].view() eqv exc_scan[0], exc_scan[0] eqv zero, zero eqv.sym sum(vf,0,0)
                 let exc_val = exclusive_scan::<R>(bsv_seq)[0];
                 lemma_sum_empty::<R>(|j: int| bsv_seq[j], 0int, 0int);
-                // exc_val = sum(|j| bsv_seq[j], 0, 0) which eqv R::zero()
+                //  exc_val = sum(|j| bsv_seq[j], 0, 0) which eqv R::zero()
                 R::axiom_eqv_transitive(
                     block_prefixes@[0].view(), exc_val, R::zero(),
                 );
@@ -815,29 +815,29 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                     block_prefixes@[0].view(), R::zero(), sum::<R>(view_f, 0, 0),
                 );
             } else {
-                // From invariant: block_prefixes[b3].view() eqv exclusive_scan(bsv_seq)[b3]
+                //  From invariant: block_prefixes[b3].view() eqv exclusive_scan(bsv_seq)[b3]
                 let exc_val = exclusive_scan::<R>(bsv_seq)[b3 as int];
-                // exc_val = sum(|j| bsv_seq[j], 0, b3) by definition of exclusive_scan
+                //  exc_val = sum(|j| bsv_seq[j], 0, b3) by definition of exclusive_scan
 
-                // Congruence: sum(|j| bsv_seq[j], 0, b3) eqv sum(bsv, 0, b3)
+                //  Congruence: sum(|j| bsv_seq[j], 0, b3) eqv sum(bsv, 0, b3)
                 assert forall|j: int| 0 <= j < b3 as int implies
                     bsv_seq[j].eqv(bsv(j)) by {
                     R::axiom_eqv_reflexive(bsv_seq[j]);
                 }
                 lemma_sum_congruence::<R>(|j: int| bsv_seq[j], bsv, 0, b3 as int);
 
-                // Block sums collapse: sum(bsv, 0, b3) eqv sum(view_f, 0, block_end(n, bs, b3-1))
+                //  Block sums collapse: sum(bsv, 0, b3) eqv sum(view_f, 0, block_end(n, bs, b3-1))
                 lemma_block_sums_collapse::<R>(
                     bsv, view_f, block_size as nat, n as nat, nblocks as nat, 0, b3 as int,
                 );
                 assert(block_start(block_size as nat, 0nat) == 0nat);
-                // block_end(n, bs, b3-1) = bsi3 since b3*bs < n
+                //  block_end(n, bs, b3-1) = bsi3 since b3*bs < n
                 assert((b3 as int * block_size as int) < (n as int));
                 assert(block_end(n as nat, block_size as nat, (b3 - 1) as nat) == bsi3 as nat);
 
-                // Chain: block_prefixes[b3] eqv exc_val eqv sum(bsv, 0, b3) eqv sum(vf, 0, bsi3)
-                // exc_val = sum(|j| bsv_seq[j], 0, b3), and we have
-                // sum(|j| bsv_seq[j], 0, b3) eqv sum(bsv, 0, b3)
+                //  Chain: block_prefixes[b3] eqv exc_val eqv sum(bsv, 0, b3) eqv sum(vf, 0, bsi3)
+                //  exc_val = sum(|j| bsv_seq[j], 0, b3), and we have
+                //  sum(|j| bsv_seq[j], 0, b3) eqv sum(bsv, 0, b3)
                 R::axiom_eqv_transitive(
                     block_prefixes@[b3 as int].view(),
                     exc_val,
@@ -865,7 +865,7 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 nblocks as int * block_size as int >= n as int,
                 data@.len() == n as nat,
                 n > 0,
-                n as int == data_len as int, // usize bridge
+                n as int == data_len as int, //  usize bridge
                 block_size > 1,
                 view_f == (|j: int| data@[j].view()),
                 view_seq == Seq::new(data@.len(), view_f),
@@ -873,21 +873,21 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 output@.len() == n as nat,
                 block_prefixes@.len() == nblocks as nat,
                 result@.len() == (bsi3 as int + j3 as int) as nat,
-                // Output invariant
+                //  Output invariant
                 forall|bi: int, ji: int|
                     0 <= bi < nblocks as int && 0 <= ji < block_size as int
                     && (bi * block_size as int + ji) < (n as int)
                     ==> output@[bi * block_size as int + ji].view().eqv(
                         sum::<R>(view_f, bi * block_size as int, #[trigger](bi * block_size as int + ji + 1))
                     ),
-                // Block prefix for b3
+                //  Block prefix for b3
                 block_prefixes@[b3 as int].view().eqv(
                     sum::<R>(view_f, 0, bsi3 as int)
                 ),
-                // Completed prior blocks
+                //  Completed prior blocks
                 forall|i: int| 0 <= i < (b3 as int * block_size as int) && i < n as int ==>
                     result@[i].view().eqv(inclusive_scan::<R>(view_seq)[i]),
-                // Current block progress
+                //  Current block progress
                 forall|k: int| 0 <= k < j3 as int ==>
                     (#[trigger] result@[(bsi3 as int + k) as int]).view().eqv(
                         inclusive_scan::<R>(view_seq)[(bsi3 as int + k) as int]
@@ -897,30 +897,30 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             proof {
                 let gi = bsi3 as int + j3 as int;
                 assert((gi) < (n as int));
-                assert(((bsi3 + j3) as usize) as int == gi); // usize bridge
+                assert(((bsi3 + j3) as usize) as int == gi); //  usize bridge
             }
             let idx: usize = (bsi3 + j3) as usize;
-            // result[bsi3+j3] = block_prefix[b3] + output[bsi3+j3]
+            //  result[bsi3+j3] = block_prefix[b3] + output[bsi3+j3]
             proof {
                 let gi = bsi3 as int + j3 as int;
                 let prefix_view = block_prefixes@[b3 as int].view();
                 let elem_view = output@[gi].view();
 
-                // Trigger representability from all_partial_sums_representable
+                //  Trigger representability from all_partial_sums_representable
                 assert(T::is_representable(partial_sum_generic::<T, R>(data@, 0, bsi3 as int)));
                 assert(T::is_representable(partial_sum_generic::<T, R>(data@, bsi3 as int, gi + 1)));
                 assert(T::is_representable(partial_sum_generic::<T, R>(data@, 0, gi + 1)));
 
-                // prefix_view eqv sum(view_f, 0, bsi3) — from invariant
-                // sum(view_f, 0, bsi3) == partial_sum_generic(data@, 0, bsi3) by view_f def
+                //  prefix_view eqv sum(view_f, 0, bsi3) — from invariant
+                //  sum(view_f, 0, bsi3) == partial_sum_generic(data@, 0, bsi3) by view_f def
                 R::axiom_eqv_symmetric(prefix_view, sum::<R>(view_f, 0, bsi3 as int));
                 T::lemma_representable_congruence(
                     partial_sum_generic::<T, R>(data@, 0, bsi3 as int),
                     prefix_view,
                 );
 
-                // elem_view eqv sum(view_f, bsi3, gi+1) — from output invariant
-                // Trigger output invariant: bi = b3, j = j3
+                //  elem_view eqv sum(view_f, bsi3, gi+1) — from output invariant
+                //  Trigger output invariant: bi = b3, j = j3
                 assert(output@[b3 as int * block_size as int + j3 as int].view().eqv(
                     sum::<R>(view_f, b3 as int * block_size as int, b3 as int * block_size as int + j3 as int + 1)
                 ));
@@ -930,28 +930,28 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                     elem_view,
                 );
 
-                // prefix_view.add(elem_view) eqv sum(view_f, 0, bsi3).add(sum(view_f, bsi3, gi+1))
+                //  prefix_view.add(elem_view) eqv sum(view_f, 0, bsi3).add(sum(view_f, bsi3, gi+1))
                 use verus_algebra::lemmas::additive_group_lemmas::lemma_add_congruence;
                 lemma_add_congruence::<R>(
                     prefix_view, sum::<R>(view_f, 0, bsi3 as int),
                     elem_view, sum::<R>(view_f, bsi3 as int, gi + 1),
                 );
 
-                // sum_split: sum(view_f, 0, gi+1) eqv sum(view_f, 0, bsi3).add(sum(view_f, bsi3, gi+1))
+                //  sum_split: sum(view_f, 0, gi+1) eqv sum(view_f, 0, bsi3).add(sum(view_f, bsi3, gi+1))
                 lemma_sum_split::<R>(view_f, 0, bsi3 as int, gi + 1);
                 R::axiom_eqv_symmetric(
                     sum::<R>(view_f, 0, gi + 1),
                     sum::<R>(view_f, 0, bsi3 as int).add(sum::<R>(view_f, bsi3 as int, gi + 1)),
                 );
 
-                // Chain: prefix.add(elem) eqv sum(0, bsi).add(sum(bsi, gi+1)) eqv sum(0, gi+1)
+                //  Chain: prefix.add(elem) eqv sum(0, bsi).add(sum(bsi, gi+1)) eqv sum(0, gi+1)
                 R::axiom_eqv_transitive(
                     prefix_view.add(elem_view),
                     sum::<R>(view_f, 0, bsi3 as int).add(sum::<R>(view_f, bsi3 as int, gi + 1)),
                     sum::<R>(view_f, 0, gi + 1),
                 );
 
-                // is_representable(prefix.add(elem))
+                //  is_representable(prefix.add(elem))
                 R::axiom_eqv_symmetric(
                     prefix_view.add(elem_view),
                     sum::<R>(view_f, 0, gi + 1),
@@ -970,29 +970,29 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             let added = block_prefixes[b3 as usize].exec_add(&output[idx]);
             proof {
                 let gi = bsi3 as int + j3 as int;
-                // added.view() eqv block_prefixes[b3].view().add(output[gi].view())
-                // which is eqv to sum(view_f, 0, gi+1)
+                //  added.view() eqv block_prefixes[b3].view().add(output[gi].view())
+                //  which is eqv to sum(view_f, 0, gi+1)
                 R::axiom_eqv_transitive(
                     added.view(),
                     block_prefixes@[b3 as int].view().add(output@[gi].view()),
                     sum::<R>(view_f, 0, gi + 1),
                 );
 
-                // Bridge sum(view_f, 0, gi+1) to inclusive_scan(view_seq)[gi]
-                // inclusive_scan(view_seq)[gi] = sum(|j| view_seq[j], 0, gi+1)
-                // view_seq[j] = view_f(j), so sum(|j| view_seq[j], ...) eqv sum(view_f, ...)
+                //  Bridge sum(view_f, 0, gi+1) to inclusive_scan(view_seq)[gi]
+                //  inclusive_scan(view_seq)[gi] = sum(|j| view_seq[j], 0, gi+1)
+                //  view_seq[j] = view_f(j), so sum(|j| view_seq[j], ...) eqv sum(view_f, ...)
                 assert forall|j: int| 0 <= j < gi + 1 implies
                     view_seq[j].eqv(view_f(j)) by {
                     R::axiom_eqv_reflexive(view_seq[j]);
                 }
                 lemma_sum_congruence::<R>(|j: int| view_seq[j], view_f, 0, gi + 1);
-                // sum(|j| view_seq[j], 0, gi+1).eqv(sum(view_f, 0, gi+1))
+                //  sum(|j| view_seq[j], 0, gi+1).eqv(sum(view_f, 0, gi+1))
                 R::axiom_eqv_symmetric(
                     sum::<R>(|j: int| view_seq[j], 0, gi + 1),
                     sum::<R>(view_f, 0, gi + 1),
                 );
-                // sum(view_f, 0, gi+1).eqv(sum(|j| view_seq[j], 0, gi+1))
-                // = inclusive_scan(view_seq)[gi]
+                //  sum(view_f, 0, gi+1).eqv(sum(|j| view_seq[j], 0, gi+1))
+                //  = inclusive_scan(view_seq)[gi]
                 R::axiom_eqv_transitive(
                     added.view(),
                     sum::<R>(view_f, 0, gi + 1),
@@ -1005,7 +1005,7 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
         }
 
         proof {
-            // Output length for next iteration
+            //  Output length for next iteration
             if bsi3 + block_size <= n {
                 assert(result@.len() == ((b3 as int + 1) * block_size as int) as nat) by (nonlinear_arith)
                     requires result@.len() as int == bsi3 as int + this_block_len3 as int,
@@ -1018,12 +1018,12 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                 assert(result@.len() == n as nat);
             }
 
-            // Bridge: (b3+1)*bs == bsi3+bs for invariant form
+            //  Bridge: (b3+1)*bs == bsi3+bs for invariant form
             assert((b3 as int + 1) * block_size as int == bsi3 as int + block_size as int)
                 by (nonlinear_arith)
                 requires bsi3 as int == b3 as int * block_size as int;
 
-            // b3+1 < nblocks ==> (b3+1)*bs < n
+            //  b3+1 < nblocks ==> (b3+1)*bs < n
             if b3 + 1 < nblocks {
                 assert(((b3 + 1) as int) * (block_size as int) < (n as int)) by (nonlinear_arith)
                     requires (b3 + 1) as int <= (nblocks as int - 1),
@@ -1031,14 +1031,14 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
                              block_size > 0;
             }
 
-            // Completed result: combine prior blocks with current block
+            //  Completed result: combine prior blocks with current block
             assert forall|i: int| 0 <= i < result@.len() as int implies
                 result@[i].view().eqv(inclusive_scan::<R>(view_seq)[i])
             by {
                 if i < bsi3 as int {
-                    // From "completed prior blocks" invariant
+                    //  From "completed prior blocks" invariant
                 } else {
-                    // From "current block progress" invariant (j3 == this_block_len3)
+                    //  From "current block progress" invariant (j3 == this_block_len3)
                     let k = i - bsi3 as int;
                     assert(0 <= k);
                     assert(k < this_block_len3 as int);
@@ -1051,15 +1051,15 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
         b3 = b3 + 1;
     }
 
-    // Prove second ensures: bridge inclusive_scan to partial_sum_generic
+    //  Prove second ensures: bridge inclusive_scan to partial_sum_generic
     proof {
         assert forall|i: int| 0 <= i < data@.len() as int implies
             result@[i].view().eqv(partial_sum_generic::<T, R>(data@, 0, i + 1))
         by {
-            // From Phase 3 invariant: result@[i].view() eqv inclusive_scan(view_seq)[i]
-            // inclusive_scan(view_seq)[i] = sum(|j| view_seq[j], 0, i+1)
-            // partial_sum_generic(data@, 0, i+1) = sum(|j| data@[j].view(), 0, i+1)
-            // view_seq[j] = data@[j].view() by Seq::new axiom
+            //  From Phase 3 invariant: result@[i].view() eqv inclusive_scan(view_seq)[i]
+            //  inclusive_scan(view_seq)[i] = sum(|j| view_seq[j], 0, i+1)
+            //  partial_sum_generic(data@, 0, i+1) = sum(|j| data@[j].view(), 0, i+1)
+            //  view_seq[j] = data@[j].view() by Seq::new axiom
             assert forall|j: int| 0 <= j < i + 1 implies
                 view_seq[j].eqv(data@[j].view()) by {
                 R::axiom_eqv_reflexive(view_seq[j]);
@@ -1080,11 +1080,11 @@ pub fn three_phase_inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
     result
 }
 
-// ============================================================
-// Compact
-// ============================================================
+//  ============================================================
+//  Compact
+//  ============================================================
 
-/// Compact (stream compaction / filter).
+///  Compact (stream compaction / filter).
 pub fn compact_exec(
     data: &Vec<i64>, pred: &Vec<bool>,
 ) -> (result: (Vec<i64>, u64))
@@ -1101,12 +1101,12 @@ pub fn compact_exec(
     compact_generic_exec(data, pred, 0i64)
 }
 
-// ============================================================
-// Generic compact (data type parameterized, scan stays i64)
-// ============================================================
+//  ============================================================
+//  Generic compact (data type parameterized, scan stays i64)
+//  ============================================================
 
-/// Generic scatter lemma: if each true position j has output[compact_indices[j]] == data[j],
-/// then output[i] == compact_result(data, pred)[i] for all i < compact_size.
+///  Generic scatter lemma: if each true position j has output[compact_indices[j]] == data[j],
+///  then output[i] == compact_result(data, pred)[i] for all i < compact_size.
 proof fn lemma_scatter_is_compact_result_generic<T>(
     data: Seq<T>, pred: Seq<bool>, output: Seq<T>, n: u64,
 )
@@ -1132,8 +1132,8 @@ proof fn lemma_scatter_is_compact_result_generic<T>(
     }
 }
 
-/// Generic compact: works for any Copy type.
-/// The scan internally uses i64 for predicate indices; data elements are T.
+///  Generic compact: works for any Copy type.
+///  The scan internally uses i64 for predicate indices; data elements are T.
 pub fn compact_generic_exec<T: Copy>(
     data: &Vec<T>, pred: &Vec<bool>, fill: T,
 ) -> (result: (Vec<T>, u64))
@@ -1150,7 +1150,7 @@ pub fn compact_generic_exec<T: Copy>(
     let n = data.len() as u64;
     let data_len = data.len();
 
-    // Build pred_int: 0/1 values from pred (always i64 for the scan)
+    //  Build pred_int: 0/1 values from pred (always i64 for the scan)
     let mut pred_int: Vec<i64> = Vec::new();
     let mut pi: u64 = 0;
     while pi < n
@@ -1189,7 +1189,7 @@ pub fn compact_generic_exec<T: Copy>(
 
     let scan_result = exclusive_scan_i64_exec(&pred_int);
 
-    // Allocate output buffer with fill value
+    //  Allocate output buffer with fill value
     let mut output: Vec<T> = Vec::new();
     let mut oi: u64 = 0;
     while oi < n
@@ -1200,7 +1200,7 @@ pub fn compact_generic_exec<T: Copy>(
         oi = oi + 1;
     }
 
-    // Scatter: place data[i] at scatter index when pred[i]
+    //  Scatter: place data[i] at scatter index when pred[i]
     let mut si: u64 = 0;
     while si < n
         invariant
@@ -1285,7 +1285,7 @@ pub fn compact_generic_exec<T: Copy>(
         si = si + 1;
     }
 
-    // Count true values
+    //  Count true values
     let mut count: u64 = 0;
     let mut ci: u64 = 0;
     while ci < n
@@ -1318,12 +1318,12 @@ pub fn compact_generic_exec<T: Copy>(
     (output, count)
 }
 
-// ============================================================
-// Unified scan API
-// ============================================================
+//  ============================================================
+//  Unified scan API
+//  ============================================================
 
-/// Inclusive prefix scan for arbitrary-length data.
-/// Dispatches to Hillis-Steele (small) or three-phase block scan (large).
+///  Inclusive prefix scan for arbitrary-length data.
+///  Dispatches to Hillis-Steele (small) or three-phase block scan (large).
 pub fn inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
     data: &Vec<T>,
 ) -> (output: Vec<T>)
@@ -1337,7 +1337,7 @@ pub fn inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
             output@[i].view().eqv(
                 inclusive_scan::<R>(Seq::new(data@.len(), |j: int| data@[j].view()))[i]
             ),
-        // Second ensures: partial_sum_generic form for delegation wrappers
+        //  Second ensures: partial_sum_generic form for delegation wrappers
         forall|i: int| 0 <= i < data@.len() as int ==>
             output@[i].view().eqv(
                 partial_sum_generic::<T, R>(data@, 0, i + 1)
@@ -1351,7 +1351,7 @@ pub fn inclusive_scan_generic_exec<T: ExecRing<R>, R: Ring>(
     }
 }
 
-/// Inclusive prefix scan for i64 data of arbitrary length.
+///  Inclusive prefix scan for i64 data of arbitrary length.
 pub fn inclusive_scan_i64_exec(
     data: &Vec<i64>,
 ) -> (output: Vec<i64>)
@@ -1386,8 +1386,8 @@ pub fn inclusive_scan_i64_exec(
     result
 }
 
-/// Exclusive prefix scan for i64 data of arbitrary length.
-/// result[0] = 0, result[i] = data[0] + ... + data[i-1].
+///  Exclusive prefix scan for i64 data of arbitrary length.
+///  result[0] = 0, result[i] = data[0] + ... + data[i-1].
 pub fn exclusive_scan_i64_exec(
     data: &Vec<i64>,
 ) -> (output: Vec<i64>)
@@ -1423,8 +1423,8 @@ pub fn exclusive_scan_i64_exec(
     result
 }
 
-/// Reduce (sum) for i64 data of arbitrary length.
-/// Returns data[0] + data[1] + ... + data[n-1].
+///  Reduce (sum) for i64 data of arbitrary length.
+///  Returns data[0] + data[1] + ... + data[n-1].
 pub fn reduce_i64_exec(
     data: &Vec<i64>,
 ) -> (result: i64)
@@ -1440,15 +1440,15 @@ pub fn reduce_i64_exec(
     let last = scan[(n - 1) as usize];
     proof {
         lemma_reduce_equals_last_inclusive::<int>(as_int_seq(data@), data@.len());
-        // Bridge: inclusive_scan_int uses as_int_seq internally, so
-        // scan[n-1] == inclusive_scan_int(data@)[n-1] == reduce::<int>(as_int_seq(data@), 0, n)
-        // And reduce_int(data@, 0, n) == reduce::<int>(as_int_seq(data@), 0, n) by definition.
+        //  Bridge: inclusive_scan_int uses as_int_seq internally, so
+        //  scan[n-1] == inclusive_scan_int(data@)[n-1] == reduce::<int>(as_int_seq(data@), 0, n)
+        //  And reduce_int(data@, 0, n) == reduce::<int>(as_int_seq(data@), 0, n) by definition.
     }
     last
 }
 
-/// Histogram: count elements in each bucket.
-/// data[i] is the bucket index for element i. Returns counts[b] = number of elements with data[i] == b.
+///  Histogram: count elements in each bucket.
+///  data[i] is the bucket index for element i. Returns counts[b] = number of elements with data[i] == b.
 pub fn histogram_exec(data: &Vec<u64>, num_buckets: u64) -> (counts: Vec<u64>)
     requires
         data@.len() > 0,
@@ -1467,7 +1467,7 @@ pub fn histogram_exec(data: &Vec<u64>, num_buckets: u64) -> (counts: Vec<u64>)
     let n = data.len();
     let ghost data_nat = Seq::new(data@.len(), |i: int| data@[i] as nat);
 
-    // Initialize counts to zero
+    //  Initialize counts to zero
     let mut counts: Vec<u64> = Vec::new();
     let mut bi: u64 = 0;
     while bi < num_buckets
@@ -1481,7 +1481,7 @@ pub fn histogram_exec(data: &Vec<u64>, num_buckets: u64) -> (counts: Vec<u64>)
         bi = bi + 1;
     }
 
-    // Count loop
+    //  Count loop
     let mut idx: usize = 0;
     while idx < n
         invariant
@@ -1493,14 +1493,14 @@ pub fn histogram_exec(data: &Vec<u64>, num_buckets: u64) -> (counts: Vec<u64>)
             data_nat == Seq::new(data@.len(), |i: int| data@[i] as nat),
             forall|i: int| 0 <= i < data@.len() as int ==>
                 (data@[i] as nat) < num_buckets as nat,
-            // counts[b] == compact_size(bucket_pred(data_nat, b).take(idx))
+            //  counts[b] == compact_size(bucket_pred(data_nat, b).take(idx))
             forall|b: int| 0 <= b < num_buckets as int ==>
                 counts@[b] as nat == compact_size(
                     bucket_pred(data_nat, b as nat).take(idx as int)),
         decreases n - idx,
     {
         let bucket: u64 = data[idx];
-        // Bridge u64 → usize cast via counts.len()
+        //  Bridge u64 → usize cast via counts.len()
         let counts_len: usize = counts.len();
         proof {
             assert(data@[idx as int] as nat == data_nat[idx as int]);
@@ -1509,14 +1509,14 @@ pub fn histogram_exec(data: &Vec<u64>, num_buckets: u64) -> (counts: Vec<u64>)
         }
         let bucket_idx: usize = bucket as usize;
         proof {
-            // Now Z3 knows bucket fits in usize
+            //  Now Z3 knows bucket fits in usize
             assert((bucket_idx as int) == (bucket as int));
         }
 
         let old_count = counts[bucket_idx];
 
         proof {
-            // Trigger invariant at b = bucket_idx as int
+            //  Trigger invariant at b = bucket_idx as int
             let b_int: int = bucket_idx as int;
             let bp = bucket_pred(data_nat, b_int as nat);
             let bp_take = bp.take(idx as int);
@@ -1531,25 +1531,25 @@ pub fn histogram_exec(data: &Vec<u64>, num_buckets: u64) -> (counts: Vec<u64>)
 
         proof {
             let ghost bucket_b: int = bucket_idx as int;
-            // data_nat[idx] == bucket as nat == (bucket_idx as int) as nat
+            //  data_nat[idx] == bucket as nat == (bucket_idx as int) as nat
             assert(data_nat[idx as int] == bucket as nat);
             assert(bucket as nat == (bucket_b as nat));
 
-            // Step + re-establish invariant for all buckets
+            //  Step + re-establish invariant for all buckets
             assert forall|b: int| 0 <= b < num_buckets as int implies
                 counts@[b] as nat == compact_size(
                     #[trigger] bucket_pred(data_nat, b as nat).take((idx + 1) as int))
             by {
                 let pred_b = bucket_pred(data_nat, b as nat);
                 lemma_compact_size_step(pred_b, idx as int);
-                // pred_b[idx] == (data_nat[idx] == b as nat)
-                // data_nat[idx] == bucket_b as nat
+                //  pred_b[idx] == (data_nat[idx] == b as nat)
+                //  data_nat[idx] == bucket_b as nat
                 assert(pred_b[idx as int] == (data_nat[idx as int] == b as nat));
-                // From loop invariant
+                //  From loop invariant
                 assert(pre_counts[b] as nat
                     == compact_size(bucket_pred(data_nat, b as nat).take(idx as int)));
                 if b == bucket_b {
-                    // pred_b[idx] is true: data_nat[idx] == b as nat
+                    //  pred_b[idx] is true: data_nat[idx] == b as nat
                     assert(b as nat == bucket_b as nat);
                     assert(data_nat[idx as int] == bucket_b as nat);
                     assert(data_nat[idx as int] == b as nat);
@@ -1559,7 +1559,7 @@ pub fn histogram_exec(data: &Vec<u64>, num_buckets: u64) -> (counts: Vec<u64>)
                     assert(counts@[b] == old_count + 1);
                     assert(old_count == pre_counts[b]);
                 } else {
-                    // pred_b[idx] is false
+                    //  pred_b[idx] is false
                     assert(data_nat[idx as int] != b as nat);
                     assert(!pred_b[idx as int]);
                     assert(compact_size(pred_b.take((idx + 1) as int))
@@ -1574,7 +1574,7 @@ pub fn histogram_exec(data: &Vec<u64>, num_buckets: u64) -> (counts: Vec<u64>)
     }
 
     proof {
-        // Final: take(n) == full sequence
+        //  Final: take(n) == full sequence
         assert forall|b: int| 0 <= b < num_buckets as int implies
             counts@[b] as nat == histogram_spec(data_nat, num_buckets as nat)[b]
         by {
@@ -1586,9 +1586,9 @@ pub fn histogram_exec(data: &Vec<u64>, num_buckets: u64) -> (counts: Vec<u64>)
     counts
 }
 
-/// Multi-split: partition data into buckets.
-/// Returns (partitioned_output, per_bucket_counts, per_bucket_offsets).
-/// Elements in bucket b occupy output[offsets[b]..offsets[b]+counts[b]].
+///  Multi-split: partition data into buckets.
+///  Returns (partitioned_output, per_bucket_counts, per_bucket_offsets).
+///  Elements in bucket b occupy output[offsets[b]..offsets[b]+counts[b]].
 pub fn multi_split_exec(
     data: &Vec<u64>,
     buckets: &Vec<u64>,
@@ -1606,19 +1606,19 @@ pub fn multi_split_exec(
         result.1@.len() == num_buckets as nat,
         result.2@.len() == num_buckets as nat,
         result.0@.len() == data@.len(),
-        // Per-bucket: counts[b] == bucket_count
+        //  Per-bucket: counts[b] == bucket_count
         forall|b: int| 0 <= b < num_buckets as int ==> (#[trigger] result.1@[b]) as nat ==
             bucket_count(
                 as_nat_seq(buckets@),
                 b as nat,
             ),
-        // Per-bucket: offsets[b] == bucket_offset
+        //  Per-bucket: offsets[b] == bucket_offset
         forall|b: int| 0 <= b < num_buckets as int ==> (#[trigger] result.2@[b]) as nat ==
             bucket_offset(
                 as_nat_seq(buckets@),
                 b as nat,
             ),
-        // Per-bucket: elements at [offset..offset+count) match compact_result
+        //  Per-bucket: elements at [offset..offset+count) match compact_result
         forall|b: int, j: int| 0 <= b < num_buckets as int
             && 0 <= j < result.1@[b] as int ==>
                 result.0@[result.2@[b] as int + j]
@@ -1629,13 +1629,13 @@ pub fn multi_split_exec(
                             b as nat,
                         ),
                     )[j],
-        // Global: output matches multi_split_result
+        //  Global: output matches multi_split_result
         result.0@ =~= multi_split_result(data@, as_nat_seq(buckets@), num_buckets as nat),
 {
     let n = data.len();
     let ghost buckets_nat = as_nat_seq(buckets@);
 
-    // Initialize output with zeros
+    //  Initialize output with zeros
     let mut output: Vec<u64> = Vec::new();
     let mut oi: usize = 0;
     while oi < n
@@ -1646,7 +1646,7 @@ pub fn multi_split_exec(
         oi = oi + 1;
     }
 
-    // Initialize counts and offsets
+    //  Initialize counts and offsets
     let mut counts: Vec<u64> = Vec::new();
     let mut offsets: Vec<u64> = Vec::new();
     let mut bi: u64 = 0;
@@ -1662,7 +1662,7 @@ pub fn multi_split_exec(
         bi = bi + 1;
     }
 
-    // Process each bucket
+    //  Process each bucket
     let mut write_offset: u64 = 0;
     let mut b: u64 = 0;
     while b < num_buckets
@@ -1692,7 +1692,7 @@ pub fn multi_split_exec(
                         == #[trigger] compact_result(data@, bucket_pred(buckets_nat, bb as nat))[j],
         decreases num_buckets - b,
     {
-        // Build predicate for bucket b
+        //  Build predicate for bucket b
         let mut pred: Vec<bool> = Vec::new();
         let mut pi: usize = 0;
         while pi < n
@@ -1718,7 +1718,7 @@ pub fn multi_split_exec(
             assert(pred@ =~= bucket_pred(buckets_nat, b as nat));
         }
 
-        // Compact this bucket
+        //  Compact this bucket
         let (filtered, count) = compact_generic_exec(data, &pred, 0u64);
 
         proof {
@@ -1728,7 +1728,7 @@ pub fn multi_split_exec(
             assert(count as nat <= n as nat);
         }
 
-        // Store count and offset
+        //  Store count and offset
         let b_usize: usize = b as usize;
         proof {
             assert((b as int) < (num_buckets as int));
@@ -1737,9 +1737,9 @@ pub fn multi_split_exec(
         counts.set(b_usize, count);
         offsets.set(b_usize, write_offset);
 
-        // Copy filtered[0..count] into output at write_offset
+        //  Copy filtered[0..count] into output at write_offset
         proof {
-            // write_offset + count = bucket_offset(b) + bucket_count(b) = bucket_offset(b+1) <= n
+            //  write_offset + count = bucket_offset(b) + bucket_count(b) = bucket_offset(b+1) <= n
             lemma_bucket_offset_bounded(buckets_nat, (b + 1) as nat);
         }
         let mut ci: u64 = 0;
@@ -1793,14 +1793,14 @@ pub fn multi_split_exec(
                         output@[offsets@[bb] as int + j]
                             == #[trigger] compact_result(data@, bucket_pred(buckets_nat, bb as nat))[j]
                 by {
-                    // bucket_offset(bb) + bucket_count(bb) = bucket_offset(bb+1) <= bucket_offset(b) = write_offset
+                    //  bucket_offset(bb) + bucket_count(bb) = bucket_offset(bb+1) <= bucket_offset(b) = write_offset
                     assert(offsets@[bb] as nat == bucket_offset(buckets_nat, bb as nat));
                     assert(counts@[bb] as nat == bucket_count(buckets_nat, bb as nat));
-                    // offsets@[bb] + j < offsets@[bb] + counts@[bb] = bucket_offset(bb+1)
+                    //  offsets@[bb] + j < offsets@[bb] + counts@[bb] = bucket_offset(bb+1)
                     assert(offsets@[bb] as nat + counts@[bb] as nat
                         == bucket_offset(buckets_nat, (bb + 1) as nat));
                     lemma_bucket_offset_monotone(buckets_nat, (bb + 1) as nat, b as nat);
-                    // bucket_offset(bb+1) <= bucket_offset(b) = write_offset
+                    //  bucket_offset(bb+1) <= bucket_offset(b) = write_offset
                     assert(offsets@[bb] as int + j < write_offset as int);
                     assert(offsets@[bb] as int + j != dst_idx as int);
                     assert(0 <= offsets@[bb] as int + j);
@@ -1817,14 +1817,14 @@ pub fn multi_split_exec(
     }
 
     proof {
-        // Prove bucket_offset(buckets_nat, num_buckets) == n so lemma applies
+        //  Prove bucket_offset(buckets_nat, num_buckets) == n so lemma applies
         assert forall|i: int| 0 <= i < buckets_nat.len() as int
             implies (buckets_nat[i] as nat) < num_buckets as nat
         by {
             assert(buckets_nat[i] == buckets@[i] as nat);
         }
         lemma_bucket_offset_total(buckets_nat, num_buckets as nat);
-        // Now prove the per-bucket quantifier in the form the lemma expects
+        //  Now prove the per-bucket quantifier in the form the lemma expects
         assert forall|bb: int, j: int| 0 <= bb < num_buckets as int
             && 0 <= j < bucket_count(buckets_nat, bb as nat) as int
         implies output@[bucket_offset(buckets_nat, bb as nat) as int + j]
@@ -1838,4 +1838,4 @@ pub fn multi_split_exec(
     (output, counts, offsets)
 }
 
-} // verus!
+} //  verus!
