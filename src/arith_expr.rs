@@ -1650,6 +1650,51 @@ pub enum RuntimeArithExpr {
     Reduce(u32, Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
 }
 
+impl RuntimeCmpOp {
+    pub fn clone(&self) -> (result: Self)
+        ensures result == *self,
+    {
+        match self {
+            RuntimeCmpOp::Lt => RuntimeCmpOp::Lt,
+            RuntimeCmpOp::Le => RuntimeCmpOp::Le,
+            RuntimeCmpOp::Gt => RuntimeCmpOp::Gt,
+            RuntimeCmpOp::Ge => RuntimeCmpOp::Ge,
+            RuntimeCmpOp::Eq => RuntimeCmpOp::Eq,
+            RuntimeCmpOp::Ne => RuntimeCmpOp::Ne,
+        }
+    }
+}
+
+impl RuntimeArithExpr {
+    pub fn clone(&self) -> (result: Self)
+        ensures result.view_spec() == self.view_spec(),
+        decreases self,
+    {
+        match self {
+            RuntimeArithExpr::Const(c) => RuntimeArithExpr::Const(*c),
+            RuntimeArithExpr::Var(i) => RuntimeArithExpr::Var(*i),
+            RuntimeArithExpr::Add(a, b) =>
+                RuntimeArithExpr::Add(Box::new((**a).clone()), Box::new((**b).clone())),
+            RuntimeArithExpr::Sub(a, b) =>
+                RuntimeArithExpr::Sub(Box::new((**a).clone()), Box::new((**b).clone())),
+            RuntimeArithExpr::Mul(a, b) =>
+                RuntimeArithExpr::Mul(Box::new((**a).clone()), Box::new((**b).clone())),
+            RuntimeArithExpr::Div(a, b) =>
+                RuntimeArithExpr::Div(Box::new((**a).clone()), Box::new((**b).clone())),
+            RuntimeArithExpr::Mod(a, b) =>
+                RuntimeArithExpr::Mod(Box::new((**a).clone()), Box::new((**b).clone())),
+            RuntimeArithExpr::Index(arr, idx) =>
+                RuntimeArithExpr::Index(*arr, Box::new((**idx).clone())),
+            RuntimeArithExpr::Shr(a, b) =>
+                RuntimeArithExpr::Shr(Box::new((**a).clone()), Box::new((**b).clone())),
+            RuntimeArithExpr::Cmp(op, a, b) =>
+                RuntimeArithExpr::Cmp(op.clone(), Box::new((**a).clone()), Box::new((**b).clone())),
+            RuntimeArithExpr::Reduce(v, bound, body) =>
+                RuntimeArithExpr::Reduce(*v, Box::new((**bound).clone()), Box::new((**body).clone())),
+        }
+    }
+}
+
 impl RuntimeArithExpr {
     ///  Map to spec ArithExpr.
     pub open spec fn view_spec(&self) -> ArithExpr
