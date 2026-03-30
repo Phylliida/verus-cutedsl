@@ -1,5 +1,6 @@
 use vstd::prelude::*;
 use crate::arith_expr::*;
+use crate::runtime::arith_eval_arrays::eval_with_arrays_fits_i64;
 
 verus! {
 
@@ -23,6 +24,49 @@ pub struct OutputSpec {
 pub struct KernelSpec {
     pub guard: ArithExpr,
     pub outputs: Seq<OutputSpec>,
+}
+
+//  ══════════════════════════════════════════════════════════════
+//  Kernel well-formedness: overflow safety for all threads
+//  ══════════════════════════════════════════════════════════════
+
+///  A single output is overflow-safe for a given thread environment.
+pub open spec fn output_fits_i64(
+    o: &OutputSpec, env: Seq<int>, inputs: Seq<Seq<int>>,
+) -> bool {
+    &&& eval_with_arrays_fits_i64(&o.scatter, env, inputs)
+    &&& eval_with_arrays_fits_i64(&o.compute, env, inputs)
+}
+
+///  All kernel expressions (guard + active outputs) are overflow-safe
+///  for a single thread environment.
+pub open spec fn kernel_thread_fits_i64(
+    k: &KernelSpec, env: Seq<int>, inputs: Seq<Seq<int>>,
+) -> bool {
+    &&& eval_with_arrays_fits_i64(&k.guard, env, inputs)
+    &&& (arith_eval_with_arrays(&k.guard, env, inputs) != 0 ==>
+        forall|i: int| 0 <= i < k.outputs.len() ==>
+            #[trigger] output_fits_i64(&k.outputs[i], env, inputs))
+}
+
+///  A kernel is well-formed (overflow-safe) for a 1D dispatch of n_threads,
+///  given specific input arrays. Every thread's guard, scatter, and compute
+///  expressions must have all intermediate values fitting in i64.
+///
+///  This is the REQUIRED precondition for sound GPU codegen.
+pub open spec fn kernel_wf_1d(
+    k: &KernelSpec, inputs: Seq<Seq<int>>, n_threads: nat,
+) -> bool {
+    forall|tid: nat| tid < n_threads ==>
+        #[trigger] kernel_thread_fits_i64(k, thread_env_1d(tid), inputs)
+}
+
+///  2D dispatch variant.
+pub open spec fn kernel_wf_2d(
+    k: &KernelSpec, inputs: Seq<Seq<int>>, dim_x: nat, dim_y: nat,
+) -> bool {
+    forall|gid_x: nat, gid_y: nat| gid_x < dim_x && gid_y < dim_y ==>
+        #[trigger] kernel_thread_fits_i64(k, thread_env_2d(gid_x, gid_y), inputs)
 }
 
 ///  Thread environment constructors.
