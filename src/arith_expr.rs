@@ -1734,32 +1734,101 @@ pub open spec fn arith_lt(a: &ArithExpr, b: &ArithExpr) -> bool
 
 ///  Normalize an ArithExpr: sort commutative operands (Add, Mul).
 ///  Preserves evaluation: arith_eval(normalize(e)) == arith_eval(e).
+///  Collect all addends from a normalized Add tree into a sorted Seq.
+///  Add(a, Add(b, c)) → [a, b, c] (already sorted by arith_lt if right-associated).
+pub open spec fn collect_add_terms(e: ArithExpr) -> Seq<ArithExpr>
+    decreases e,
+{
+    match e {
+        ArithExpr::Add(a, b) => collect_add_terms(*a) + collect_add_terms(*b),
+        other => seq![other],
+    }
+}
+
+///  Collect all factors from a normalized Mul tree into a sorted Seq.
+pub open spec fn collect_mul_factors(e: ArithExpr) -> Seq<ArithExpr>
+    decreases e,
+{
+    match e {
+        ArithExpr::Mul(a, b) => collect_mul_factors(*a) + collect_mul_factors(*b),
+        other => seq![other],
+    }
+}
+
+///  Insert an ArithExpr into a sorted Seq (by arith_lt).
+pub open spec fn sorted_insert(s: Seq<ArithExpr>, e: ArithExpr) -> Seq<ArithExpr>
+    decreases s.len(),
+{
+    if s.len() == 0 { seq![e] }
+    else if arith_lt(&e, &s[0]) { seq![e] + s }
+    else { seq![s[0]] + sorted_insert(s.subrange(1, s.len() as int), e) }
+}
+
+///  Sort a Seq<ArithExpr> by arith_lt (insertion sort).
+pub open spec fn sort_exprs(s: Seq<ArithExpr>) -> Seq<ArithExpr>
+    decreases s.len(),
+{
+    if s.len() == 0 { Seq::empty() }
+    else { sorted_insert(sort_exprs(s.subrange(1, s.len() as int)), s[0]) }
+}
+
+///  Rebuild right-associated Add from sorted terms, filtering Const(0).
+pub open spec fn rebuild_add(terms: Seq<ArithExpr>) -> ArithExpr
+    decreases terms.len(),
+{
+    if terms.len() == 0 { ArithExpr::Const(0) }
+    else if terms.len() == 1 { terms[0] }
+    else { ArithExpr::Add(Box::new(terms[0]), Box::new(rebuild_add(terms.subrange(1, terms.len() as int)))) }
+}
+
+///  Rebuild right-associated Mul from sorted factors, filtering Const(1).
+pub open spec fn rebuild_mul(factors: Seq<ArithExpr>) -> ArithExpr
+    decreases factors.len(),
+{
+    if factors.len() == 0 { ArithExpr::Const(1) }
+    else if factors.len() == 1 { factors[0] }
+    else { ArithExpr::Mul(Box::new(factors[0]), Box::new(rebuild_mul(factors.subrange(1, factors.len() as int)))) }
+}
+
+///  Helper: combine two normalized exprs under Add.
+///  Flattens, removes zeros, sorts.
+pub open spec fn is_const_val(e: &ArithExpr, v: int) -> bool {
+    match e { ArithExpr::Const(c) => *c == v, _ => false }
+}
+
+pub open spec fn arith_add_normalized(a: ArithExpr, b: ArithExpr) -> ArithExpr {
+    if is_const_val(&a, 0) { b }
+    else if is_const_val(&b, 0) { a }
+    else {
+        let terms = sort_exprs(collect_add_terms(a) + collect_add_terms(b));
+        rebuild_add(terms)
+    }
+}
+
+///  Helper: combine two normalized exprs under Mul.
+///  Flattens, removes ones, handles zeros, sorts.
+pub open spec fn arith_mul_normalized(a: ArithExpr, b: ArithExpr) -> ArithExpr {
+    if is_const_val(&a, 0) || is_const_val(&b, 0) { ArithExpr::Const(0) }
+    else if is_const_val(&a, 1) { b }
+    else if is_const_val(&b, 1) { a }
+    else {
+        let factors = sort_exprs(collect_mul_factors(a) + collect_mul_factors(b));
+        rebuild_mul(factors)
+    }
+}
+
 pub open spec fn arith_normalize(expr: &ArithExpr) -> ArithExpr
     decreases expr,
 {
     match expr {
         ArithExpr::Const(c) => ArithExpr::Const(*c),
         ArithExpr::Var(v) => ArithExpr::Var(*v),
-        ArithExpr::Add(a, b) => {
-            let na = arith_normalize(a);
-            let nb = arith_normalize(b);
-            if arith_lt(&nb, &na) {
-                ArithExpr::Add(Box::new(nb), Box::new(na))
-            } else {
-                ArithExpr::Add(Box::new(na), Box::new(nb))
-            }
-        },
+        ArithExpr::Add(a, b) =>
+            arith_add_normalized(arith_normalize(a), arith_normalize(b)),
         ArithExpr::Sub(a, b) =>
             ArithExpr::Sub(Box::new(arith_normalize(a)), Box::new(arith_normalize(b))),
-        ArithExpr::Mul(a, b) => {
-            let na = arith_normalize(a);
-            let nb = arith_normalize(b);
-            if arith_lt(&nb, &na) {
-                ArithExpr::Mul(Box::new(nb), Box::new(na))
-            } else {
-                ArithExpr::Mul(Box::new(na), Box::new(nb))
-            }
-        },
+        ArithExpr::Mul(a, b) =>
+            arith_mul_normalized(arith_normalize(a), arith_normalize(b)),
         ArithExpr::Div(a, b) =>
             ArithExpr::Div(Box::new(arith_normalize(a)), Box::new(arith_normalize(b))),
         ArithExpr::Mod(a, b) =>
