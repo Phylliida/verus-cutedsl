@@ -1650,6 +1650,289 @@ pub enum RuntimeArithExpr {
     Reduce(u32, Box<RuntimeArithExpr>, Box<RuntimeArithExpr>),
 }
 
+//  ══════════════════════════════════════════════════════════════
+//  Canonical ordering + normalization for ArithExpr
+//  ══════════════════════════════════════════════════════════════
+
+///  Size of an ArithExpr tree (number of nodes). Used as termination measure.
+pub open spec fn arith_size(expr: &ArithExpr) -> nat
+    decreases expr,
+{
+    match expr {
+        ArithExpr::Const(_) | ArithExpr::Var(_) => 1,
+        ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b)
+        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) | ArithExpr::Shr(a, b) =>
+            1 + arith_size(a) + arith_size(b),
+        ArithExpr::Index(_, e) => 1 + arith_size(e),
+        ArithExpr::Cmp(_, a, b) => 1 + arith_size(a) + arith_size(b),
+        ArithExpr::Reduce(_, bound, body) => 1 + arith_size(bound) + arith_size(body),
+    }
+}
+
+///  Children are strictly smaller than parent.
+pub proof fn lemma_arith_size_positive(expr: &ArithExpr)
+    ensures arith_size(expr) >= 1,
+    decreases expr,
+{
+    match expr {
+        ArithExpr::Const(_) | ArithExpr::Var(_) => {},
+        ArithExpr::Add(a, b) | ArithExpr::Sub(a, b) | ArithExpr::Mul(a, b)
+        | ArithExpr::Div(a, b) | ArithExpr::Mod(a, b) | ArithExpr::Shr(a, b) => {
+            lemma_arith_size_positive(a);
+            lemma_arith_size_positive(b);
+        },
+        ArithExpr::Index(_, e) => { lemma_arith_size_positive(e); },
+        ArithExpr::Cmp(_, a, b) => {
+            lemma_arith_size_positive(a);
+            lemma_arith_size_positive(b);
+        },
+        ArithExpr::Reduce(_, bound, body) => {
+            lemma_arith_size_positive(bound);
+            lemma_arith_size_positive(body);
+        },
+    }
+}
+
+///  Variant tag for canonical ordering.
+pub open spec fn arith_variant_tag(expr: &ArithExpr) -> int {
+    match expr {
+        ArithExpr::Const(_) => 0,
+        ArithExpr::Var(_) => 1,
+        ArithExpr::Add(_, _) => 2,
+        ArithExpr::Sub(_, _) => 3,
+        ArithExpr::Mul(_, _) => 4,
+        ArithExpr::Div(_, _) => 5,
+        ArithExpr::Mod(_, _) => 6,
+        ArithExpr::Index(_, _) => 7,
+        ArithExpr::Shr(_, _) => 8,
+        ArithExpr::Cmp(_, _, _) => 9,
+        ArithExpr::Reduce(_, _, _) => 10,
+    }
+}
+
+///  Lexicographic less-than on ArithExpr (for canonical ordering).
+pub open spec fn arith_lt(a: &ArithExpr, b: &ArithExpr) -> bool
+    decreases arith_size(a) + arith_size(b),
+{
+    let ta = arith_variant_tag(a);
+    let tb = arith_variant_tag(b);
+    if ta != tb { ta < tb }
+    else { match (a, b) {
+        (ArithExpr::Const(c1), ArithExpr::Const(c2)) => *c1 < *c2,
+        (ArithExpr::Var(v1), ArithExpr::Var(v2)) => (*v1 as int) < (*v2 as int),
+        (ArithExpr::Add(a1, a2), ArithExpr::Add(b1, b2)) =>
+            arith_lt(a1, b1) || (!arith_lt(b1, a1) && arith_lt(a2, b2)),
+        (ArithExpr::Sub(a1, a2), ArithExpr::Sub(b1, b2)) =>
+            arith_lt(a1, b1) || (!arith_lt(b1, a1) && arith_lt(a2, b2)),
+        (ArithExpr::Mul(a1, a2), ArithExpr::Mul(b1, b2)) =>
+            arith_lt(a1, b1) || (!arith_lt(b1, a1) && arith_lt(a2, b2)),
+        (ArithExpr::Index(i1, e1), ArithExpr::Index(i2, e2)) =>
+            (*i1 as int) < (*i2 as int) || (*i1 == *i2 && arith_lt(e1, e2)),
+        _ => false,  // same variant, default to not-less-than
+    }}
+}
+
+///  Normalize an ArithExpr: sort commutative operands (Add, Mul).
+///  Preserves evaluation: arith_eval(normalize(e)) == arith_eval(e).
+pub open spec fn arith_normalize(expr: &ArithExpr) -> ArithExpr
+    decreases expr,
+{
+    match expr {
+        ArithExpr::Const(c) => ArithExpr::Const(*c),
+        ArithExpr::Var(v) => ArithExpr::Var(*v),
+        ArithExpr::Add(a, b) => {
+            let na = arith_normalize(a);
+            let nb = arith_normalize(b);
+            if arith_lt(&nb, &na) {
+                ArithExpr::Add(Box::new(nb), Box::new(na))
+            } else {
+                ArithExpr::Add(Box::new(na), Box::new(nb))
+            }
+        },
+        ArithExpr::Sub(a, b) =>
+            ArithExpr::Sub(Box::new(arith_normalize(a)), Box::new(arith_normalize(b))),
+        ArithExpr::Mul(a, b) => {
+            let na = arith_normalize(a);
+            let nb = arith_normalize(b);
+            if arith_lt(&nb, &na) {
+                ArithExpr::Mul(Box::new(nb), Box::new(na))
+            } else {
+                ArithExpr::Mul(Box::new(na), Box::new(nb))
+            }
+        },
+        ArithExpr::Div(a, b) =>
+            ArithExpr::Div(Box::new(arith_normalize(a)), Box::new(arith_normalize(b))),
+        ArithExpr::Mod(a, b) =>
+            ArithExpr::Mod(Box::new(arith_normalize(a)), Box::new(arith_normalize(b))),
+        ArithExpr::Index(i, e) =>
+            ArithExpr::Index(*i, Box::new(arith_normalize(e))),
+        ArithExpr::Shr(a, b) =>
+            ArithExpr::Shr(Box::new(arith_normalize(a)), Box::new(arith_normalize(b))),
+        ArithExpr::Cmp(op, a, b) =>
+            ArithExpr::Cmp(*op, Box::new(arith_normalize(a)), Box::new(arith_normalize(b))),
+        ArithExpr::Reduce(v, bound, body) =>
+            ArithExpr::Reduce(*v, Box::new(arith_normalize(bound)), Box::new(arith_normalize(body))),
+    }
+}
+
+///  Normalization preserves evaluation.
+pub proof fn lemma_normalize_preserves_eval(
+    expr: &ArithExpr, env: Seq<int>, arrays: Seq<Seq<int>>,
+)
+    requires no_reduce(expr),
+    ensures
+        arith_eval_with_arrays(&arith_normalize(expr), env, arrays)
+            == arith_eval_with_arrays(expr, env, arrays),
+    decreases expr,
+{
+    reveal_with_fuel(arith_normalize, 2);
+    match expr {
+        ArithExpr::Add(a, b) => {
+            lemma_normalize_preserves_eval(a, env, arrays);
+            lemma_normalize_preserves_eval(b, env, arrays);
+            reveal_with_fuel(arith_normalize, 2);
+            let na = arith_normalize(a);
+            let nb = arith_normalize(b);
+            let ea = arith_eval_with_arrays(&na, env, arrays);
+            let eb = arith_eval_with_arrays(&nb, env, arrays);
+            assert(ea + eb == eb + ea);
+        },
+        ArithExpr::Mul(a, b) => {
+            lemma_normalize_preserves_eval(a, env, arrays);
+            lemma_normalize_preserves_eval(b, env, arrays);
+            reveal_with_fuel(arith_normalize, 2);
+            let na = arith_normalize(a);
+            let nb = arith_normalize(b);
+            let ea = arith_eval_with_arrays(&na, env, arrays);
+            let eb = arith_eval_with_arrays(&nb, env, arrays);
+            assert(ea * eb == eb * ea) by (nonlinear_arith);
+        },
+        ArithExpr::Sub(a, b) => {
+            lemma_normalize_preserves_eval(a, env, arrays);
+            lemma_normalize_preserves_eval(b, env, arrays);
+        },
+        ArithExpr::Div(a, b) => {
+            lemma_normalize_preserves_eval(a, env, arrays);
+            lemma_normalize_preserves_eval(b, env, arrays);
+        },
+        ArithExpr::Mod(a, b) => {
+            lemma_normalize_preserves_eval(a, env, arrays);
+            lemma_normalize_preserves_eval(b, env, arrays);
+        },
+        ArithExpr::Shr(a, b) => {
+            lemma_normalize_preserves_eval(a, env, arrays);
+            lemma_normalize_preserves_eval(b, env, arrays);
+        },
+        ArithExpr::Index(_, e) => {
+            lemma_normalize_preserves_eval(e, env, arrays);
+        },
+        ArithExpr::Cmp(_, a, b) => {
+            lemma_normalize_preserves_eval(a, env, arrays);
+            lemma_normalize_preserves_eval(b, env, arrays);
+        },
+        ArithExpr::Reduce(_, _, _) => {
+            //  Excluded by requires no_reduce(expr)
+        },
+        _ => {},  // Const, Var: normalization is identity
+    }
+}
+
+//  ══════════════════════════════════════════════════════════════
+//  Runtime ordering + normalization for RuntimeArithExpr
+//  ══════════════════════════════════════════════════════════════
+
+impl RuntimeArithExpr {
+    ///  Spec-level size (for decreases clauses — not callable from exec).
+    pub open spec fn spec_size(&self) -> nat {
+        arith_size(&self.view_spec())
+    }
+
+    ///  Variant tag for ordering (matches spec arith_variant_tag).
+    pub fn variant_tag(&self) -> (result: u8)
+        ensures result as int == arith_variant_tag(&self.view_spec()),
+    {
+        match self {
+            RuntimeArithExpr::Const(_) => 0,
+            RuntimeArithExpr::Var(_) => 1,
+            RuntimeArithExpr::Add(_, _) => 2,
+            RuntimeArithExpr::Sub(_, _) => 3,
+            RuntimeArithExpr::Mul(_, _) => 4,
+            RuntimeArithExpr::Div(_, _) => 5,
+            RuntimeArithExpr::Mod(_, _) => 6,
+            RuntimeArithExpr::Index(_, _) => 7,
+            RuntimeArithExpr::Shr(_, _) => 8,
+            RuntimeArithExpr::Cmp(_, _, _) => 9,
+            RuntimeArithExpr::Reduce(_, _, _) => 10,
+        }
+    }
+
+    ///  Lexicographic less-than (matches spec arith_lt).
+    pub fn lt(&self, other: &Self) -> (result: bool)
+        ensures result == arith_lt(&self.view_spec(), &other.view_spec()),
+        decreases self.spec_size() + other.spec_size(),
+    {
+        let ta = self.variant_tag();
+        let tb = other.variant_tag();
+        if ta != tb { return ta < tb; }
+        match (self, other) {
+            (RuntimeArithExpr::Const(a), RuntimeArithExpr::Const(b)) => *a < *b,
+            (RuntimeArithExpr::Var(a), RuntimeArithExpr::Var(b)) => *a < *b,
+            (RuntimeArithExpr::Add(a1, a2), RuntimeArithExpr::Add(b1, b2)) =>
+                (**a1).lt(&**b1) || (!(**b1).lt(&**a1) && (**a2).lt(&**b2)),
+            (RuntimeArithExpr::Sub(a1, a2), RuntimeArithExpr::Sub(b1, b2)) =>
+                (**a1).lt(&**b1) || (!(**b1).lt(&**a1) && (**a2).lt(&**b2)),
+            (RuntimeArithExpr::Mul(a1, a2), RuntimeArithExpr::Mul(b1, b2)) =>
+                (**a1).lt(&**b1) || (!(**b1).lt(&**a1) && (**a2).lt(&**b2)),
+            (RuntimeArithExpr::Index(i1, e1), RuntimeArithExpr::Index(i2, e2)) =>
+                *i1 < *i2 || (*i1 == *i2 && (**e1).lt(&**e2)),
+            _ => false,
+        }
+    }
+
+    ///  Normalize: sort commutative operands (matches spec arith_normalize).
+    pub fn normalize(self) -> (result: Self)
+        ensures result.view_spec() == arith_normalize(&self.view_spec()),
+        decreases self,
+    {
+        match self {
+            RuntimeArithExpr::Const(c) => RuntimeArithExpr::Const(c),
+            RuntimeArithExpr::Var(v) => RuntimeArithExpr::Var(v),
+            RuntimeArithExpr::Add(a, b) => {
+                let na = (*a).normalize();
+                let nb = (*b).normalize();
+                if nb.lt(&na) {
+                    RuntimeArithExpr::Add(Box::new(nb), Box::new(na))
+                } else {
+                    RuntimeArithExpr::Add(Box::new(na), Box::new(nb))
+                }
+            },
+            RuntimeArithExpr::Sub(a, b) =>
+                RuntimeArithExpr::Sub(Box::new((*a).normalize()), Box::new((*b).normalize())),
+            RuntimeArithExpr::Mul(a, b) => {
+                let na = (*a).normalize();
+                let nb = (*b).normalize();
+                if nb.lt(&na) {
+                    RuntimeArithExpr::Mul(Box::new(nb), Box::new(na))
+                } else {
+                    RuntimeArithExpr::Mul(Box::new(na), Box::new(nb))
+                }
+            },
+            RuntimeArithExpr::Div(a, b) =>
+                RuntimeArithExpr::Div(Box::new((*a).normalize()), Box::new((*b).normalize())),
+            RuntimeArithExpr::Mod(a, b) =>
+                RuntimeArithExpr::Mod(Box::new((*a).normalize()), Box::new((*b).normalize())),
+            RuntimeArithExpr::Index(i, e) =>
+                RuntimeArithExpr::Index(i, Box::new((*e).normalize())),
+            RuntimeArithExpr::Shr(a, b) =>
+                RuntimeArithExpr::Shr(Box::new((*a).normalize()), Box::new((*b).normalize())),
+            RuntimeArithExpr::Cmp(op, a, b) =>
+                RuntimeArithExpr::Cmp(op, Box::new((*a).normalize()), Box::new((*b).normalize())),
+            RuntimeArithExpr::Reduce(v, bound, body) =>
+                RuntimeArithExpr::Reduce(v, Box::new((*bound).normalize()), Box::new((*body).normalize())),
+        }
+    }
+}
+
 impl RuntimeCmpOp {
     pub fn clone(&self) -> (result: Self)
         ensures result == *self,
