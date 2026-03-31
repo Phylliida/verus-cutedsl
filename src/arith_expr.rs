@@ -1665,6 +1665,54 @@ impl RuntimeCmpOp {
     }
 }
 
+impl RuntimeCmpOp {
+    pub fn eq(&self, other: &Self) -> (result: bool)
+        ensures result == (*self == *other),
+    {
+        match (self, other) {
+            (RuntimeCmpOp::Lt, RuntimeCmpOp::Lt) => true,
+            (RuntimeCmpOp::Le, RuntimeCmpOp::Le) => true,
+            (RuntimeCmpOp::Gt, RuntimeCmpOp::Gt) => true,
+            (RuntimeCmpOp::Ge, RuntimeCmpOp::Ge) => true,
+            (RuntimeCmpOp::Eq, RuntimeCmpOp::Eq) => true,
+            (RuntimeCmpOp::Ne, RuntimeCmpOp::Ne) => true,
+            _ => false,
+        }
+    }
+}
+
+impl RuntimeArithExpr {
+    ///  Structural equality: true iff the two trees are identical.
+    pub fn eq(&self, other: &Self) -> (result: bool)
+        ensures result == (self.view_spec() == other.view_spec()),
+        decreases self,
+    {
+        match (self, other) {
+            (RuntimeArithExpr::Const(a), RuntimeArithExpr::Const(b)) => *a == *b,
+            (RuntimeArithExpr::Var(a), RuntimeArithExpr::Var(b)) => *a == *b,
+            (RuntimeArithExpr::Add(a1, a2), RuntimeArithExpr::Add(b1, b2)) =>
+                (**a1).eq(&**b1) && (**a2).eq(&**b2),
+            (RuntimeArithExpr::Sub(a1, a2), RuntimeArithExpr::Sub(b1, b2)) =>
+                (**a1).eq(&**b1) && (**a2).eq(&**b2),
+            (RuntimeArithExpr::Mul(a1, a2), RuntimeArithExpr::Mul(b1, b2)) =>
+                (**a1).eq(&**b1) && (**a2).eq(&**b2),
+            (RuntimeArithExpr::Div(a1, a2), RuntimeArithExpr::Div(b1, b2)) =>
+                (**a1).eq(&**b1) && (**a2).eq(&**b2),
+            (RuntimeArithExpr::Mod(a1, a2), RuntimeArithExpr::Mod(b1, b2)) =>
+                (**a1).eq(&**b1) && (**a2).eq(&**b2),
+            (RuntimeArithExpr::Index(a1, a2), RuntimeArithExpr::Index(b1, b2)) =>
+                *a1 == *b1 && (**a2).eq(&**b2),
+            (RuntimeArithExpr::Shr(a1, a2), RuntimeArithExpr::Shr(b1, b2)) =>
+                (**a1).eq(&**b1) && (**a2).eq(&**b2),
+            (RuntimeArithExpr::Cmp(op1, a1, a2), RuntimeArithExpr::Cmp(op2, b1, b2)) =>
+                op1.eq(op2) && (**a1).eq(&**b1) && (**a2).eq(&**b2),
+            (RuntimeArithExpr::Reduce(v1, bd1, bo1), RuntimeArithExpr::Reduce(v2, bd2, bo2)) =>
+                *v1 == *v2 && (**bd1).eq(&**bd2) && (**bo1).eq(&**bo2),
+            _ => false,
+        }
+    }
+}
+
 impl RuntimeArithExpr {
     pub fn clone(&self) -> (result: Self)
         ensures result.view_spec() == self.view_spec(),
