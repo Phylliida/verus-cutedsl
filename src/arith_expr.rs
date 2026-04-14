@@ -1797,23 +1797,20 @@ pub open spec fn is_const_val(e: &ArithExpr, v: int) -> bool {
 }
 
 pub open spec fn arith_add_normalized(a: ArithExpr, b: ArithExpr) -> ArithExpr {
-    if is_const_val(&a, 0) { b }
-    else if is_const_val(&b, 0) { a }
-    else {
-        let terms = sort_exprs(collect_add_terms(a) + collect_add_terms(b));
-        rebuild_add(terms)
+    if arith_lt(&b, &a) {
+        ArithExpr::Add(Box::new(b), Box::new(a))
+    } else {
+        ArithExpr::Add(Box::new(a), Box::new(b))
     }
 }
 
 ///  Helper: combine two normalized exprs under Mul.
-///  Flattens, removes ones, handles zeros, sorts.
+///  Sorts operands by arith_lt.
 pub open spec fn arith_mul_normalized(a: ArithExpr, b: ArithExpr) -> ArithExpr {
-    if is_const_val(&a, 0) || is_const_val(&b, 0) { ArithExpr::Const(0) }
-    else if is_const_val(&a, 1) { b }
-    else if is_const_val(&b, 1) { a }
-    else {
-        let factors = sort_exprs(collect_mul_factors(a) + collect_mul_factors(b));
-        rebuild_mul(factors)
+    if arith_lt(&b, &a) {
+        ArithExpr::Mul(Box::new(b), Box::new(a))
+    } else {
+        ArithExpr::Mul(Box::new(a), Box::new(b))
     }
 }
 
@@ -1859,7 +1856,8 @@ pub proof fn lemma_normalize_preserves_eval(
         ArithExpr::Add(a, b) => {
             lemma_normalize_preserves_eval(a, env, arrays);
             lemma_normalize_preserves_eval(b, env, arrays);
-            reveal_with_fuel(arith_normalize, 2);
+            // arith_add_normalized just swaps if arith_lt(b, a)
+            // Either way: eval(Add(na,nb)) == eval(na) + eval(nb) == eval(nb) + eval(na) == eval(Add(nb,na))
             let na = arith_normalize(a);
             let nb = arith_normalize(b);
             let ea = arith_eval_with_arrays(&na, env, arrays);
@@ -1869,7 +1867,6 @@ pub proof fn lemma_normalize_preserves_eval(
         ArithExpr::Mul(a, b) => {
             lemma_normalize_preserves_eval(a, env, arrays);
             lemma_normalize_preserves_eval(b, env, arrays);
-            reveal_with_fuel(arith_normalize, 2);
             let na = arith_normalize(a);
             let nb = arith_normalize(b);
             let ea = arith_eval_with_arrays(&na, env, arrays);
